@@ -1,0 +1,27 @@
+[project]
+name = "multi-agent-system"
+version = "0.1.0"
+description = "Multi-agent system for financial queries"
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.6",
+    "groq>=0.11.0",
+    "redis>=5.0.8",
+    "pyyaml>=6.0.2",
+    "asyncpg>=0.29.0",
+    "qdrant-client>=1.12.0",
+    "python-dotenv>=1.0.1",
+    "pydantic-settings>=2.5.2",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "mcp[cli]>=1.14.1",
+    "httpx>=0.28.1",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.6.8",
+    "black>=24.8.0",
+]
