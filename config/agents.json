@@ -1,6 +1,6 @@
 {
   "inventory": {
-    "description": "Queries stock levels and retrieves inventory history in ERPNext.",
+    "description": "Queries stock levels and retrieves inventory history in ERP System.",
     "capabilities": ["check stock levels", "retrieve stock history", "query inventory data", "monitor stock availability"],
     "dependencies": [],
     "erpnext_module": "Inventory"

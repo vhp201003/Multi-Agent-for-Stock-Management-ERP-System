@@ -18,21 +18,10 @@ Return ONLY a JSON object with 'agent_needed', 'sub_queries', 'dependencies'. No
 """
 
 
-def build_orchestrator_prompt(agents_info: dict, schema_model) -> str:
-    """Build the orchestrator prompt by injecting agent descriptions and the schema.
-
-    - agents_info: dict loaded from config/agents.json
-    - schema_model: a Pydantic model class (used to generate json schema)
-    """
-    # If agents_info not provided, try to load from config/agents.json
-    if not agents_info:
-        try:
-            with open("config/agents.json", "r") as f:
-                agents_info = json.load(f)
-        except Exception:
-            agents_info = {}
-
-    # Build agent descriptions
+def build_orchestrator_prompt(schema_model) -> str:
+    agents_info = {}
+    with open("config/agents.json", "r") as f:
+        agents_info = json.load(f)
     agents_desc = []
     for name, info in (agents_info or {}).items():
         if name != "orchestrator":
@@ -51,7 +40,6 @@ def build_orchestrator_prompt(agents_info: dict, schema_model) -> str:
     except Exception:
         schema = {}
     schema_str = json.dumps(schema, indent=2)
-    # Escape braces so Template.safe_substitute (if used elsewhere) doesn't clash
     schema_str = schema_str.replace("{", "{{").replace("}", "}}")
 
     # Substitute into template using $ placeholders

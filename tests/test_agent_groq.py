@@ -1,35 +1,44 @@
 import asyncio
 import json
 import os
-from typing import List, Dict, Any, Optional, Type
+from typing import Any, Dict, List, Optional, Type
+
+from dotenv import load_dotenv
 from groq import AsyncGroq
 from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
 
 load_dotenv()
+
 
 # Define Pydantic models
 class BaseAgentResponse(BaseModel):
     query_id: str
 
+
 class Query(BaseModel):
     agent_name: str
     sub_query: list[str]
 
+
 class Dependency(BaseModel):
     agent_name: str
     dependencies: List[str]
+
 
 class OrchestratorResponse(BaseAgentResponse):
     agent_needed: list[str]
     sub_queries: Query
     dependencies: Dependency
 
+
 # Simple config
 class AgentConfig:
     model: str = "openai/gpt-oss-20b"
     temperature: float = 0.7
-    messages: List[Dict[str, str]] = [{"role": "system", "content": "You are a helpful assistant."}]
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": "You are a helpful assistant."}
+    ]
+
 
 # BaseAgent class (simplified)
 class BaseAgent:
@@ -40,7 +49,11 @@ class BaseAgent:
         self.llm_api_key = os.environ.get("GROQ_API_KEY")
         self.llm = AsyncGroq(api_key=self.llm_api_key) if self.llm_api_key else None
 
-    async def _call_llm(self, messages: List[Dict[str, str]], response_model: Optional[Type[BaseModel]] = None) -> Any:
+    async def _call_llm(
+        self,
+        messages: List[Dict[str, str]],
+        response_model: Optional[Type[BaseModel]] = None,
+    ) -> Any:
         if not self.llm:
             raise ValueError("No Groq API key provided")
         try:
@@ -48,24 +61,26 @@ class BaseAgent:
             if response_model:
                 schema = response_model.model_json_schema()
                 response_format = {
-                    "type": "json_schema", 
+                    "type": "json_schema",
                     "json_schema": {
-                        "name": "orchestrator_response", 
-                        "schema": response_model.model_json_schema()
-                        }
+                        "name": "orchestrator_response",
+                        "schema": response_model.model_json_schema(),
+                    },
                 }
             response = await self.llm.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
                 temperature=self.config.temperature,
-                response_format=response_format
+                response_format=response_format,
             )
             content = response.choices[0].message.content.strip()
             print(f"LLM response: {content}")
             if response_model:
                 try:
                     data = json.loads(content)
-                    return response_model.model_validate(data)  # Sử dụng model_validate như sample
+                    return response_model.model_validate(
+                        data
+                    )  # Sử dụng model_validate như sample
                 except (json.JSONDecodeError, ValidationError) as e:
                     print(f"LLM response parsing error: {e}")
                     return None
@@ -74,6 +89,7 @@ class BaseAgent:
         except Exception as e:
             print(f"Groq API error: {e}")
             return "LLM error: Unable to generate response"
+
 
 # OrchestratorAgent class
 class OrchestratorAgent(BaseAgent):
@@ -88,17 +104,19 @@ class OrchestratorAgent(BaseAgent):
 
     async def process(self, query: str, query_id: str) -> OrchestratorResponse:
         try:
-            messages = self.config.messages + [{"role": "user", "content": self.prompt.format(query=query)}]
+            messages = self.config.messages + [
+                {"role": "user", "content": self.prompt.format(query=query)}
+            ]
             response_content = await self._call_llm(messages, OrchestratorResponse)
-            
+
             if response_content is None:
                 response_content = OrchestratorResponse(
                     query_id=query_id,
                     agent_needed=[],
                     sub_queries={"agent_name": "", "sub_query": []},
-                    dependencies={"agent_name": "", "dependencies": []}
+                    dependencies={"agent_name": "", "dependencies": []},
                 )
-            
+
             response_content.query_id = query_id
             return response_content
         except Exception as e:
@@ -107,8 +125,9 @@ class OrchestratorAgent(BaseAgent):
                 query_id=query_id,
                 agent_needed=[],
                 sub_queries={"agent_name": "", "sub_query": []},
-                dependencies={"agent_name": "", "dependencies": []}
+                dependencies={"agent_name": "", "dependencies": []},
             )
+
 
 # Test function
 async def test_orchestrator():
@@ -120,6 +139,7 @@ async def test_orchestrator():
     print(f"Agent Needed: {response.agent_needed}")
     print(f"Sub Queries: {response.sub_queries}")
     print(f"Dependencies: {response.dependencies}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_orchestrator())
