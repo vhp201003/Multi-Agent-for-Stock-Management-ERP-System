@@ -1,23 +1,24 @@
-import os
 from fastapi import FastAPI
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.typing import (
     QueryRequest, 
-    AgentResponse,
     OrchestratorRequest,
-    OrchestratorResponse
 )
-from dotenv import load_dotenv
 import uuid
 
-load_dotenv()
+import time
+
 app = FastAPI(title="Multi Agent System")
 
-@app.post("/query", response_model=AgentResponse)
+@app.post("/query")
 async def handle_query(request: QueryRequest):
-    orchestrator = OrchestratorAgent("Orchestrator", llm_api_key=os.environ.get("GROQ_API_KEY"))
+    orchestrator = OrchestratorAgent()
     query_id = f"q_{uuid.uuid4()}"
-    return await orchestrator.process(OrchestratorRequest(query=request.query, query_id=query_id))
+    return await orchestrator.process(OrchestratorRequest(
+        query_id=query_id,
+        timestamp=time.time(),
+        query=request.query,
+    ))
 
 @app.get("/health")
 async def health_check():

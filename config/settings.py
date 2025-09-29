@@ -1,15 +1,34 @@
-from pydantic_settings import BaseSettings
+REDIS_URL = "redis://localhost:6379"
+QUERY_CHANNEL = "query_channel"
+RESULT_CHANNEL_TEMPLATE = "result_channel:{agent_name}"
+AGENT_NAMES = ["inventory", "forecasting", "ordering"]
 
-class Settings(BaseSettings):
-    GROQ_API_KEY: str
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    POSTGRES_URL: str = "postgresql://admin:password123@localhost:5432/financial_db"
-    QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_API_KEY: str = ""
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+class AgentConfig(BaseModel):
+    model: str = "openai/gpt-oss-20b"
+    temperature: float = 0.7
+    messages: List[Dict[str, str]] = []  # Default messages, có thể override
 
-settings = Settings()
+class OrchestratorConfig(AgentConfig):
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": "You are an orchestrator agent."}
+    ]
+
+class SQLAgentConfig(AgentConfig):
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": "You are a SQL agent for database queries."}
+    ]
+
+class ChatAgentConfig(AgentConfig):
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": "You are a chat agent for summarization."}
+    ]
+
+# Default configs
+DEFAULT_CONFIGS = {
+    "OrchestratorAgent": OrchestratorConfig(),
+    "SQLAgent": SQLAgentConfig(),
+    "ChatAgent": ChatAgentConfig(),
+}
