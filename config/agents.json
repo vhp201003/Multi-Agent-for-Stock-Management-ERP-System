@@ -16,11 +16,5 @@
     "capabilities": ["create purchase orders", "check supplier availability", "manage purchase requests", "process stock orders"],
     "dependencies": ["inventory", "forecasting"],
     "erpnext_module": "Buying"
-  },
-  "chat": {
-    "description": "Summarizes and explains results from other agents to users.",
-    "capabilities": ["summarize inventory data", "explain forecast results", "answer user queries", "provide data insights"],
-    "dependencies": ["inventory", "forecasting", "ordering"],
-    "erpnext_module": "None"
   }
 }

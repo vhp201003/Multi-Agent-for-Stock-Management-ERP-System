@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -11,7 +10,8 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from jsonschema import ValidationError
 
-from src.typing import BaseAgentRequest, BaseAgentResponse, BaseSchema
+from src.typing import BaseAgentResponse, BaseSchema
+from src.typing.redis import CommandMessage, QueryTask, SharedData, TaskUpdate
 
 load_dotenv()
 
@@ -24,7 +24,6 @@ class BaseAgent(ABC):
         name: str,
         redis_host: str = "localhost",
         redis_port: int = 6379,
-        prompt: str = None,
         llm_api_key: str = None,
         llm_model: str = "llama-3.3-70b-versatile",
     ):
@@ -32,8 +31,6 @@ class BaseAgent(ABC):
         self.redis = redis.Redis(
             host=redis_host, port=redis_port, decode_responses=True
         )
-        self.channel = "agent_channel"
-        self.prompt = None
         self.llm_api_key = llm_api_key or os.environ.get("GROQ_API_KEY")
         self.llm_model = llm_model
         self.config = DEFAULT_CONFIGS.get(self.name, AgentConfig())
@@ -104,86 +101,111 @@ class BaseAgent(ABC):
             return "LLM error: Unable to generate response"
 
     @abstractmethod
-    async def process(self, request: BaseAgentRequest) -> BaseAgentResponse:
+    async def get_pub_channels(self) -> List[str]:
+        """Return list of channels this agent publishes to."""
         pass
 
-    async def communicate(
-        self,
-        data: Dict[str, Any],
-        recipient: str,
-        query_id: str,
-        action: str = "data_ready",
-    ):
-        try:
-            TIME_TO_LIVE = 3600  # 1 hour
-            key = f"query:{query_id}:{recipient}_data"
-            await self.redis.setex(key, TIME_TO_LIVE, json.dumps(data))
-            message = {
-                "from": self.name,
-                "to": recipient,
-                "query_id": query_id,
-                "data_key": key,
-                "action": action,
-                "timestamp": asyncio.get_event_loop().time(),
-            }
-            await self.redis.publish(self.channel, json.dumps(message))
-        except redis.RedisError as e:
-            logger.error("Redis error in communicate: %s", e)
+    @abstractmethod
+    async def get_sub_channels(self) -> List[str]:
+        """Return list of channels this agent subscribes to."""
+        pass
 
-    async def receive(
-        self, query_id: str, timeout: int = 30
-    ) -> Optional[Dict[str, Any]]:
-        pubsub = self.redis.pubsub()
-        await pubsub.subscribe(self.channel)
-        try:
-            async with asyncio.timeout(timeout):
-                async for message in pubsub.listen():
-                    if message["type"] == "message":
-                        data = json.loads(message["data"])
-                        if (
-                            data.get("to") == self.name
-                            and data.get("query_id") == query_id
-                        ):
-                            stored_data = await self.get_context(
-                                data["data_key"], query_id
-                            )
-                            return stored_data
-        except asyncio.TimeoutError:
-            logger.warning(
-                "%s timed out waiting for message [Query %s]", self.name, query_id
-            )
-        except redis.RedisError as e:
-            logger.error("Redis error in receive: %s", e)
-        finally:
-            await pubsub.unsubscribe(self.channel)
-        return None
+    @abstractmethod
+    async def handle_message(self, channel: str, message: Dict[str, Any]):
+        """Handle incoming message on a channel."""
+        pass
 
-    async def listen_continuously(self, query_id: str):
+    @abstractmethod
+    async def process(self, request) -> Any:
+        """Process a request and return a response. Must be implemented by subclasses."""
+        pass
+
+    async def listen_channels(self):
+        """Listen to all subscribed channels and dispatch incoming messages to handle_message."""
         pubsub = self.redis.pubsub()
-        await pubsub.subscribe(self.channel)
+        channels = await self.get_sub_channels()
+        await pubsub.subscribe(*channels)
+        logger.info(f"{self.name} listening on {channels}")
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     data = json.loads(message["data"])
-                    if data.get("to") == self.name and data.get("query_id") == query_id:
-                        stored_data = await self.get_context(data["data_key"], query_id)
-                        logger.info(
-                            "%s continuous listen for Query %s: %s",
-                            self.name,
-                            query_id,
-                            stored_data,
-                        )
-                        if data.get("action") == "retry":
-                            await self.process(data.get("retry_query", ""), query_id)
+                    # Validate based on channel
+                    channel = message["channel"]
+                    if channel.startswith("agent:task_updates"):
+                        validated = TaskUpdate(**data)
+                    elif channel.startswith("agent:command_channel"):
+                        validated = CommandMessage(**data)
+                    elif channel == "agent:query_channel":
+                        validated = QueryTask(**data)
+                    else:
+                        validated = data  # Fallback
+                    await self.handle_message(
+                        channel=channel,
+                        message=validated.model_dump()
+                        if hasattr(validated, "model_dump")
+                        else validated,
+                    )
         except redis.RedisError as e:
-            logger.error("Redis error in listen_continuously: %s", e)
+            logger.error(f"Redis error in listen_channels: {e}")
         finally:
-            await pubsub.unsubscribe(self.channel)
+            await pubsub.unsubscribe(*channels)
 
-    async def get_context(self, key: str, query_id: str) -> Optional[Dict[str, Any]]:
-        try:
-            data = await self.redis.get(key)
-            return json.loads(data) if data else None
-        except redis.RedisError as e:
-            logger.error("Redis error in get_context: %s", e)
-            return None
+    async def publish_message(self, channel: str, message: Dict[str, Any]):
+        """Publish message to a channel, validated with Pydantic."""
+        # Determine model based on channel
+        if channel.startswith("agent:task_updates"):
+            model = TaskUpdate
+        elif channel.startswith("agent:command_channel"):
+            model = CommandMessage
+        elif channel == "agent:query_channel":
+            model = QueryTask
+        else:
+            model = None
+        if model:
+            validated = model(**message)
+            await self.redis.publish(
+                channel=channel, message=validated.model_dump_json()
+            )
+        else:
+            await self.redis.publish(channel=channel, message=json.dumps(message))
+        logger.info(f"{self.name} published on {channel}: {message}")
+
+    async def update_shared_data(self, query_id: str, updates: Dict[str, Any]):
+        """Update shared data as JSON in agent:shared_data:{query_id}, validated with Pydantic"""
+        key = f"agent:shared_data:{query_id}"
+        # Get current data
+        current_data = await self.redis.get(key)
+        data = json.loads(current_data) if current_data else {}
+        # Merge updates
+        self._deep_update(data, updates)
+        # Validate with Pydantic
+        validated = SharedData(**data)
+        # Set back as JSON
+        await self.redis.set(key, validated.model_dump_json())
+        logger.debug(f"Updated shared data for {query_id}: {updates}")
+
+    def _deep_update(self, base: Dict, updates: Dict):
+        """Deep merge updates into base dict, handle list append for agents_done."""
+        for key, value in updates.items():
+            if (
+                key == "agents_done"
+                and isinstance(value, list)
+                and key in base
+                and isinstance(base[key], list)
+            ):
+                # Append unique items
+                for item in value:
+                    if item not in base[key]:
+                        base[key].append(item)
+            elif (
+                isinstance(value, dict) and key in base and isinstance(base[key], dict)
+            ):
+                self._deep_update(base[key], value)
+            else:
+                base[key] = value
+
+    @abstractmethod
+    async def start(self):
+        """Start the agent. Must be implemented by subclasses."""
+        pass
