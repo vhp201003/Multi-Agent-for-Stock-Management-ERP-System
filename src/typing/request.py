@@ -4,22 +4,8 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class BaseAgentRequest(BaseModel):
+class Request(BaseModel):
     query_id: str
+    conversation_id: Optional[str] = None
+    query: Optional[str] = None  # The actual query/task to process
     timestamp: Optional[datetime] = datetime.now()
-
-
-class OrchestratorRequest(BaseAgentRequest):
-    query: str  # Field riêng cho Orchestrator
-
-
-class SQLAgentRequest(BaseAgentRequest):
-    query: str  # Field riêng cho SQLAgent
-
-
-class ChatAgentRequest(BaseAgentRequest):
-    query: str  # Field riêng cho ChatAgent
-
-
-class QueryRequest(BaseModel):
-    query: str

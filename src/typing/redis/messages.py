@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -21,6 +21,7 @@ class TaskUpdate(BaseModel):
     results: Dict[str, Any]  # {sub_query: result}
     context: Dict[str, Any]  # {sub_query: context}
     timestamp: str  # ISO format
+    llm_usage: Dict[str, Any]  # e.g., {"tokens": 123, "cost": 0.004}
     update_type: str = "task_completed"
 
 
@@ -31,3 +32,4 @@ class CommandMessage(BaseModel):
     command: str  # e.g., "execute"
     query_id: str
     timestamp: str  # ISO format
+    sub_query: Optional[str] = None  # Task data for execute commands

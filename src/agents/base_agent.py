@@ -11,7 +11,8 @@ from groq import AsyncGroq
 from jsonschema import ValidationError
 
 from src.typing import BaseAgentResponse, BaseSchema
-from src.typing.redis import CommandMessage, QueryTask, SharedData, TaskUpdate
+from src.typing.redis import SharedData
+from src.typing.redis.constants import RedisKeys
 
 load_dotenv()
 
@@ -21,19 +22,19 @@ logger = logging.getLogger(__name__)
 class BaseAgent(ABC):
     def __init__(
         self,
-        name: str,
+        agent_type: str,
         redis_host: str = "localhost",
         redis_port: int = 6379,
         llm_api_key: str = None,
         llm_model: str = "llama-3.3-70b-versatile",
     ):
-        self.name = name
+        self.agent_type = agent_type
         self.redis = redis.Redis(
             host=redis_host, port=redis_port, decode_responses=True
         )
         self.llm_api_key = llm_api_key or os.environ.get("GROQ_API_KEY")
         self.llm_model = llm_model
-        self.config = DEFAULT_CONFIGS.get(self.name, AgentConfig())
+        self.config = DEFAULT_CONFIGS.get(self.agent_type, AgentConfig())
         self.llm = AsyncGroq(api_key=self.llm_api_key) if self.llm_api_key else None
 
     async def _call_llm(
@@ -42,6 +43,7 @@ class BaseAgent(ABC):
         response_schema: Optional[Type[BaseSchema]] = None,
         response_model: Optional[Type[BaseAgentResponse]] = None,
     ) -> Any:
+        """Call LLM with structured response parsing."""
         if not self.llm:
             raise ValueError("No Groq API key provided")
         try:
@@ -52,12 +54,14 @@ class BaseAgent(ABC):
                     "type": "json_schema",
                     "json_schema": {"name": "response", "schema": schema},
                 }
+
             response = await self.llm.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
                 temperature=self.config.temperature,
                 response_format=response_format,
             )
+
             logger.debug("LLM raw response: %s", response)
             choice = response.choices[0]
             message = getattr(choice, "message", None)
@@ -111,99 +115,172 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def handle_message(self, channel: str, message: Dict[str, Any]):
-        """Handle incoming message on a channel."""
+    async def process(self, request) -> Any:
+        """Process a request and return a response.
+
+        Core business logic method that all agents must implement:
+        - OrchestratorAgent: LLM-based query decomposition and coordination
+        - WorkerAgent: Domain-specific task execution with MCP tools
+
+        Args:
+            request: Agent-specific request object
+
+        Returns:
+            Agent-specific response object
+        """
         pass
 
     @abstractmethod
-    async def process(self, request) -> Any:
-        """Process a request and return a response. Must be implemented by subclasses."""
+    async def listen_channels(self):
+        """Listen to subscribed channels and process messages.
+
+        Each agent implements channel-specific listening logic:
+        - OrchestratorAgent: Listens for task updates and workflow coordination
+        - WorkerAgent: Listens for execution commands
+
+        Must handle message parsing, validation, and dispatch to update_shared_data_from_message.
+        """
         pass
 
-    async def listen_channels(self):
-        """Listen to all subscribed channels and dispatch incoming messages to handle_message."""
-        pubsub = self.redis.pubsub()
-        channels = await self.get_sub_channels()
-        await pubsub.subscribe(*channels)
-        logger.info(f"{self.name} listening on {channels}")
+    @abstractmethod
+    async def publish_channel(self, channel: str, message: Dict[str, Any]):
+        """Publish validated message to specified channel.
+
+        Each agent implements channel-specific publishing logic:
+        - OrchestratorAgent: Publishes query tasks to managers
+        - WorkerAgent: Publishes task completion updates
+
+        Args:
+            channel: Target Redis channel
+            message: Message data to publish (will be validated and serialized)
+        """
+        pass
+
+    async def update_shared_data(self, query_id: str, update_shared_data: SharedData):
+        """Update shared data by merging with existing SharedData instance.
+
+        Args:
+            query_id: Unique identifier for the query
+            update_shared_data: SharedData instance containing updates to merge
+
+        Raises:
+            ValueError: If query_id is invalid or update_shared_data is not SharedData
+            Exception: For Redis or validation errors
+        """
+        if not query_id or not isinstance(query_id, str):
+            raise ValueError("query_id must be non-empty string")
+        if not isinstance(update_shared_data, SharedData):
+            raise ValueError("update_shared_data must be SharedData instance")
+
+        key = RedisKeys.get_shared_data_key(query_id)
+
         try:
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    data = json.loads(message["data"])
-                    # Validate based on channel
-                    channel = message["channel"]
-                    if channel.startswith("agent:task_updates"):
-                        validated = TaskUpdate(**data)
-                    elif channel.startswith("agent:command_channel"):
-                        validated = CommandMessage(**data)
-                    elif channel == "agent:query_channel":
-                        validated = QueryTask(**data)
-                    else:
-                        validated = data  # Fallback
-                    await self.handle_message(
-                        channel=channel,
-                        message=validated.model_dump()
-                        if hasattr(validated, "model_dump")
-                        else validated,
+            current_data_raw = await self.redis.get(key)
+
+            if current_data_raw:
+                try:
+                    existing_data = json.loads(current_data_raw)
+                    existing_shared_data = SharedData(**existing_data)
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.warning(
+                        f"Corrupted shared data for {query_id}, resetting: {e}"
                     )
-        except redis.RedisError as e:
-            logger.error(f"Redis error in listen_channels: {e}")
-        finally:
-            await pubsub.unsubscribe(*channels)
+                    existing_shared_data = SharedData(
+                        original_query="",
+                        agents_needed=[],
+                        sub_queries={},
+                        dependencies=[],
+                        agents_done=[],
+                        results={},
+                        context={},
+                        llm_usage={},
+                        status="processing",
+                        created_at="",
+                        graph={"nodes": {}, "edges": []},
+                    )
 
-    async def publish_message(self, channel: str, message: Dict[str, Any]):
-        """Publish message to a channel, validated with Pydantic."""
-        # Determine model based on channel
-        if channel.startswith("agent:task_updates"):
-            model = TaskUpdate
-        elif channel.startswith("agent:command_channel"):
-            model = CommandMessage
-        elif channel == "agent:query_channel":
-            model = QueryTask
-        else:
-            model = None
-        if model:
-            validated = model(**message)
-            await self.redis.publish(
-                channel=channel, message=validated.model_dump_json()
+                merged_data = self._merge_shared_data(
+                    existing_shared_data, update_shared_data
+                )
+
+                validated = SharedData(**merged_data)
+                await self.redis.set(key, validated.model_dump_json())
+
+            else:
+                logger.info(
+                    f"No existing shared data for {query_id}, initializing with update"
+                )
+                await self.redis.set(key, update_shared_data.model_dump_json())
+
+            logger.debug(
+                f"Updated shared data for {query_id}: {update_shared_data.model_dump()}"
             )
-        else:
-            await self.redis.publish(channel=channel, message=json.dumps(message))
-        logger.info(f"{self.name} published on {channel}: {message}")
 
-    async def update_shared_data(self, query_id: str, updates: Dict[str, Any]):
-        """Update shared data as JSON in agent:shared_data:{query_id}, validated with Pydantic"""
-        key = f"agent:shared_data:{query_id}"
-        # Get current data
-        current_data = await self.redis.get(key)
-        data = json.loads(current_data) if current_data else {}
-        # Merge updates
-        self._deep_update(data, updates)
-        # Validate with Pydantic
-        validated = SharedData(**data)
-        # Set back as JSON
-        await self.redis.set(key, validated.model_dump_json())
-        logger.debug(f"Updated shared data for {query_id}: {updates}")
+        except redis.RedisError as e:
+            logger.error(f"Redis error updating shared data for {query_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Shared data update failed for {query_id}: {e}")
+            raise
 
-    def _deep_update(self, base: Dict, updates: Dict):
-        """Deep merge updates into base dict, handle list append for agents_done."""
-        for key, value in updates.items():
+    def _merge_shared_data(
+        self, existing: SharedData, update: SharedData
+    ) -> Dict[str, Any]:
+        """Merge update SharedData into existing SharedData.
+
+        Handles special merging logic for lists (agents_done) and nested dicts.
+
+        Args:
+            existing: Current SharedData from Redis
+            update: New SharedData with updates
+
+        Returns:
+            Merged data dictionary ready for validation
+        """
+        existing_dict = existing.model_dump()
+        update_dict = update.model_dump()
+
+        self._deep_update(existing_dict, update_dict)
+
+        return existing_dict
+
+    def _deep_update(
+        self, current_data: Dict[str, Any], update_data: Dict[str, Any]
+    ) -> None:
+        """Deep merge update_data into current_data with special handling.
+
+        Args:
+            current_data: Dictionary to update (modified in-place)
+            update_data: Dictionary with updates to merge
+        """
+        if not isinstance(current_data, dict):
+            raise ValueError("current_data must be dictionary")
+        if not isinstance(update_data, dict):
+            raise ValueError("update_data must be dictionary")
+
+        for key, value in update_data.items():
+            if not isinstance(key, str):
+                raise ValueError("All keys must be strings")
+
             if (
                 key == "agents_done"
                 and isinstance(value, list)
-                and key in base
-                and isinstance(base[key], list)
+                and key in current_data
+                and isinstance(current_data[key], list)
             ):
-                # Append unique items
+                existing_agents = set(current_data["agents_done"])
                 for item in value:
-                    if item not in base[key]:
-                        base[key].append(item)
+                    if item not in existing_agents:
+                        current_data[key].append(item)
+                        existing_agents.add(item)
             elif (
-                isinstance(value, dict) and key in base and isinstance(base[key], dict)
+                isinstance(value, dict)
+                and key in current_data
+                and isinstance(current_data[key], dict)
             ):
-                self._deep_update(base[key], value)
+                self._deep_update(current_data[key], value)
             else:
-                base[key] = value
+                current_data[key] = value
 
     @abstractmethod
     async def start(self):
