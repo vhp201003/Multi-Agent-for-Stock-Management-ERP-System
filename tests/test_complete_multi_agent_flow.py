@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock
 
+from redis.commands.json.path import Path
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,7 +101,7 @@ class MockLLM:
 
     def _create_orchestrator_response(self):
         response_data = {
-            "agent_needed": ["inventory", "forecasting", "ordering"],
+            "agents_needed": ["inventory", "forecasting", "ordering"],
             "sub_queries": [
                 "Check current stock level for Product A",
                 "Forecast 3-month demand for Product A",
@@ -253,7 +255,7 @@ class MultiAgentSystemDemo:
 
         # Simulate orchestrator LLM call
         orchestrator_response = {
-            "agent_needed": ["inventory", "forecasting", "ordering"],
+            "agents_needed": ["inventory", "forecasting", "ordering"],
             "sub_queries": [
                 "Check current stock level for Product A",
                 "Forecast 3-month demand for Product A",
@@ -262,14 +264,14 @@ class MultiAgentSystemDemo:
             "dependencies": [["inventory", "ordering"], ["forecasting", "ordering"]],
         }
 
-        print(f"📊 Agents needed: {orchestrator_response['agent_needed']}")
+        print(f"📊 Agents needed: {orchestrator_response['agents_needed']}")
         print(f"📋 Sub-queries generated: {len(orchestrator_response['sub_queries'])}")
         print(f"🔗 Dependencies: {orchestrator_response['dependencies']}")
 
         # Create shared data
         self.shared_data = {
             "original_query": "Check inventory for Product A, forecast demand, and create purchase order if needed",
-            "agents_needed": orchestrator_response["agent_needed"],
+            "agents_needed": orchestrator_response["agents_needed"],
             "agents_done": [],
             "sub_queries": {
                 "inventory": ["Check current stock level for Product A"],
@@ -311,14 +313,17 @@ class MultiAgentSystemDemo:
             },
         }
 
-        await self.redis.set(
-            f"agent:shared_data:{self.query_id}", json.dumps(self.shared_data)
+        # Use Redis JSON to set shared data
+        from redis.commands.json.path import Path
+
+        await self.redis.json().set(
+            f"agent:shared_data:{self.query_id}", Path.root_path(), self.shared_data
         )
 
         # Publish to managers
         query_task = {
             "query_id": self.query_id,
-            "agent_name": orchestrator_response["agent_needed"],
+            "agent_type": orchestrator_response["agents_needed"],
             "sub_query": {
                 "inventory": ["Check current stock level for Product A"],
                 "forecasting": ["Forecast 3-month demand for Product A"],
@@ -392,7 +397,7 @@ class MultiAgentSystemDemo:
             "agent:command_channel:inventory",
             json.dumps(
                 {
-                    "agent_name": "inventory",
+                    "agent_type": "inventory",
                     "command": "execute",
                     "query_id": self.query_id,
                 }
@@ -403,7 +408,7 @@ class MultiAgentSystemDemo:
             "agent:command_channel:forecasting",
             json.dumps(
                 {
-                    "agent_name": "forecasting",
+                    "agent_type": "forecasting",
                     "command": "execute",
                     "query_id": self.query_id,
                 }
@@ -445,8 +450,9 @@ class MultiAgentSystemDemo:
             "status"
         ] = "done"
 
-        await self.redis.set(
-            f"agent:shared_data:{self.query_id}", json.dumps(self.shared_data)
+        # Use Redis JSON to update shared data
+        await self.redis.json().set(
+            f"agent:shared_data:{self.query_id}", Path.root_path(), self.shared_data
         )
 
         # Publish completion updates
@@ -553,7 +559,7 @@ class MultiAgentSystemDemo:
             "agent:command_channel:ordering",
             json.dumps(
                 {
-                    "agent_name": "ordering",
+                    "agent_type": "ordering",
                     "command": "execute",
                     "query_id": self.query_id,
                 }
@@ -574,8 +580,9 @@ class MultiAgentSystemDemo:
             "done"
         )
 
-        await self.redis.set(
-            f"agent:shared_data:{self.query_id}", json.dumps(self.shared_data)
+        # Use Redis JSON to update shared data
+        await self.redis.json().set(
+            f"agent:shared_data:{self.query_id}", Path.root_path(), self.shared_data
         )
 
         # Publish completion
@@ -626,7 +633,7 @@ class MultiAgentSystemDemo:
 
         # Check if all tasks done
         all_done = True
-        for agent_name, agent_node in self.shared_data["graph"]["nodes"].items():
+        for agent_type, agent_node in self.shared_data["graph"]["nodes"].items():
             for sub_query in agent_node["sub_queries"]:
                 if sub_query["status"] != "done":
                     all_done = False
@@ -637,8 +644,9 @@ class MultiAgentSystemDemo:
 
         if all_done:
             self.shared_data["status"] = "done"
-            await self.redis.set(
-                f"agent:shared_data:{self.query_id}", json.dumps(self.shared_data)
+            # Use Redis JSON to update shared data
+            await self.redis.json().set(
+                f"agent:shared_data:{self.query_id}", Path.root_path(), self.shared_data
             )
             print("✅ All tasks completed - triggering ChatAgent")
 
@@ -660,18 +668,18 @@ class MultiAgentSystemDemo:
         }
 
         # Filter results (truncate to 500 chars)
-        for agent_name, results in self.shared_data["results"].items():
-            filtered_context["key_results"][agent_name] = {}
+        for agent_type, results in self.shared_data["results"].items():
+            filtered_context["key_results"][agent_type] = {}
             for sub_query, result in results.items():
                 truncated = result[:500] + "..." if len(result) > 500 else result
-                filtered_context["key_results"][agent_name][sub_query] = truncated
+                filtered_context["key_results"][agent_type][sub_query] = truncated
 
         # Extract metrics
-        for agent_name, contexts in self.shared_data["context"].items():
+        for agent_type, contexts in self.shared_data["context"].items():
             for sub_query, ctx in contexts.items():
                 for key, value in ctx.items():
                     if isinstance(value, (int, float)):
-                        filtered_context["metrics"][f"{agent_name}_{key}"] = value
+                        filtered_context["metrics"][f"{agent_type}_{key}"] = value
 
         print(f"📊 Filtered context size: {len(json.dumps(filtered_context))} chars")
         print(f"🔢 Extracted metrics: {len(filtered_context['metrics'])}")

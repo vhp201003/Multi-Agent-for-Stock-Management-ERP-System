@@ -16,17 +16,17 @@ class BaseAgentResponse(BaseModel):
 
 
 class Query(BaseModel):
-    agent_name: str
+    agent_type: str
     sub_query: list[str]
 
 
 class Dependency(BaseModel):
-    agent_name: str
+    agent_type: str
     dependencies: List[str]
 
 
 class OrchestratorResponse(BaseAgentResponse):
-    agent_needed: list[str]
+    agents_needed: list[str]
     sub_queries: Query
     dependencies: Dependency
 
@@ -96,9 +96,9 @@ class OrchestratorAgent(BaseAgent):
     def __init__(self, name: str = "Orchestrator"):
         prompt = """
     Analyze the query and return ONLY a JSON object with 
-    'agent_needed': [list of agent names (e.g., ['sql', 'chat'])], 
-    'sub_queries': {{'agent_name': 'sql', 'sub_query': ['sub query 1', 'sub query 2']}}, 
-    'dependencies': {{'agent_name': 'sql', 'dependencies': ['chat']}}. 
+    'agents_needed': [list of agent names (e.g., ['sql', 'chat'])], 
+    'sub_queries': {{'agent_type': 'sql', 'sub_query': ['sub query 1', 'sub query 2']}}, 
+    'dependencies': {{'agent_type': 'sql', 'dependencies': ['chat']}}. 
     Do not include any extra text. Query: {query}"""
         super().__init__(name, prompt)
 
@@ -112,9 +112,9 @@ class OrchestratorAgent(BaseAgent):
             if response_content is None:
                 response_content = OrchestratorResponse(
                     query_id=query_id,
-                    agent_needed=[],
-                    sub_queries={"agent_name": "", "sub_query": []},
-                    dependencies={"agent_name": "", "dependencies": []},
+                    agents_needed=[],
+                    sub_queries={"agent_type": "", "sub_query": []},
+                    dependencies={"agent_type": "", "dependencies": []},
                 )
 
             response_content.query_id = query_id
@@ -123,9 +123,9 @@ class OrchestratorAgent(BaseAgent):
             print(f"Error: {e}")
             return OrchestratorResponse(
                 query_id=query_id,
-                agent_needed=[],
-                sub_queries={"agent_name": "", "sub_query": []},
-                dependencies={"agent_name": "", "dependencies": []},
+                agents_needed=[],
+                sub_queries={"agent_type": "", "sub_query": []},
+                dependencies={"agent_type": "", "dependencies": []},
             )
 
 
@@ -136,7 +136,7 @@ async def test_orchestrator():
     query_id = "test_123"
     response = await agent.process(query, query_id)
     print(f"Response: {response}")
-    print(f"Agent Needed: {response.agent_needed}")
+    print(f"Agent Needed: {response.agents_needed}")
     print(f"Sub Queries: {response.sub_queries}")
     print(f"Dependencies: {response.dependencies}")
 

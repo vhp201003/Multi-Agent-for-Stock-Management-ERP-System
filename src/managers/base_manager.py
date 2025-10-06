@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 import redis.asyncio as redis
+from redis.commands.json.path import Path
 from src.typing.redis import AgentStatus
 from src.typing.redis.constants import RedisChannels, RedisKeys, TaskStatus
 
@@ -168,17 +169,18 @@ class BaseManager:
 
     async def _handle_query_message(self, data: dict):
         """Handle incoming query messages from orchestrator."""
+        logger.info(f"Manager {self.agent_type} received query message: {data}")
+        logger.info(f"Checking if {self.agent_type} in {data.get('agent_type', [])}")
         if self.agent_type in data.get("agent_type", []):
             query_id = data["query_id"]
             sub_queries = data.get("sub_query", {}).get(self.agent_type, [])
             shared_key = RedisKeys.get_shared_data_key(query_id)
-            shared_data = await self.redis.get(shared_key)
+            shared_data = await self.redis.json().get(shared_key)
             graph = None
             if shared_data:
                 try:
-                    data = json.loads(shared_data)
-                    graph = data.get("graph")
-                except json.JSONDecodeError:
+                    graph = shared_data.get("graph")
+                except (TypeError, AttributeError):
                     pass
             dependencies_done = True  # Placeholder: implement DAG check
             if graph:
@@ -265,12 +267,12 @@ class BaseManager:
             update: Task completion update data
         """
         try:
-            # Update shared data
+            # Update shared data using Redis JSON
             shared_key = RedisKeys.get_shared_data_key(query_id)
-            current_data = await self.redis.get(shared_key)
+            current_data = await self.redis.json().get(shared_key)
 
             if current_data:
-                data = json.loads(current_data)
+                data = current_data
             else:
                 # Create minimal SharedData structure if not exists
                 from datetime import datetime
@@ -321,7 +323,7 @@ class BaseManager:
             data["llm_usage"][self.agent_type] = update.get("llm_usage", {})
 
             # Check if all agents are done and update status
-            all_agents_needed = set(data.get("agent_needed", []))
+            all_agents_needed = set(data.get("agents_needed", []))
             agents_done = set(data.get("agents_done", []))
             if all_agents_needed and all_agents_needed.issubset(agents_done):
                 # All agents completed, mark as done
@@ -345,11 +347,13 @@ class BaseManager:
                 )
                 logger.info(f"Published completion notification for query {query_id}")
 
-            # Validate and save with Pydantic
+            # Validate and save with Pydantic using Redis JSON
             from src.typing.redis import SharedData
 
             validated = SharedData(**data)
-            await self.redis.set(shared_key, validated.model_dump_json())
+            await self.redis.json().set(
+                shared_key, Path.root_path(), validated.model_dump()
+            )
 
             # Trigger next dependent tasks
             await self.check_and_trigger_next(query_id)

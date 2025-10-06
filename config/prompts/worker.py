@@ -7,7 +7,7 @@ WORKER_EXAMPLES = """
 """
 
 WORKER_AGENT_PROMPT = """
-You are $agent_name in Multi Agent System: 
+You are $agent_type in Multi Agent System: 
 $agent_description
 
 ## Available Tools (Actions):
@@ -36,15 +36,16 @@ $examples
 """
 
 def build_worker_agent_prompt(
-    agent_name: str,
+    agent_type: str,
     agent_description: str,
     tools: list,
     resources: list,
+    tools_example: str,
 ) -> str:
     """Build prompt for WorkerAgent with agent info and MCP tools/resources.
 
     Args:
-        agent_name (str): Name of the agent.
+        agent_type (str): Name of the agent.
         agent_description (str): Description of the agent's role.
         tools (list): List of Tool objects from session.list_tools().
         resources (list): List of Resource objects from session.list_resources().
@@ -70,9 +71,9 @@ def build_worker_agent_prompt(
     )
 
     return Template(WORKER_AGENT_PROMPT).safe_substitute(
-        agent_name=agent_name,
+        agent_type=agent_type,
         agent_description=agent_description,
         tools_description=tools_description,
         resources_description=resources_description,
-        examples=WORKER_EXAMPLES,
+        examples=tools_example,
     )

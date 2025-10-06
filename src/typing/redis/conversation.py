@@ -5,11 +5,10 @@ from pydantic import BaseModel, Field
 
 
 class Message(BaseModel):
-    """Individual message in conversation history."""
     role: str = Field(..., description="Role of the message sender (user/assistant)")
     content: str = Field(..., description="Message content")
     timestamp: datetime = Field(default_factory=datetime.now, description="When message was sent")
-    metadata: Optional[dict] = Field(default=None, description="Optional metadata (agent_name, query_id, etc.)")
+    metadata: Optional[dict] = Field(default=None, description="Optional metadata (agent_type, query_id, etc.)")
 
 
 class ConversationData(BaseModel):

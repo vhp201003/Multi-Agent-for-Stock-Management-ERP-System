@@ -6,16 +6,16 @@ import redis.asyncio as redis
 
 
 async def publish_data(
-    query: str, agent_name: str, redis_url: str = "redis://localhost:6379"
+    query: str, agent_type: str, redis_url: str = "redis://localhost:6379"
 ) -> str:
     """Publish query vào Redis channel agent_requests, trả về query_id."""
     redis_client = redis.from_url(redis_url, decode_responses=True)
     query_id = str(uuid.uuid4())
     message = json.dumps(
-        {"query": query, "agent_name": agent_name, "query_id": query_id}
+        {"query": query, "agent_type": agent_type, "query_id": query_id}
     )
     await redis_client.publish("agent_requests", message)
-    print(f"Published query: {query}, ID: {query_id} to agent: {agent_name}")
+    print(f"Published query: {query}, ID: {query_id} to agent: {agent_type}")
     await redis_client.aclose()
     return query_id
 
@@ -47,7 +47,7 @@ async def subscribe_data(
 async def main():
     # Test publish và subscribe
     query = "Check stock for P001"
-    agent_name = "inventory"
+    agent_type = "inventory"
     query_id = str(uuid.uuid4())
 
     # Start subscribe task first to ensure it's listening
@@ -57,10 +57,10 @@ async def main():
     # Publish query
     redis_client = redis.from_url("redis://localhost:6379", decode_responses=True)
     message = json.dumps(
-        {"query": query, "agent_name": agent_name, "query_id": query_id}
+        {"query": query, "agent_type": agent_type, "query_id": query_id}
     )
     await redis_client.publish("agent_requests", message)
-    print(f"Published query: {query}, ID: {query_id} to agent: {agent_name}")
+    print(f"Published query: {query}, ID: {query_id} to agent: {agent_type}")
     await redis_client.aclose()
 
     # Wait for subscribe result

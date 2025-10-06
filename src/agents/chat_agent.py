@@ -21,7 +21,7 @@ from src.typing.chat_layout import (
     SectionBreakLayoutField,
 )
 from src.typing.redis.constants import RedisChannels
-from src.typing.schema import LLMChatSchema
+from src.typing.schema import ChatAgentSchema
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class ChatAgent(BaseAgent):
             # Call LLM with structured response
             response = await self._call_llm(
                 messages=messages,
-                response_schema=LLMChatSchema,
+                response_schema=ChatAgentSchema,
                 response_model=ChatResponse,
             )
 
@@ -86,11 +86,16 @@ class ChatAgent(BaseAgent):
                 return self._create_fallback_response(request.query)
 
         except Exception as e:
-            logger.error(f"Chat processing failed: {e}")
+            logger.error(f"Chat processing failed: {e}", exc_info=True)
             return self._create_error_response(str(e))
 
     def _build_layout_prompt(self, request: ChatRequest) -> str:
         """Build simple prompt for layout generation using config template."""
+        logger.info(
+            f"DEBUG: Building prompt with request.context type: {type(request.context)}"
+        )
+        logger.info(f"DEBUG: request.context value: {request.context}")
+
         context_str = json.dumps(request.context) if request.context else "None"
 
         prompt = self.layout_prompts["user_template"].format(
@@ -157,15 +162,32 @@ class ChatAgent(BaseAgent):
 
             # Parse sub_query as ChatRequest
             try:
+                logger.info(
+                    f"DEBUG: sub_query type: {type(sub_query)}, value: {sub_query}"
+                )
+
                 if isinstance(sub_query, str):
                     # Simple string query
                     chat_request = ChatRequest(query=sub_query)
-                else:
-                    # Structured request (only query and context)
-                    chat_request = ChatRequest(
-                        query=sub_query.get("query", ""),
-                        context=sub_query.get("context"),
+                elif isinstance(sub_query, dict):
+                    # Structured request - FIXED: Handle dict properly
+                    context = sub_query.get("context")
+                    query_text = sub_query.get("query", "")
+
+                    logger.info(
+                        f"DEBUG: Creating ChatRequest with query='{query_text}', context type: {type(context)}"
                     )
+
+                    chat_request = ChatRequest(
+                        query=query_text,
+                        context=context,
+                    )
+                else:
+                    # Handle None or other types
+                    logger.error(
+                        f"Invalid sub_query type: {type(sub_query)}, value: {sub_query}"
+                    )
+                    return
 
                 # Process the request
                 response = await self.process(chat_request)
@@ -181,32 +203,53 @@ class ChatAgent(BaseAgent):
         self, query_id: str, sub_query: Any, response: ChatResponse
     ):
         """Publish task completion with layout response."""
+        sub_query_str = (
+            sub_query.get("query", "")
+            if isinstance(sub_query, dict)
+            else str(sub_query)
+        )
+
         completion_message = {
             "query_id": query_id,
-            "sub_query": sub_query,
-            "status": "completed",
+            "sub_query": sub_query_str,
+            "status": "done",  # This triggers orchestrator's final completion logic
             "results": {
+                "final_response": response.model_dump(),  # Final user-facing response
                 "layout_response": response.model_dump(),
                 "field_count": len(response.layout),
                 "response_type": "structured_layout",
             },
-            "context": {"agent_type": "chat_agent"},
+            "context": {
+                "agent_type": "chat_agent",
+                "final_agent": True,  # Mark as final completion
+                "response_ready": True,
+            },
+            "llm_usage": (response.metadata or {}).get("llm_usage", {}),
             "timestamp": datetime.now().isoformat(),
-            "update_type": "task_completed",
+            "update_type": "final_completion",  # Changed from task_completed
         }
 
+        # Publish to task updates - this will trigger orchestrator's final completion
         channel = RedisChannels.get_task_updates_channel("chat_agent")
         await self.publish_channel(channel, completion_message)
-        logger.info(f"Published completion for query {query_id}")
+        logger.info(f"Published FINAL completion for query {query_id}")
 
     async def _publish_error(self, query_id: str, sub_query: Any, error: str):
-        """Publish error message."""
+        """Publish error message with proper TaskUpdate schema."""
+        # Convert sub_query to string for TaskUpdate compatibility
+        sub_query_str = (
+            sub_query.get("query", "")
+            if isinstance(sub_query, dict)
+            else str(sub_query)
+        )
+
         error_message = {
             "query_id": query_id,
-            "sub_query": sub_query,
+            "sub_query": sub_query_str,  # FIXED: Ensure string type
             "status": "error",
-            "error": error,
-            "context": {"agent_type": "chat_agent"},
+            "results": {},  # REQUIRED field
+            "context": {"agent_type": "chat_agent", "error": error},
+            "llm_usage": {},  # REQUIRED field
             "timestamp": datetime.now().isoformat(),
             "update_type": "task_error",
         }

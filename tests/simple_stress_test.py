@@ -42,7 +42,7 @@ logger = MockLogger()
 class SimpleStressTest:
     def __init__(self):
         self.redis = redis.Redis(host="localhost", port=6379, decode_responses=True)
-        self.agent_name = "test_agent"
+        self.agent_type = "test_agent"
         self.manager = BaseManager(
             agent_type="inventory_agent", redis_url="redis://localhost:6379"
         )

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 REDIS_URL = "redis://localhost:6379"
 QUERY_CHANNEL = "query_channel"
-RESULT_CHANNEL_TEMPLATE = "result_channel:{agent_name}"
+RESULT_CHANNEL_TEMPLATE = "result_channel:{agent_type}"
 AGENT_NAMES = ["inventory", "forecasting", "ordering"]
 
 

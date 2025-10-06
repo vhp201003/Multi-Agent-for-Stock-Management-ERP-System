@@ -31,7 +31,7 @@ async def run_task_lifecycle_test():
         import redis.asyncio as redis
         from src.agents.worker_agent import WorkerAgent
         from src.managers.base_manager import BaseManager
-        from src.typing import Request, BaseAgentResponse
+        from src.typing import BaseAgentResponse, Request
         from src.typing.redis import AgentStatus, SharedData
         from src.typing.redis.shared_data import AgentNode, Graph, SubQueryNode
 
@@ -125,9 +125,13 @@ async def run_task_lifecycle_test():
                     graph=graph,
                 )
 
-                # Store initial shared data
-                await self.redis.set(
-                    f"agent:shared_data:{query_id}", shared_data.model_dump_json()
+                # Store initial shared data using Redis JSON
+                from redis.commands.json.path import Path
+
+                await self.redis.json().set(
+                    f"agent:shared_data:{query_id}",
+                    Path.root_path(),
+                    shared_data.model_dump(),
                 )
 
                 # Then distribute the tasks
@@ -200,9 +204,11 @@ async def run_task_lifecycle_test():
 
             # Wait for completion
             for i in range(50):  # 5 second timeout
-                shared_data = await redis_client.get(f"agent:shared_data:{query_id}")
+                shared_data = await redis_client.json().get(
+                    f"agent:shared_data:{query_id}"
+                )
                 if shared_data:
-                    data = SharedData.model_validate_json(shared_data)
+                    data = SharedData(**shared_data)
                     if "InventoryAgent" in data.agents_done:
                         logger.info("✅ Task completed successfully!")
                         logger.info(
@@ -220,7 +226,9 @@ async def run_task_lifecycle_test():
                 # Final debug info before timeout
                 status = await redis_client.hget("agent:status", "InventoryAgent")
                 queue_len = await redis_client.llen("agent:queue:InventoryAgent")
-                shared_data = await redis_client.get(f"agent:shared_data:{query_id}")
+                shared_data = await redis_client.json().get(
+                    f"agent:shared_data:{query_id}"
+                )
                 logger.error(
                     f"❌ Timeout - Status: {status}, Queue: {queue_len}, SharedData exists: {bool(shared_data)}"
                 )
@@ -245,9 +253,11 @@ async def run_task_lifecycle_test():
 
             # Wait for all tasks
             for i in range(100):  # 10 second timeout
-                shared_data = await redis_client.get(f"agent:shared_data:{query_id}")
+                shared_data = await redis_client.json().get(
+                    f"agent:shared_data:{query_id}"
+                )
                 if shared_data:
-                    data = SharedData.model_validate_json(shared_data)
+                    data = SharedData(**shared_data)
                     if "InventoryAgent" in data.agents_done:
                         results = data.results.get("InventoryAgent", {})
                         if len(results) == 3:

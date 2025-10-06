@@ -27,7 +27,7 @@ async def test_worker_agent_prompt():
     # Create InventoryAgent
     logger.info("Creating InventoryAgent...")
     inventory_agent = WorkerAgent(
-        name="InventoryAgent",
+        agent_type="InventoryAgent",
         agent_description="Manages inventory operations including stock checks and updates",
         mcp_server_url="http://localhost:8001/mcp",  # Using test MCP server
         redis_host="localhost",
@@ -65,8 +65,15 @@ async def test_worker_agent_prompt():
         logger.error(f"❌ Test failed: {e}")
         raise
     finally:
-        # Cleanup
-        await inventory_agent.redis.close()
+        # Cleanup MCP client first to avoid asyncio errors
+        if hasattr(inventory_agent, "mcp_client") and inventory_agent.mcp_client:
+            try:
+                await inventory_agent.mcp_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing MCP client: {e}")
+
+        # Then cleanup Redis
+        await inventory_agent.redis.aclose()
 
 
 async def test_worker_agent_full_start():
@@ -115,7 +122,15 @@ async def test_worker_agent_full_start():
         logger.error(f"❌ Test failed: {e}")
         raise
     finally:
-        await inventory_agent.redis.close()
+        # Cleanup MCP client first to avoid asyncio errors
+        if hasattr(inventory_agent, "mcp_client") and inventory_agent.mcp_client:
+            try:
+                await inventory_agent.mcp_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing MCP client: {e}")
+
+        # Then cleanup Redis
+        await inventory_agent.redis.aclose()
 
 
 async def main():

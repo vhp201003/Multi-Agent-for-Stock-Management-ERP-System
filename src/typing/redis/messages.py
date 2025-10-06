@@ -7,13 +7,12 @@ class QueryTask(BaseModel):
     """Message for agent:query_channel (Orchestrator -> Manager)"""
 
     query_id: str
-    agent_name: List[str]
-    sub_query: Dict[str, List[str]]  # agent_name -> list of sub_queries
-    previous_context: List[str] = []
+    agent_type: List[str]
+    sub_query: Dict[str, List[str]]  # agent_type -> list of sub_queries
 
 
 class TaskUpdate(BaseModel):
-    """Message for agent:task_updates:{agent_name} (Agent -> Manager/Orchestrator)"""
+    """Message for agent:task_updates:{agent_type} (Agent -> Manager/Orchestrator)"""
 
     query_id: str
     sub_query: str
@@ -26,9 +25,9 @@ class TaskUpdate(BaseModel):
 
 
 class CommandMessage(BaseModel):
-    """Message for agent:command_channel:{agent_name} (Manager -> Agent)"""
+    """Message for agent:command_channel:{agent_type} (Manager -> Agent)"""
 
-    agent_name: str
+    agent_type: str
     command: str  # e.g., "execute"
     query_id: str
     timestamp: str  # ISO format

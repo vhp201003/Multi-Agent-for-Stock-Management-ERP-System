@@ -77,12 +77,12 @@ class BasicManagerTest:
             task_data = await self.redis.lindex(queue_key, 0)
             print(f"📋 Task in queue: {task_data}")
 
-        # Check shared data
+        # Check shared data using Redis JSON
         shared_key = RedisKeys.get_shared_data_key("test_query_001")
-        shared_data = await self.redis.get(shared_key)
+        shared_data = await self.redis.json().get(shared_key)
         print(f"🗃️  Shared data exists: {shared_data is not None}")
         if shared_data:
-            print(f"🗃️  Shared data: {shared_data[:200]}...")
+            print(f"🗃️  Shared data: {str(shared_data)[:200]}...")
 
         # Cleanup
         manager_task.cancel()

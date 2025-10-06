@@ -36,27 +36,27 @@ class TestEventDrivenManager:
     def __init__(self):
         self.redis = None
         self.manager = None
-        self.agent_name = "test_inventory_agent"
+        self.agent_type = "test_inventory_agent"
 
     async def setup(self):
         """Setup test environment."""
         self.redis = redis.from_url("redis://localhost:6379", decode_responses=True)
-        self.manager = BaseManager(agent_type=self.agent_name)
+        self.manager = BaseManager(agent_type=self.agent_type)
 
         # Clean up any existing data
         await self._cleanup()
 
         # Set agent status to IDLE
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.IDLE.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
         )
-        logger.info(f"Setup complete - Agent {self.agent_name} set to IDLE")
+        logger.info(f"Setup complete - Agent {self.agent_type} set to IDLE")
 
     async def _cleanup(self):
         """Clean up Redis data."""
         keys_to_clean = [
-            RedisKeys.get_agent_queue(self.agent_name),
-            RedisKeys.get_agent_pending_queue(self.agent_name),
+            RedisKeys.get_agent_queue(self.agent_type),
+            RedisKeys.get_agent_pending_queue(self.agent_type),
             RedisKeys.get_shared_data_key("test_query_001"),
             RedisKeys.get_shared_data_key("test_query_002"),
         ]
@@ -64,7 +64,7 @@ class TestEventDrivenManager:
         for key in keys_to_clean:
             await self.redis.delete(key)
 
-        await self.redis.hdel(RedisKeys.AGENT_STATUS, self.agent_name)
+        await self.redis.hdel(RedisKeys.AGENT_STATUS, self.agent_type)
 
     async def test_query_event_triggers_execution(self):
         """Test that query events trigger immediate task execution if agent is idle."""
@@ -73,9 +73,9 @@ class TestEventDrivenManager:
         # Simulate query message from orchestrator
         query_message = {
             "query_id": "test_query_001",
-            "agent_type": [self.agent_name],
+            "agent_type": [self.agent_type],
             "sub_query": {
-                self.agent_name: ["Check inventory levels", "Generate stock report"]
+                self.agent_type: ["Check inventory levels", "Generate stock report"]
             },
         }
 
@@ -88,7 +88,7 @@ class TestEventDrivenManager:
 
         async def monitor_commands():
             pubsub = self.redis.pubsub()
-            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_type))
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -98,7 +98,7 @@ class TestEventDrivenManager:
                         logger.info(f"📨 Execute command received: {data['sub_query']}")
                         if len(command_received) >= 2:  # Expected 2 tasks
                             break
-            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_type))
 
         monitor_task = asyncio.create_task(monitor_commands())
 
@@ -118,7 +118,7 @@ class TestEventDrivenManager:
         )
 
         # Check that tasks were queued
-        queue_length = await self.redis.llen(RedisKeys.get_agent_queue(self.agent_name))
+        queue_length = await self.redis.llen(RedisKeys.get_agent_queue(self.agent_type))
         logger.info(f"📋 Tasks remaining in queue: {queue_length}")
 
         # Cleanup
@@ -143,14 +143,14 @@ class TestEventDrivenManager:
 
         for task in tasks:
             await self.redis.rpush(
-                RedisKeys.get_agent_queue(self.agent_name), json.dumps(task)
+                RedisKeys.get_agent_queue(self.agent_type), json.dumps(task)
             )
 
         logger.info(f"📋 Pre-loaded {len(tasks)} tasks in queue")
 
         # Set agent to PROCESSING (simulating busy state)
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.PROCESSING.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value
         )
 
         # Start manager
@@ -162,7 +162,7 @@ class TestEventDrivenManager:
 
         async def monitor_commands():
             pubsub = self.redis.pubsub()
-            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_type))
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -177,7 +177,7 @@ class TestEventDrivenManager:
                             # Set agent back to IDLE and send completion
                             await self.redis.hset(
                                 RedisKeys.AGENT_STATUS,
-                                self.agent_name,
+                                self.agent_type,
                                 AgentStatus.IDLE.value,
                             )
 
@@ -199,7 +199,7 @@ class TestEventDrivenManager:
                             }
 
                             await self.redis.publish(
-                                RedisChannels.get_task_updates_channel(self.agent_name),
+                                RedisChannels.get_task_updates_channel(self.agent_type),
                                 json.dumps(completion_message),
                             )
                             logger.info("✅ Published task completion event")
@@ -207,13 +207,13 @@ class TestEventDrivenManager:
                         elif len(commands_received) >= 2:
                             break
 
-            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_type))
 
         monitor_task = asyncio.create_task(monitor_commands())
 
         # Set agent to IDLE to trigger first task
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.IDLE.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
         )
 
         # Trigger initial execution by calling the method directly
@@ -231,7 +231,7 @@ class TestEventDrivenManager:
         )
 
         remaining_tasks = await self.redis.llen(
-            RedisKeys.get_agent_queue(self.agent_name)
+            RedisKeys.get_agent_queue(self.agent_type)
         )
         logger.info(f"📋 Tasks remaining: {remaining_tasks}")
 
@@ -249,24 +249,24 @@ class TestEventDrivenManager:
         logger.info("=== Test 3: No Execution When Agent Busy ===")
 
         # Clean up queue first
-        await self.redis.delete(RedisKeys.get_agent_queue(self.agent_name))
+        await self.redis.delete(RedisKeys.get_agent_queue(self.agent_type))
 
         # Set agent to PROCESSING
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.PROCESSING.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value
         )
 
         # Add task to queue
         task = {"query_id": "test_query_003", "query": "Should not execute"}
         await self.redis.rpush(
-            RedisKeys.get_agent_queue(self.agent_name), json.dumps(task)
+            RedisKeys.get_agent_queue(self.agent_type), json.dumps(task)
         )
 
         # Try to execute
         await self.manager._try_execute_next_task()
 
         # Verify no command was sent and task remains in queue
-        queue_length = await self.redis.llen(RedisKeys.get_agent_queue(self.agent_name))
+        queue_length = await self.redis.llen(RedisKeys.get_agent_queue(self.agent_type))
         assert queue_length == 1, (
             f"Task should remain in queue when agent busy, got length: {queue_length}"
         )
@@ -280,7 +280,7 @@ class TestEventDrivenManager:
         # Clean up any leftover tasks from previous tests
         await self._cleanup()
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.IDLE.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
         )
 
         start_time = time.time()
@@ -295,9 +295,9 @@ class TestEventDrivenManager:
         async def monitor_commands():
             nonlocal commands_received, completions_sent
             pubsub = self.redis.pubsub()
-            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.subscribe(RedisChannels.get_command_channel(self.agent_type))
             logger.info(
-                f"📡 Monitoring commands on {RedisChannels.get_command_channel(self.agent_name)}"
+                f"📡 Monitoring commands on {RedisChannels.get_command_channel(self.agent_type)}"
             )
 
             async for message in pubsub.listen():
@@ -333,7 +333,7 @@ class TestEventDrivenManager:
                         await asyncio.sleep(0.01)
 
                         await self.redis.publish(
-                            RedisChannels.get_task_updates_channel(self.agent_name),
+                            RedisChannels.get_task_updates_channel(self.agent_type),
                             json.dumps(completion_message),
                         )
                         completions_sent += 1
@@ -344,7 +344,7 @@ class TestEventDrivenManager:
                             logger.info(f"🎯 All {total_tasks} tasks processed!")
                             break
 
-            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_name))
+            await pubsub.unsubscribe(RedisChannels.get_command_channel(self.agent_type))
 
         # Start monitor first
         monitor_task = asyncio.create_task(monitor_commands())
@@ -356,17 +356,17 @@ class TestEventDrivenManager:
 
         # Ensure agent is IDLE before sending queries
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_name, AgentStatus.IDLE.value
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
         )
-        logger.info(f"✅ Set agent {self.agent_name} to IDLE status")
+        logger.info(f"✅ Set agent {self.agent_type} to IDLE status")
 
         # Send multiple query events concurrently
         for i in range(num_queries):
             query_message = {
                 "query_id": f"stress_query_{i:03d}",
-                "agent_type": [self.agent_name],
+                "agent_type": [self.agent_type],
                 "sub_query": {
-                    self.agent_name: [
+                    self.agent_type: [
                         f"Task_{i:03d}_{j:02d}" for j in range(tasks_per_query)
                     ]
                 },
@@ -380,7 +380,7 @@ class TestEventDrivenManager:
         logger.info(f"🚀 Sent {num_queries} query events with {total_tasks} tasks")
 
         # Check status after sending
-        status = await self.redis.hget(RedisKeys.AGENT_STATUS, self.agent_name)
+        status = await self.redis.hget(RedisKeys.AGENT_STATUS, self.agent_type)
         logger.info(f"📊 Agent status after queries: {status}")
 
         # Wait for all tasks to complete with timeout
@@ -400,7 +400,7 @@ class TestEventDrivenManager:
 
         # Check queue status
         remaining_tasks = await self.redis.llen(
-            RedisKeys.get_agent_queue(self.agent_name)
+            RedisKeys.get_agent_queue(self.agent_type)
         )
 
         logger.info("📈 STRESS TEST RESULTS:")

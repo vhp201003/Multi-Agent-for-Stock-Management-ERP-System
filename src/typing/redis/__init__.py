@@ -2,8 +2,8 @@
 from .agent_status import AgentStatus
 from .messages import CommandMessage, QueryTask, TaskUpdate
 from .shared_data import SharedData
-from .conversation import ConversationData
-from .constants import RedisChannels, TaskStatus
+from .conversation import ConversationData, Message
+from .constants import RedisChannels, TaskStatus, RedisKeys
 
 __all__ = [
     "SharedData",
@@ -12,6 +12,8 @@ __all__ = [
     "CommandMessage",
     "AgentStatus",
     "ConversationData",
+    "Message",
     "RedisChannels",
     "TaskStatus",
+    "RedisKeys"
 ]

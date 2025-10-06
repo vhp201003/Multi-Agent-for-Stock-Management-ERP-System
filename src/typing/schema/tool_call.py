@@ -1,11 +1,28 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
-from src.typing.schema import ToolCallPlan
-from src.typing.response import BaseAgentResponse
+from src.typing.schema import BaseSchema
 
-class ToolCallResponse(BaseAgentResponse):
+
+class ToolCallPlan(BaseSchema):
+    """Single tool call plan returned by LLM.
+
+    Used within ToolCallResponse schema for Groq structured output.
+    The LLM reasoning will be extracted separately via llm_reasoning field.
+    """
+
+    tool_name: str = Field(
+        ...,
+        description="Name of the tool to call (must match available MCP tool names)",
+    )
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters to pass to the tool as key-value pairs",
+    )
+
+
+class ToolCallSchema(BaseSchema):
     """Response for tool calls, resource reads, or error case.
 
     Used as response_schema for Groq. LLM can return:

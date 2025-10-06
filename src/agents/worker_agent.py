@@ -21,13 +21,13 @@ class WorkerAgent(BaseAgent):
 
     def __init__(
         self,
-        name: str,
+        agent_type: str,
         agent_description: str,
         mcp_server_url: Optional[str] = None,
         mcp_timeout: float = 30.0,
         **kwargs,
     ):
-        super().__init__(name, **kwargs)
+        super().__init__(agent_type, **kwargs)
         self.agent_description = agent_description
         self.mcp_server_url = mcp_server_url
         self.mcp_timeout = mcp_timeout
@@ -36,20 +36,20 @@ class WorkerAgent(BaseAgent):
 
     async def get_pub_channels(self) -> List[str]:
         """Channels for publishing task completion updates."""
-        return [RedisChannels.get_task_updates_channel(self.name)]
+        return [RedisChannels.get_task_updates_channel(self.agent_type)]
 
     async def get_sub_channels(self) -> List[str]:
         """Channels for receiving task execution commands."""
-        return [RedisChannels.get_command_channel(self.name)]
+        return [RedisChannels.get_command_channel(self.agent_type)]
 
     async def update_shared_data_from_message(
         self, channel: str, message: Dict[str, Any]
     ):
         """Process task execution commands directly from Manager."""
         # Security: Validate channel source
-        if channel != RedisChannels.get_command_channel(self.name):
+        if channel != RedisChannels.get_command_channel(self.agent_type):
             logger.warning(
-                f"{self.name}: Ignoring message from wrong channel: {channel}"
+                f"{self.agent_type}: Ignoring message from wrong channel: {channel}"
             )
             return
 
@@ -57,41 +57,46 @@ class WorkerAgent(BaseAgent):
             # Validate command structure
             command = message.get("command")
             if command != "execute":
-                logger.debug(f"{self.name}: Ignoring non-execute command: {command}")
+                logger.debug(
+                    f"{self.agent_type}: Ignoring non-execute command: {command}"
+                )
                 return
 
             query_id = message.get("query_id")
             sub_query = message.get("sub_query")
 
             if not query_id:
-                logger.error(f"{self.name}: Missing query_id in execute command")
+                logger.error(f"{self.agent_type}: Missing query_id in execute command")
                 return
 
             if not sub_query:
-                logger.error(f"{self.name}: Missing sub_query in execute command")
+                logger.error(f"{self.agent_type}: Missing sub_query in execute command")
                 return
 
             logger.info(
-                f"{self.name}: Received task execution: '{sub_query}' for {query_id}"
+                f"{self.agent_type}: Received task execution: '{sub_query}' for {query_id}"
             )
 
             # Process task directly with provided data
             await self._process_task_direct(query_id, sub_query)
 
         except Exception as e:
-            logger.exception(f"{self.name}: Command message processing failed: {e}")
+            logger.exception(
+                f"{self.agent_type}: Command message processing failed: {e}"
+            )
 
     async def listen_channels(self):
         """Listen to command channels and process task execution."""
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-        logger.info(f"{self.name} listening on {channels}")
+        logger.info(f"{self.agent_type} listening on {channels}")
 
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
+                        print(f"worker listen message: {message}")
                         data = json.loads(message["data"])
                         channel = message["channel"]
 
@@ -108,7 +113,7 @@ class WorkerAgent(BaseAgent):
                             else parsed_message,
                         )
                     except Exception as e:
-                        logger.error(f"{self.name} message processing error: {e}")
+                        logger.error(f"{self.agent_type} message processing error: {e}")
 
         except Exception as e:
             logger.error(f"Redis error in listen_channels: {e}")
@@ -124,7 +129,7 @@ class WorkerAgent(BaseAgent):
         # Determine model based on channel
         model = (
             TaskUpdate
-            if channel == RedisChannels.get_task_updates_channel(self.name)
+            if channel == RedisChannels.get_task_updates_channel(self.agent_type)
             else None
         )
 
@@ -136,7 +141,7 @@ class WorkerAgent(BaseAgent):
                 )
             else:
                 await self.redis.publish(channel=channel, message=json.dumps(message))
-            logger.info(f"{self.name} published on {channel}: {message}")
+            logger.info(f"{self.agent_type} published on {channel}: {message}")
         except Exception as e:
             logger.error(f"Message publish failed for {channel}: {e}")
             raise
@@ -144,7 +149,7 @@ class WorkerAgent(BaseAgent):
     async def _parse_channel_message(self, channel: str, data: Dict[str, Any]) -> Any:
         """Parse messages for worker-specific channels."""
         try:
-            if channel == RedisChannels.get_command_channel(self.name):
+            if channel == RedisChannels.get_command_channel(self.agent_type):
                 # Worker receives execution commands
                 return CommandMessage(**data)
             else:
@@ -159,19 +164,18 @@ class WorkerAgent(BaseAgent):
     async def _get_mcp_client(self) -> BaseMCPClient:
         """Get persistent MCP client with lazy initialization."""
         if not self.mcp_server_url:
-            raise RuntimeError(f"{self.name}: No MCP server configured")
+            raise RuntimeError(f"{self.agent_type}: No MCP server configured")
 
         if not self._mcp_client:
             self._mcp_client = BaseMCPClient(self.mcp_server_url, self.mcp_timeout)
             await self._mcp_client.__aenter__()
-            logger.info(f"{self.name}: Connected to MCP server")
+            logger.info(f"{self.agent_type}: Connected to MCP server")
 
         return self._mcp_client
 
-    async def initialize_prompt(self):
-        """Initialize system prompt from MCP server with graceful fallback."""
+    async def initialize_prompt(self, tools_example: str):
         if not self.mcp_server_url:
-            logger.warning(f"{self.name}: No MCP server, using fallback prompt")
+            logger.warning(f"{self.agent_type}: No MCP server, using fallback prompt")
             self._set_fallback_prompt()
             return
 
@@ -184,24 +188,25 @@ class WorkerAgent(BaseAgent):
 
             # Build enhanced prompt
             self.prompt = build_worker_agent_prompt(
-                agent_name=self.name,
+                agent_type=self.agent_type,
                 agent_description=self.agent_description,
                 tools=tools,
                 resources=resources,
+                tools_example=tools_example,
             )
 
             logger.info(
-                f"{self.name}: Initialized with {len(tools)} tools, {len(resources)} resources"
+                f"{self.agent_type}: Initialized with {len(tools)} tools, {len(resources)} resources"
             )
 
         except Exception as e:
-            logger.error(f"{self.name}: Prompt initialization failed: {e}")
+            logger.error(f"{self.agent_type}: Prompt initialization failed: {e}")
             self._set_fallback_prompt()
 
     def _set_fallback_prompt(self):
         """Set secure fallback prompt when MCP unavailable."""
         self.prompt = (
-            f"You are {self.name}: {self.agent_description}\n\n"
+            f"You are {self.agent_type}: {self.agent_description}\n\n"
             "IMPORTANT: MCP tools/resources are unavailable. "
             "Respond with clear limitations and suggest manual alternatives."
         )
@@ -211,14 +216,12 @@ class WorkerAgent(BaseAgent):
         try:
             return await client.list_resource_templates()
         except Exception as e:
-            logger.debug(f"{self.name}: Resource templates unavailable: {e}")
+            logger.debug(f"{self.agent_type}: Resource templates unavailable: {e}")
             return []
 
     async def call_mcp_tool(
         self, tool_name: str, params: Dict[str, Any]
     ) -> Optional[str]:
-        """Execute MCP tool call with validation."""
-        # Input validation (Security)
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError("tool_name must be non-empty string")
         if not isinstance(params, dict):
@@ -228,7 +231,6 @@ class WorkerAgent(BaseAgent):
         return await client.call_tool(tool_name, params)
 
     async def read_mcp_resource(self, uri: str) -> Optional[str]:
-        """Read MCP resource with validation."""
         if not isinstance(uri, str) or not uri.strip():
             raise ValueError("uri must be non-empty string")
 
@@ -236,28 +238,25 @@ class WorkerAgent(BaseAgent):
         return await client.read_resource(uri)
 
     async def _process_task_direct(self, query_id: str, sub_query: str):
-        """Process task with data received directly from Manager command."""
         await self._update_status(AgentStatus.PROCESSING)
 
         try:
             logger.info(
-                f"{self.name}: Processing '{sub_query}' for query_id: {query_id}"
+                f"{self.agent_type}: Processing '{sub_query}' for query_id: {query_id}"
             )
 
-            # Execute business logic with timeout
             request = Request(query=sub_query, query_id=query_id)
             async with asyncio.timeout(300.0):  # 5 min processing timeout
                 response = await self.process(request)
 
-            # Publish completion (Manager will handle shared data updates)
             await self._publish_task_completion(query_id, sub_query, response)
             await self._update_status(AgentStatus.IDLE)
 
         except asyncio.TimeoutError:
-            logger.error(f"{self.name}: Task processing timeout")
+            logger.error(f"{self.agent_type}: Task processing timeout")
             await self._update_status(AgentStatus.ERROR)
         except Exception as e:
-            logger.exception(f"{self.name}: Task processing error: {e}")
+            logger.exception(f"{self.agent_type}: Task processing error: {e}")
             await self._update_status(AgentStatus.ERROR)
 
     async def _publish_task_completion(
@@ -278,21 +277,24 @@ class WorkerAgent(BaseAgent):
             }
 
             await self.publish_channel(
-                RedisChannels.get_task_updates_channel(self.name), completion_message
+                RedisChannels.get_task_updates_channel(self.agent_type),
+                completion_message,
             )
-            logger.info(f"{self.name}: Broadcasted completion for query_id: {query_id}")
+            logger.info(
+                f"{self.agent_type}: Broadcasted completion for query_id: {query_id}"
+            )
 
         except Exception as e:
-            logger.error(f"{self.name}: Task completion broadcasting failed: {e}")
+            logger.error(f"{self.agent_type}: Task completion broadcasting failed: {e}")
             raise
 
     async def _update_status(self, status: AgentStatus):
         """Update agent status in Redis with error handling."""
         try:
-            await self.redis.hset(RedisKeys.AGENT_STATUS, self.name, status.value)
-            logger.debug(f"{self.name}: Status updated to {status.value}")
+            await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, status.value)
+            logger.debug(f"{self.agent_type}: Status updated to {status.value}")
         except Exception as e:
-            logger.error(f"{self.name}: Status update failed: {e}")
+            logger.error(f"{self.agent_type}: Status update failed: {e}")
 
     async def process(self, request: Request) -> BaseAgentResponse:
         """Process business request - MUST be implemented by subclasses."""
@@ -302,7 +304,7 @@ class WorkerAgent(BaseAgent):
 
     async def start(self):
         """Start worker agent with full initialization."""
-        logger.info(f"{self.name}: Starting worker agent")
+        logger.info(f"{self.agent_type}: Starting worker agent")
 
         # Initialize capabilities
         await self.initialize_prompt()
@@ -313,15 +315,15 @@ class WorkerAgent(BaseAgent):
 
     async def stop(self):
         """Stop worker agent and cleanup resources."""
-        logger.info(f"{self.name}: Stopping worker agent")
+        logger.info(f"{self.agent_type}: Stopping worker agent")
 
         # Cleanup MCP connection
         if self._mcp_client:
             try:
                 await self._mcp_client.__aexit__(None, None, None)
-                logger.info(f"{self.name}: MCP connection closed")
+                logger.info(f"{self.agent_type}: MCP connection closed")
             except Exception as e:
-                logger.warning(f"{self.name}: MCP cleanup error: {e}")
+                logger.warning(f"{self.agent_type}: MCP cleanup error: {e}")
             finally:
                 self._mcp_client = None
 

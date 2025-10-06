@@ -78,7 +78,7 @@ class LLMColumnBreakField(LLMLayoutField):
     )
 
 
-class LLMChatSchema(BaseModel):
+class ChatAgentSchema(BaseModel):
     """Complete chat response schema for LLM with detailed field descriptions."""
 
     layout: List[
