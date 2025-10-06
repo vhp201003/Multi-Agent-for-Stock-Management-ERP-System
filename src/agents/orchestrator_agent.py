@@ -117,11 +117,14 @@ class OrchestratorAgent(BaseAgent):
 
             # Check completion status - simplified approach
             completed_task_ids = set(
-                task.task_id for agent_node in shared_data.task_graph.nodes.values() 
-                for task in agent_node.tasks if task.status == "done"
+                task.task_id
+                for agent_node in shared_data.task_graph.nodes.values()
+                for task in agent_node.tasks
+                if task.status == "done"
             )
             all_task_ids = set(
-                task.task_id for agent_node in shared_data.task_graph.nodes.values() 
+                task.task_id
+                for agent_node in shared_data.task_graph.nodes.values()
                 for task in agent_node.tasks
             )
             if completed_task_ids == all_task_ids and all_task_ids:
