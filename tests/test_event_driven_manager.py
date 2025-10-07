@@ -195,7 +195,6 @@ class TestEventDrivenManager:
                                 "context": {},
                                 "llm_usage": {},
                                 "timestamp": datetime.now().isoformat(),
-                                "update_type": "task_completed",
                             }
 
                             await self.redis.publish(
@@ -326,7 +325,6 @@ class TestEventDrivenManager:
                             "context": {},
                             "llm_usage": {"tokens": 50, "cost": 0.001},
                             "timestamp": datetime.now().isoformat(),
-                            "update_type": "task_completed",
                         }
 
                         # Small delay to simulate processing
@@ -479,7 +477,6 @@ class TestEventDrivenManager:
                             "context": {"agent": agent_type},
                             "llm_usage": {"tokens": 25, "cost": 0.0005},
                             "timestamp": datetime.now().isoformat(),
-                            "update_type": "task_completed",
                         }
 
                         await asyncio.sleep(0.005)  # Simulate processing

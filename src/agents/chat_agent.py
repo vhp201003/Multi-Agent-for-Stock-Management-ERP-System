@@ -226,7 +226,6 @@ class ChatAgent(BaseAgent):
             },
             "llm_usage": (response.metadata or {}).get("llm_usage", {}),
             "timestamp": datetime.now().isoformat(),
-            "update_type": "final_completion",  # Changed from task_completed
         }
 
         # Publish to task updates - this will trigger orchestrator's final completion
@@ -251,7 +250,6 @@ class ChatAgent(BaseAgent):
             "context": {"agent_type": "chat_agent", "error": error},
             "llm_usage": {},  # REQUIRED field
             "timestamp": datetime.now().isoformat(),
-            "update_type": "task_error",
         }
 
         channel = RedisChannels.get_task_updates_channel("chat_agent")

@@ -80,7 +80,6 @@ class SimpleStressTest:
                             "status": TaskStatus.DONE,
                             "result": {"processed": True},
                             "timestamp": datetime.now().isoformat(),
-                            "update_type": "task_completed",
                         }
                         channel = RedisChannels.get_task_updates_channel(
                             "inventory_agent"

@@ -83,7 +83,6 @@ class MockWorkerAgent:
                 "context": {sub_query: response.context or {}},
                 "llm_usage": response.llm_usage or {},
                 "timestamp": datetime.now().isoformat(),
-                "update_type": "task_completed",
             }
 
             await self.redis.publish(
