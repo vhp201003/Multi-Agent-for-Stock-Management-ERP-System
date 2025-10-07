@@ -1,11 +1,5 @@
 from string import Template
 
-WORKER_EXAMPLES = """
-1. Tool call: Query "Check stock ABC123" → {"tool_calls": [{"tool_name": "check_stock", "parameters": {"product_id": "ABC123"}}]}
-2. Combined: Query "Check ABC123 and show levels" → {"tool_calls": [...], "read_resource": ["stock://levels"]}
-3. Error: Query "Predict sales" → {"error": "No forecasting tools available"}
-"""
-
 WORKER_AGENT_PROMPT = """
 You are $agent_type in Multi Agent System: 
 $agent_description

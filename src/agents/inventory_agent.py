@@ -1,6 +1,9 @@
+import logging
+
 from .worker_agent import WorkerAgent
-from src.typing.schema import ToolCallSchema
-from src.typing.response import ToolCallResponse
+
+logger = logging.getLogger(__name__)
+
 AGENT_TYPE = "inventory"
 AGENT_DESCRIPTION = "Manages inventory operations including stock checks and updates"
 MCP_SERVER_URL = "http://localhost:8001/mcp"
@@ -14,8 +17,6 @@ TOOLS_EXAMPLE = """
 
 
 class InventoryAgent(WorkerAgent):
-    """Agent specialized in inventory management tasks."""
-
     def __init__(self, **kwargs):
         super().__init__(
             agent_type=AGENT_TYPE,
@@ -34,38 +35,93 @@ class InventoryAgent(WorkerAgent):
             if not self.prompt:
                 raise RuntimeError("Agent not properly initialized")
 
-            # Build messages for LLM
-            messages = [
-                {"role": "system", "content": self.prompt},
-                {"role": "user", "content": request.query},
-            ]
+            # Parse query to determine tool calls (simple logic for inventory)
+            tool_calls_result = await self._parse_and_execute_tools(request.query)
 
-            # Call LLM to get inventory action plan
-            response_content = await self._call_llm(
-                messages=messages,
-                response_schema=ToolCallSchema,
-                response_model=ToolCallResponse,
+            # Convert result to JSON string for BaseAgentResponse
+            import json
+
+            result_str = (
+                json.dumps(tool_calls_result)
+                if isinstance(tool_calls_result, dict)
+                else str(tool_calls_result)
             )
 
-            if not response_content:
-                return BaseAgentResponse(
-                    query_id=request.query_id,
-                    result="No response from LLM",
-                    error="llm_no_response",
-                )
-
-            # For now, return the LLM response directly
-            # TODO: Parse LLM response to extract tool calls and execute them via MCP
             return BaseAgentResponse(
                 query_id=request.query_id,
-                result=str(response_content),
+                result=result_str,
                 context={"query": request.query, "agent_type": self.agent_type},
             )
 
         except Exception as e:
+            import json
+
+            error_result = {"error": f"Processing failed: {str(e)}"}
             return BaseAgentResponse(
                 query_id=request.query_id,
-                result="",
-                error=f"Processing failed: {str(e)}",
+                result=json.dumps(error_result),
                 context={"query": request.query, "agent_type": self.agent_type},
             )
+
+    async def _parse_and_execute_tools(self, query: str) -> dict:
+        """Parse query and execute appropriate MCP tools"""
+        query_lower = query.lower()
+
+        # Simple parsing logic for inventory operations
+        if "check stock" in query_lower or "stock level" in query_lower:
+            # Extract product ID from query
+            product_id = self._extract_product_id(query)
+            if product_id:
+                try:
+                    # Execute MCP tool
+                    result = await self.call_mcp_tool(
+                        "check_stock", {"product_id": product_id}
+                    )
+                    return {
+                        "tool_calls": [
+                            {
+                                "tool_name": "check_stock",
+                                "parameters": {"product_id": product_id},
+                                "result": result,
+                            }
+                        ],
+                        "execution_status": "success",
+                    }
+                except Exception as e:
+                    return {
+                        "tool_calls": [
+                            {
+                                "tool_name": "check_stock",
+                                "parameters": {"product_id": product_id},
+                                "error": str(e),
+                            }
+                        ],
+                        "execution_status": "failed",
+                    }
+            else:
+                return {"error": "Could not extract product ID from query"}
+
+        elif "update stock" in query_lower or "restock" in query_lower:
+            # TODO: Implement stock update logic
+            return {"error": "Stock update not implemented yet"}
+
+        else:
+            return {"error": "Unknown inventory operation"}
+
+    def _extract_product_id(self, query: str) -> str:
+        """Extract product ID from query using simple pattern matching"""
+        import re
+
+        # Look for patterns like "LAPTOP-001", "ABC123", etc.
+        patterns = [
+            r"[A-Z]+-\d+",  # LAPTOP-001
+            r"[A-Z]{3,}\d+",  # ABC123
+            r"\b[A-Z0-9-]{5,}\b",  # General alphanumeric codes
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, query.upper())
+            if match:
+                return match.group()
+
+        return None

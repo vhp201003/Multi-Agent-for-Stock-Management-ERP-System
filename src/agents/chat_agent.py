@@ -1,10 +1,3 @@
-"""
-ChatAgent - Intelligent Layout Generation Agent
-
-Generates structured layout responses with professional formatting capabilities.
-Inspired by Frappe's column/section break system for flexible UI rendering.
-"""
-
 import json
 import logging
 from datetime import datetime
@@ -44,11 +37,9 @@ class ChatAgent(BaseAgent):
         self.layout_prompts = CHAT_AGENT_PROMPTS
 
     async def get_pub_channels(self) -> List[str]:
-        """Channels this agent publishes to."""
         return [RedisChannels.get_task_updates_channel("chat_agent")]
 
     async def get_sub_channels(self) -> List[str]:
-        """Channels this agent subscribes to."""
         return [RedisChannels.get_command_channel("chat_agent")]
 
     async def process(self, request: ChatRequest) -> ChatResponse:
@@ -90,7 +81,6 @@ class ChatAgent(BaseAgent):
             return self._create_error_response(str(e))
 
     def _build_layout_prompt(self, request: ChatRequest) -> str:
-        """Build simple prompt for layout generation using config template."""
         logger.info(
             f"DEBUG: Building prompt with request.context type: {type(request.context)}"
         )
@@ -104,7 +94,6 @@ class ChatAgent(BaseAgent):
         return prompt
 
     def _create_fallback_response(self, query: str) -> ChatResponse:
-        """Create fallback response when LLM fails."""
         return ChatResponse(
             layout=[
                 SectionBreakLayoutField(title="Response"),
@@ -116,8 +105,31 @@ class ChatAgent(BaseAgent):
             metadata={"generated_at": datetime.now().isoformat(), "fallback": True},
         )
 
+    def _extract_llm_usage(self, response: ChatResponse) -> dict:
+        llm_usage_data = {}
+        if hasattr(response, "llm_usage") and response.llm_usage:
+            if isinstance(response.llm_usage, dict):
+                llm_usage_data = response.llm_usage
+            elif hasattr(response.llm_usage, "model_dump"):
+                llm_usage_data = response.llm_usage.model_dump()
+            else:
+                # Convert to dict manually
+                llm_usage_data = {
+                    "completion_tokens": getattr(
+                        response.llm_usage, "completion_tokens", None
+                    ),
+                    "prompt_tokens": getattr(response.llm_usage, "prompt_tokens", None),
+                    "total_tokens": getattr(response.llm_usage, "total_tokens", None),
+                    "completion_time": getattr(
+                        response.llm_usage, "completion_time", None
+                    ),
+                    "prompt_time": getattr(response.llm_usage, "prompt_time", None),
+                    "queue_time": getattr(response.llm_usage, "queue_time", None),
+                    "total_time": getattr(response.llm_usage, "total_time", None),
+                }
+        return llm_usage_data
+
     def _create_error_response(self, error: str) -> ChatResponse:
-        """Create error response."""
         return ChatResponse(
             layout=[
                 SectionBreakLayoutField(title="Error"),
@@ -130,7 +142,6 @@ class ChatAgent(BaseAgent):
         )
 
     async def listen_channels(self):
-        """Listen for command messages and process them."""
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
@@ -149,7 +160,6 @@ class ChatAgent(BaseAgent):
             await pubsub.unsubscribe(*channels)
 
     async def _handle_command_message(self, data: Dict[str, Any]):
-        """Handle incoming command messages."""
         command = data.get("command")
 
         if command == "execute":
@@ -160,17 +170,14 @@ class ChatAgent(BaseAgent):
                 logger.error("Missing query_id or sub_query in command")
                 return
 
-            # Parse sub_query as ChatRequest
             try:
                 logger.info(
                     f"DEBUG: sub_query type: {type(sub_query)}, value: {sub_query}"
                 )
 
                 if isinstance(sub_query, str):
-                    # Simple string query
                     chat_request = ChatRequest(query=sub_query)
                 elif isinstance(sub_query, dict):
-                    # Structured request - FIXED: Handle dict properly
                     context = sub_query.get("context")
                     query_text = sub_query.get("query", "")
 
@@ -183,16 +190,13 @@ class ChatAgent(BaseAgent):
                         context=context,
                     )
                 else:
-                    # Handle None or other types
                     logger.error(
                         f"Invalid sub_query type: {type(sub_query)}, value: {sub_query}"
                     )
                     return
 
-                # Process the request
                 response = await self.process(chat_request)
 
-                # Publish completion
                 await self._publish_completion(query_id, sub_query, response)
 
             except Exception as e:
@@ -202,7 +206,6 @@ class ChatAgent(BaseAgent):
     async def _publish_completion(
         self, query_id: str, sub_query: Any, response: ChatResponse
     ):
-        """Publish task completion with layout response."""
         sub_query_str = (
             sub_query.get("query", "")
             if isinstance(sub_query, dict)
@@ -224,18 +227,15 @@ class ChatAgent(BaseAgent):
                 "final_agent": True,  # Mark as final completion
                 "response_ready": True,
             },
-            "llm_usage": (response.metadata or {}).get("llm_usage", {}),
+            "llm_usage": self._extract_llm_usage(response),
             "timestamp": datetime.now().isoformat(),
         }
 
-        # Publish to task updates - this will trigger orchestrator's final completion
         channel = RedisChannels.get_task_updates_channel("chat_agent")
         await self.publish_channel(channel, completion_message)
         logger.info(f"Published FINAL completion for query {query_id}")
 
     async def _publish_error(self, query_id: str, sub_query: Any, error: str):
-        """Publish error message with proper TaskUpdate schema."""
-        # Convert sub_query to string for TaskUpdate compatibility
         sub_query_str = (
             sub_query.get("query", "")
             if isinstance(sub_query, dict)
@@ -256,7 +256,6 @@ class ChatAgent(BaseAgent):
         await self.publish_channel(channel, error_message)
 
     async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        """Publish message to Redis channel."""
         try:
             await self.redis.publish(channel, json.dumps(message))
             logger.debug(f"Published to {channel}: {message}")

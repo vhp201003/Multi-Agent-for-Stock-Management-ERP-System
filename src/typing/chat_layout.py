@@ -173,6 +173,8 @@ class ChatResponse(BaseModel):
         ]
     ]
     metadata: Optional[Dict[str, Any]] = None
+    llm_usage: Optional[Dict[str, Any]] = None
+    llm_reasoning: Optional[str] = None
 
 
 class ChatRequest(BaseModel):

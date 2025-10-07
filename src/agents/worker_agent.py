@@ -17,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class WorkerAgent(BaseAgent):
-    """Base worker agent with MCP integration and task processing."""
-
     def __init__(
         self,
         agent_type: str,
@@ -35,18 +33,14 @@ class WorkerAgent(BaseAgent):
         self._mcp_client: Optional[BaseMCPClient] = None
 
     async def get_pub_channels(self) -> List[str]:
-        """Channels for publishing task completion updates."""
         return [RedisChannels.get_task_updates_channel(self.agent_type)]
 
     async def get_sub_channels(self) -> List[str]:
-        """Channels for receiving task execution commands."""
         return [RedisChannels.get_command_channel(self.agent_type)]
 
     async def update_shared_data_from_message(
         self, channel: str, message: Dict[str, Any]
     ):
-        """Process task execution commands directly from Manager."""
-        # Security: Validate channel source
         if channel != RedisChannels.get_command_channel(self.agent_type):
             logger.warning(
                 f"{self.agent_type}: Ignoring message from wrong channel: {channel}"
@@ -54,7 +48,6 @@ class WorkerAgent(BaseAgent):
             return
 
         try:
-            # Validate command structure
             command = message.get("command")
             if command != "execute":
                 logger.debug(
@@ -77,7 +70,6 @@ class WorkerAgent(BaseAgent):
                 f"{self.agent_type}: Received task execution: '{sub_query}' for {query_id}"
             )
 
-            # Process task directly with provided data
             await self._process_task_direct(query_id, sub_query)
 
         except Exception as e:
@@ -86,7 +78,6 @@ class WorkerAgent(BaseAgent):
             )
 
     async def listen_channels(self):
-        """Listen to command channels and process task execution."""
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
@@ -100,12 +91,10 @@ class WorkerAgent(BaseAgent):
                         data = json.loads(message["data"])
                         channel = message["channel"]
 
-                        # Parse message for worker channels
                         parsed_message = await self._parse_channel_message(
                             channel, data
                         )
 
-                        # Dispatch to shared data update handler
                         await self.update_shared_data_from_message(
                             channel=channel,
                             message=parsed_message.model_dump()
@@ -121,12 +110,9 @@ class WorkerAgent(BaseAgent):
             await pubsub.unsubscribe(*channels)
 
     async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        """Publish task completion updates."""
-        # Validate channel
         if channel not in await self.get_pub_channels():
             raise ValueError(f"WorkerAgent cannot publish to {channel}")
 
-        # Determine model based on channel
         model = (
             TaskUpdate
             if channel == RedisChannels.get_task_updates_channel(self.agent_type)
@@ -147,7 +133,6 @@ class WorkerAgent(BaseAgent):
             raise
 
     async def _parse_channel_message(self, channel: str, data: Dict[str, Any]) -> Any:
-        """Parse messages for worker-specific channels."""
         try:
             if channel == RedisChannels.get_command_channel(self.agent_type):
                 # Worker receives execution commands
@@ -162,7 +147,6 @@ class WorkerAgent(BaseAgent):
             )
 
     async def _get_mcp_client(self) -> BaseMCPClient:
-        """Get persistent MCP client with lazy initialization."""
         if not self.mcp_server_url:
             raise RuntimeError(f"{self.agent_type}: No MCP server configured")
 
@@ -182,11 +166,9 @@ class WorkerAgent(BaseAgent):
         try:
             client = await self._get_mcp_client()
 
-            # Gather MCP capabilities
             tools = await client.list_tools()
             resources = await self._safe_get_resources(client)
 
-            # Build enhanced prompt
             self.prompt = build_worker_agent_prompt(
                 agent_type=self.agent_type,
                 agent_description=self.agent_description,
@@ -204,7 +186,6 @@ class WorkerAgent(BaseAgent):
             self._set_fallback_prompt()
 
     def _set_fallback_prompt(self):
-        """Set secure fallback prompt when MCP unavailable."""
         self.prompt = (
             f"You are {self.agent_type}: {self.agent_description}\n\n"
             "IMPORTANT: MCP tools/resources are unavailable. "
@@ -212,7 +193,6 @@ class WorkerAgent(BaseAgent):
         )
 
     async def _safe_get_resources(self, client: BaseMCPClient) -> List[Dict[str, Any]]:
-        """Safely retrieve MCP resources with error handling."""
         try:
             return await client.list_resource_templates()
         except Exception as e:
@@ -262,16 +242,50 @@ class WorkerAgent(BaseAgent):
     async def _publish_task_completion(
         self, query_id: str, sub_query: str, response: BaseAgentResponse
     ):
-        """Broadcast task completion to Manager for processing."""
         try:
-            # Publish completion event (Manager will handle shared data updates)
+            # Extract LLM usage properly - it should be a dict not an LLMUsage object
+            llm_usage_data = {}
+            if hasattr(response, "llm_usage") and response.llm_usage:
+                if isinstance(response.llm_usage, dict):
+                    llm_usage_data = response.llm_usage
+                elif hasattr(response.llm_usage, "model_dump"):
+                    llm_usage_data = response.llm_usage.model_dump()
+                else:
+                    # Convert to dict manually
+                    llm_usage_data = {
+                        "completion_tokens": getattr(
+                            response.llm_usage, "completion_tokens", None
+                        ),
+                        "prompt_tokens": getattr(
+                            response.llm_usage, "prompt_tokens", None
+                        ),
+                        "total_tokens": getattr(
+                            response.llm_usage, "total_tokens", None
+                        ),
+                        "completion_time": getattr(
+                            response.llm_usage, "completion_time", None
+                        ),
+                        "prompt_time": getattr(response.llm_usage, "prompt_time", None),
+                        "queue_time": getattr(response.llm_usage, "queue_time", None),
+                        "total_time": getattr(response.llm_usage, "total_time", None),
+                    }
+
+            # Parse JSON result if it's a string
+            result_data = response.result or ""
+            if isinstance(result_data, str) and result_data.strip().startswith("{"):
+                try:
+                    result_data = json.loads(result_data)
+                except json.JSONDecodeError:
+                    # Keep as string if not valid JSON
+                    pass
+
             completion_message = {
                 "query_id": query_id,
                 "sub_query": sub_query,
                 "status": TaskStatus.DONE,
-                "results": {sub_query: response.result or ""},
+                "results": {sub_query: result_data},
                 "context": {sub_query: response.context or {}},
-                "llm_usage": response.llm_usage or {},
+                "llm_usage": llm_usage_data,
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -288,7 +302,6 @@ class WorkerAgent(BaseAgent):
             raise
 
     async def _update_status(self, status: AgentStatus):
-        """Update agent status in Redis with error handling."""
         try:
             await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, status.value)
             logger.debug(f"{self.agent_type}: Status updated to {status.value}")
@@ -296,27 +309,21 @@ class WorkerAgent(BaseAgent):
             logger.error(f"{self.agent_type}: Status update failed: {e}")
 
     async def process(self, request: Request) -> BaseAgentResponse:
-        """Process business request - MUST be implemented by subclasses."""
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement process() method"
         )
 
     async def start(self):
-        """Start worker agent with full initialization."""
         logger.info(f"{self.agent_type}: Starting worker agent")
 
-        # Initialize capabilities
         await self.initialize_prompt()
         await self._update_status(AgentStatus.IDLE)
 
-        # Start listening for commands
         await self.listen_channels()
 
     async def stop(self):
-        """Stop worker agent and cleanup resources."""
         logger.info(f"{self.agent_type}: Stopping worker agent")
 
-        # Cleanup MCP connection
         if self._mcp_client:
             try:
                 await self._mcp_client.__aexit__(None, None, None)
@@ -326,6 +333,5 @@ class WorkerAgent(BaseAgent):
             finally:
                 self._mcp_client = None
 
-        # Call parent cleanup
         if hasattr(super(), "stop"):
             await super().stop()

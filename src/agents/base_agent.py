@@ -9,11 +9,8 @@ from config.settings import DEFAULT_CONFIGS, AgentConfig
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from jsonschema import ValidationError
-from redis.commands.json.path import Path
 
 from src.typing import BaseAgentResponse, BaseSchema
-from src.typing.redis import SharedData
-from src.typing.redis.constants import RedisKeys
 
 load_dotenv()
 
@@ -44,7 +41,6 @@ class BaseAgent(ABC):
         response_schema: Optional[Type[BaseSchema]] = None,
         response_model: Optional[Type[BaseAgentResponse]] = None,
     ) -> Any:
-        """Call LLM with structured response parsing."""
         if not self.llm:
             raise ValueError("No Groq API key provided")
         try:
@@ -107,12 +103,10 @@ class BaseAgent(ABC):
 
     @abstractmethod
     async def get_pub_channels(self) -> List[str]:
-        """Return list of channels this agent publishes to."""
         pass
 
     @abstractmethod
     async def get_sub_channels(self) -> List[str]:
-        """Return list of channels this agent subscribes to."""
         pass
 
     @abstractmethod
@@ -157,233 +151,6 @@ class BaseAgent(ABC):
         """
         pass
 
-    async def update_shared_data(self, query_id: str, update_shared_data: SharedData):
-        """Update shared data by merging with existing SharedData instance using Redis JSON.
-
-        Args:
-            query_id: Unique identifier for the query
-            update_shared_data: SharedData instance containing updates to merge
-
-        Raises:
-            ValueError: If query_id is invalid or update_shared_data is not SharedData
-            Exception: For Redis or validation errors
-        """
-        if not query_id or not isinstance(query_id, str):
-            raise ValueError("query_id must be non-empty string")
-        if not isinstance(update_shared_data, SharedData):
-            raise ValueError("update_shared_data must be SharedData instance")
-
-        key = RedisKeys.get_shared_data_key(query_id)
-
-        try:
-            # Check if JSON document exists using Redis JSON
-            existing_data = await self.redis.json().get(key)
-
-            if existing_data:
-                try:
-                    existing_shared_data = SharedData(**existing_data)
-                except (TypeError, ValueError) as e:
-                    logger.warning(
-                        f"Corrupted shared data for {query_id}, resetting: {e}"
-                    )
-                    existing_shared_data = SharedData(
-                        original_query="",
-                        agents_needed=[],
-                        sub_queries={},
-                        dependencies=[],
-                        agents_done=[],
-                        results={},
-                        context={},
-                        llm_usage={},
-                        status="processing",
-                        graph={"nodes": {}, "edges": []},
-                    )
-
-                merged_data = self._merge_shared_data(
-                    existing_shared_data, update_shared_data
-                )
-
-                validated = SharedData(**merged_data)
-                # Set the entire JSON document using Redis JSON
-                await self.redis.json().set(
-                    key, Path.root_path(), validated.model_dump()
-                )
-
-            else:
-                logger.info(
-                    f"No existing shared data for {query_id}, initializing with update"
-                )
-                # Set new JSON document
-                await self.redis.json().set(
-                    key, Path.root_path(), update_shared_data.model_dump()
-                )
-
-            logger.debug(
-                f"Updated shared data for {query_id}: {update_shared_data.model_dump()}"
-            )
-
-        except redis.RedisError as e:
-            logger.error(f"Redis error updating shared data for {query_id}: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Shared data update failed for {query_id}: {e}")
-            raise
-
-    def _merge_shared_data(
-        self, existing: SharedData, update: SharedData
-    ) -> Dict[str, Any]:
-        """Merge update SharedData into existing SharedData.
-
-        Handles special merging logic for lists (agents_done) and nested dicts.
-
-        Args:
-            existing: Current SharedData from Redis
-            update: New SharedData with updates
-
-        Returns:
-            Merged data dictionary ready for validation
-        """
-        existing_dict = existing.model_dump()
-        update_dict = update.model_dump()
-
-        self._deep_update(existing_dict, update_dict)
-
-        return existing_dict
-
-    def _deep_update(
-        self, current_data: Dict[str, Any], update_data: Dict[str, Any]
-    ) -> None:
-        """Deep merge update_data into current_data with special handling.
-
-        Args:
-            current_data: Dictionary to update (modified in-place)
-            update_data: Dictionary with updates to merge
-        """
-        if not isinstance(current_data, dict):
-            raise ValueError("current_data must be dictionary")
-        if not isinstance(update_data, dict):
-            raise ValueError("update_data must be dictionary")
-
-        for key, value in update_data.items():
-            if not isinstance(key, str):
-                raise ValueError("All keys must be strings")
-
-            if (
-                key == "agents_done"
-                and isinstance(value, list)
-                and key in current_data
-                and isinstance(current_data[key], list)
-            ):
-                existing_agents = set(current_data["agents_done"])
-                for item in value:
-                    if item not in existing_agents:
-                        current_data[key].append(item)
-                        existing_agents.add(item)
-            elif (
-                isinstance(value, dict)
-                and key in current_data
-                and isinstance(current_data[key], dict)
-            ):
-                self._deep_update(current_data[key], value)
-            else:
-                current_data[key] = value
-
-    async def get_shared_data(self, query_id: str) -> Optional[SharedData]:
-        """Get shared data using Redis JSON.
-
-        Args:
-            query_id: Unique identifier for the query
-
-        Returns:
-            SharedData instance if exists, None otherwise
-
-        Raises:
-            Exception: For Redis or validation errors
-        """
-        if not query_id or not isinstance(query_id, str):
-            raise ValueError("query_id must be non-empty string")
-
-        key = RedisKeys.get_shared_data_key(query_id)
-
-        try:
-            data = await self.redis.json().get(key)
-            if data:
-                return SharedData(**data)
-            return None
-        except redis.RedisError as e:
-            logger.error(f"Redis error getting shared data for {query_id}: {e}")
-            raise
-        except (TypeError, ValueError) as e:
-            logger.error(f"Invalid shared data format for {query_id}: {e}")
-            raise
-
-    async def get_shared_data_field(self, query_id: str, json_path: str) -> Any:
-        """Get specific field from shared data using JSONPath.
-
-        Args:
-            query_id: Unique identifier for the query
-            json_path: JSONPath expression (e.g., '$.agents_done', '$.results.inventory_agent')
-
-        Returns:
-            Field value or None if not found
-
-        Examples:
-            # Get agents completed
-            agents_done = await agent.get_shared_data_field(query_id, '$.agents_done')
-
-            # Get specific agent results
-            inventory_results = await agent.get_shared_data_field(query_id, '$.results.InventoryAgent')
-
-            # Get query status
-            status = await agent.get_shared_data_field(query_id, '$.status')
-
-        Raises:
-            Exception: For Redis or path errors
-        """
-        if not query_id or not isinstance(query_id, str):
-            raise ValueError("query_id must be non-empty string")
-        if not json_path or not isinstance(json_path, str):
-            raise ValueError("json_path must be non-empty string")
-
-        key = RedisKeys.get_shared_data_key(query_id)
-
-        try:
-            return await self.redis.json().get(key, Path(json_path))
-        except redis.RedisError as e:
-            logger.error(f"Redis error getting field {json_path} for {query_id}: {e}")
-            raise
-
-    async def update_shared_data_field(self, query_id: str, json_path: str, value: Any):
-        """Update specific field in shared data using JSONPath.
-
-        Args:
-            query_id: Unique identifier for the query
-            json_path: JSONPath expression (e.g., '$.status', '$.agents_done')
-            value: New value to set
-
-        Examples:
-            # Update status
-            await agent.update_shared_data_field(query_id, '$.status', 'completed')
-
-            # Update specific result
-            await agent.update_shared_data_field(query_id, '$.results.InventoryAgent', result_data)
-
-        Raises:
-            Exception: For Redis or path errors
-        """
-        if not query_id or not isinstance(query_id, str):
-            raise ValueError("query_id must be non-empty string")
-        if not json_path or not isinstance(json_path, str):
-            raise ValueError("json_path must be non-empty string")
-
-        key = RedisKeys.get_shared_data_key(query_id)
-
-        try:
-            await self.redis.json().set(key, Path(json_path), value)
-            logger.debug(f"Updated field {json_path} for {query_id}: {value}")
-        except redis.RedisError as e:
-            logger.error(f"Redis error updating field {json_path} for {query_id}: {e}")
-            raise
 
     @abstractmethod
     async def start(self):

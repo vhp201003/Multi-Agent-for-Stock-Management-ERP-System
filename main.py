@@ -14,8 +14,8 @@ from src.managers.inventory_manager import InventoryManager
 from src.typing import OrchestratorResponse, Request
 from src.typing.redis import QueryTask
 from src.typing.redis.shared_data import SharedData
+from src.utils import save_shared_data
 
-# Configure logger for this module
 logger = logging.getLogger(__name__)
 
 logging.basicConfig(
@@ -23,7 +23,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-# Global variables for agents and managers
 orchestrator: OrchestratorAgent
 inventory_agent: InventoryAgent
 chat_agent: ChatAgent
@@ -69,14 +68,12 @@ async def lifespan(app: FastAPI):
     """
     global orchestrator, inventory_agent, inventory_manager, tasks, redis_client
 
-    # Initialize agents and managers
     orchestrator = OrchestratorAgent()
     inventory_agent = InventoryAgent()  # Uses default MCP server URL from class
     chat_agent = ChatAgent(redis_host="localhost", redis_port=6379)
     inventory_manager = InventoryManager()  # Specific inventory manager
     redis_client = orchestrator.redis  # Use orchestrator's redis client
 
-    # Start agents and managers asynchronously
     tasks = [
         asyncio.create_task(orchestrator.start()),
         asyncio.create_task(inventory_agent.start()),
@@ -117,10 +114,8 @@ async def handle_query(request: Request):
 
         shared_data = await _initialize_query_state(request, orchestration_result)
 
-        # Step 3: Publish orchestration with delivery confirmation
         await _publish_orchestration_task(query_id, orchestration_result, shared_data)
 
-        # Step 4: Wait for completion with robust timeout handling
         completion_result = await _wait_for_completion(query_id)
 
         return _create_success_response(query_id, request.query, completion_result)
@@ -133,7 +128,6 @@ async def handle_query(request: Request):
 
     except Exception as e:
         logger.exception(f"Critical error processing query {query_id}: {e}")
-        # SECURITY: Don't leak internal details
         return _create_error_response(
             query_id, "internal_error", "Query processing failed"
         )
@@ -150,7 +144,6 @@ def _validate_query_request(request: Request) -> Optional[str]:
     if not request.query_id or not request.query_id.strip():
         return "Query ID cannot be empty"
 
-    # SECURITY: Validate query_id format to prevent injection
     if not re.match(r"^[a-zA-Z0-9_-]+$", request.query_id):
         return "Invalid query ID format"
 
@@ -163,11 +156,9 @@ async def _initialize_query_state(
     if not hasattr(request, "conversation_id") or not request.conversation_id:
         request.conversation_id = f"conversation:{request.query_id}"
 
-    # Extract task information from task_dependency
     sub_query_dict = {}
     task_dependency = orchestration_result.task_dependency
 
-    # Build sub_queries dict for backward compatibility
     for agent_type, agent_node in task_dependency.nodes.items():
         sub_query_list = [task.sub_query for task in agent_node.tasks]
         if sub_query_list:
@@ -185,8 +176,7 @@ async def _initialize_query_state(
         task_graph=task_dependency,  # Use the actual task dependency graph
     )
 
-    # PERFORMANCE: Atomic initialization with Redis JSON
-    await orchestrator.update_shared_data(request.query_id, shared_data)
+    await save_shared_data(orchestrator.redis, request.query_id, shared_data)
 
     return shared_data
 
@@ -194,8 +184,6 @@ async def _initialize_query_state(
 async def _publish_orchestration_task(
     query_id: str, orchestration_result, shared_data: SharedData
 ) -> None:
-    """Publish orchestration task with delivery confirmation."""
-    # Extract sub_queries from task_dependency
     sub_query_dict = {}
     for agent_type, agent_node in orchestration_result.task_dependency.nodes.items():
         sub_query_list = [task.sub_query for task in agent_node.tasks]
@@ -208,7 +196,6 @@ async def _publish_orchestration_task(
         sub_query=sub_query_dict,
     )
 
-    # PERFORMANCE: Publish with confirmation
     try:
         await orchestrator.publish_channel("agent:query_channel", message)
         logger.info(
@@ -220,7 +207,6 @@ async def _publish_orchestration_task(
 
 
 async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
-    """Wait for query completion with efficient timeout handling."""
     completion_channel = f"query:completion:{query_id}"
     pubsub = None
 
@@ -228,7 +214,6 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
         pubsub = orchestrator.redis.pubsub()
         await pubsub.subscribe(completion_channel)
 
-        # PERFORMANCE: Non-blocking timeout with asyncio
         start_time = asyncio.get_event_loop().time()
         max_wait_time = 300.0  # 5 minutes
 
@@ -237,12 +222,10 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
                 try:
                     completion_data = json.loads(message["data"])
 
-                    # SECURITY: Validate completion data structure
                     if not isinstance(completion_data, dict):
                         logging.warning(f"Invalid completion data type for {query_id}")
                         continue
 
-                    # Verify this is our query completion
                     if completion_data.get("query_id") == query_id:
                         logger.info(f"Received completion for query {query_id}")
                         return completion_data
@@ -253,7 +236,6 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
                     )
                     continue
 
-            # PERFORMANCE: Efficient timeout check
             elapsed = asyncio.get_event_loop().time() - start_time
             if elapsed >= max_wait_time:
                 logger.warning(
@@ -261,11 +243,9 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
                 )
                 raise asyncio.TimeoutError("Query completion timeout")
 
-        # Should not reach here, but handle gracefully
         raise asyncio.TimeoutError("Completion stream ended unexpectedly")
 
     finally:
-        # MAINTAINABILITY: Ensure cleanup even on exceptions
         if pubsub:
             try:
                 await pubsub.unsubscribe(completion_channel)
@@ -277,7 +257,6 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
 def _create_success_response(
     query_id: str, original_query: str, completion_data: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Create standardized success response."""
     final_response = completion_data.get("final_response")
 
     return {
@@ -302,7 +281,6 @@ def _create_success_response(
 def _create_error_response(
     query_id: str, error_type: str, message: str
 ) -> Dict[str, Any]:
-    """Create standardized error response."""
     return {
         "query_id": query_id,
         "status": error_type,
@@ -320,7 +298,6 @@ async def get_query_status(query_id: str):
     global orchestrator
 
     try:
-        # Check shared data for status
         shared_key = f"agent:shared_data:{query_id}"
         shared_data_raw = await orchestrator.redis.get(shared_key)
 
@@ -331,13 +308,11 @@ async def get_query_status(query_id: str):
                 "message": "Query not found",
             }
 
-        # Parse shared data
         from src.typing.redis import SharedData
 
         shared_data = SharedData.model_validate_json(shared_data_raw)
 
         if shared_data.status == "done":
-            # Query completed, return results
             return {
                 "query_id": query_id,
                 "status": "completed",
@@ -350,7 +325,6 @@ async def get_query_status(query_id: str):
                 },
             }
         else:
-            # Still processing
             return {
                 "query_id": query_id,
                 "status": "processing",

@@ -32,11 +32,9 @@ class TaskGraphUtils:
     @staticmethod
     def mark_task_done(graph: TaskDependencyGraph, task_id: str) -> bool:
         """Mark a task as done and return success status."""
+        # TaskNode schema doesn't have status field - this is handled at SharedData level
         task = TaskGraphUtils.get_task_by_id(graph, task_id)
-        if task:
-            task.status = "done"
-            return True
-        return False
+        return task is not None
 
     @staticmethod
     def get_ready_tasks(
@@ -46,29 +44,38 @@ class TaskGraphUtils:
         ready_tasks = []
         for agent_node in graph.nodes.values():
             for task in agent_node.tasks:
-                if task.status == "pending" and all(
+                # Check if task dependencies are satisfied and task not completed yet
+                if task.task_id not in completed_task_ids and all(
                     dep_id in completed_task_ids for dep_id in task.dependencies
                 ):
                     ready_tasks.append(task)
         return ready_tasks
 
     @staticmethod
-    def is_agent_complete(graph: TaskDependencyGraph, agent_type: str) -> bool:
+    def is_agent_complete(
+        graph: TaskDependencyGraph, agent_type: str, completed_task_ids: Set[str]
+    ) -> bool:
         """Check if all tasks for an agent are complete."""
         if agent_type not in graph.nodes:
             return False
         agent_node = graph.nodes[agent_type]
-        return all(task.status == "done" for task in agent_node.tasks)
+        return all(task.task_id in completed_task_ids for task in agent_node.tasks)
 
     @staticmethod
-    def get_completion_status(graph: TaskDependencyGraph) -> Dict[str, Dict[str, int]]:
+    def get_completion_status(
+        graph: TaskDependencyGraph, completed_task_ids: Set[str]
+    ) -> Dict[str, Dict[str, int]]:
         """Get completion statistics for all agents."""
         status = {}
         for agent_type, agent_node in graph.nodes.items():
+            total_tasks = len(agent_node.tasks)
+            done_tasks = sum(
+                1 for t in agent_node.tasks if t.task_id in completed_task_ids
+            )
             status[agent_type] = {
-                "total": len(agent_node.tasks),
-                "done": sum(1 for t in agent_node.tasks if t.status == "done"),
-                "pending": sum(1 for t in agent_node.tasks if t.status == "pending"),
+                "total": total_tasks,
+                "done": done_tasks,
+                "pending": total_tasks - done_tasks,
             }
         return status
 
@@ -114,10 +121,19 @@ class SharedData(BaseModel):
         if not success:
             return False
 
+        # Create completed task IDs set based on agents_done
+        completed_task_ids = set()
+        for agent_type in self.agents_done:
+            if agent_type in self.task_graph.nodes:
+                for task in self.task_graph.nodes[agent_type].tasks:
+                    completed_task_ids.add(task.task_id)
+
         # Check if agent is complete
         task = TaskGraphUtils.get_task_by_id(self.task_graph, task_id)
         if task:
-            if TaskGraphUtils.is_agent_complete(self.task_graph, task.agent_type):
+            if TaskGraphUtils.is_agent_complete(
+                self.task_graph, task.agent_type, completed_task_ids
+            ):
                 if task.agent_type not in self.agents_done:
                     self.agents_done.append(task.agent_type)
 
@@ -130,9 +146,18 @@ class SharedData(BaseModel):
     @property
     def execution_progress(self) -> Dict[str, Any]:
         """Get current execution progress summary."""
+        # Create completed task IDs set based on agents_done
+        completed_task_ids = set()
+        for agent_type in self.agents_done:
+            if agent_type in self.task_graph.nodes:
+                for task in self.task_graph.nodes[agent_type].tasks:
+                    completed_task_ids.add(task.task_id)
+
         return {
             "agents_total": len(self.agents_needed),
             "agents_complete": len(self.agents_done),
-            "task_status": TaskGraphUtils.get_completion_status(self.task_graph),
+            "task_status": TaskGraphUtils.get_completion_status(
+                self.task_graph, completed_task_ids
+            ),
             "overall_complete": self.is_complete,
         }
