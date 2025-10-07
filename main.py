@@ -181,9 +181,6 @@ async def _initialize_query_state(
         context={},
         llm_usage={},
         status="processing",
-        created_at=request.timestamp.isoformat()
-        if request.timestamp
-        else datetime.now().isoformat(),
         agents_done=[],  # Explicit initialization
         task_graph=task_dependency,  # Use the actual task dependency graph
     )
@@ -350,7 +347,6 @@ async def get_query_status(query_id: str):
                     "context": shared_data.context,
                     "llm_usage": shared_data.llm_usage,
                     "agents_done": shared_data.agents_done,
-                    "completed_at": shared_data.created_at,  # Could add a completed_at field later
                 },
             }
         else:

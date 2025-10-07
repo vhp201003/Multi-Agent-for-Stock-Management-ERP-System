@@ -89,7 +89,6 @@ class SharedData(BaseModel):
         default_factory=dict
     )  # agent_type -> {sub_query: context}
     status: str = "pending"
-    created_at: str
     llm_usage: Dict[str, LLMUsage] = Field(
         default_factory=dict
     )  # agent_type -> LLMUsage

@@ -57,7 +57,6 @@ class BasicManagerTest:
             "sub_query": {
                 "inventory_agent": ["Simple test task"]  # Tasks for this agent
             },
-            "created_at": datetime.now().isoformat(),
             "graph": {},
         }
 

@@ -14,7 +14,6 @@ class Message(BaseModel):
 class ConversationData(BaseModel):
     conversation_id: str = Field(..., description="Unique conversation identifier")
     messages: List[Message] = Field(default_factory=list, description="Ordered list of messages")
-    created_at: datetime = Field(default_factory=datetime.now, description="Conversation creation time")
     updated_at: datetime = Field(default_factory=datetime.now, description="Last update time")
     max_messages: int = Field(default=50, description="Maximum messages to retain (for memory management)")
     

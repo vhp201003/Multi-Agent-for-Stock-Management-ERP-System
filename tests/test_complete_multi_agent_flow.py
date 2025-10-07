@@ -281,7 +281,6 @@ class MultiAgentSystemDemo:
             "results": {},
             "context": {},
             "status": "processing",
-            "created_at": datetime.now().isoformat(),
             "graph": {
                 "nodes": {
                     "inventory": {

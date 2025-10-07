@@ -121,7 +121,6 @@ async def run_task_lifecycle_test():
                     original_query=f"Test query for {query_id}",
                     agents_needed=list(agent_tasks.keys()),
                     sub_queries=agent_tasks,
-                    created_at=datetime.now().isoformat(),
                     graph=graph,
                 )
 

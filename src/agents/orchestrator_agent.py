@@ -192,7 +192,6 @@ class OrchestratorAgent(BaseAgent):
                     "query": "Generate final response from completed analysis",
                     "context": filtered_context,
                 },
-                "timestamp": shared_data.created_at,
             }
 
             chat_channel = RedisChannels.get_command_channel("chat_agent")
@@ -306,7 +305,6 @@ class OrchestratorAgent(BaseAgent):
                     "query": "Generate comprehensive response based on completed analysis",
                     "context": filtered_context,
                 },
-                "timestamp": shared_data.created_at,
             }
 
             # Publish to ChatAgent command channel

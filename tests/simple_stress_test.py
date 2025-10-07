@@ -110,7 +110,6 @@ class SimpleStressTest:
                 "sub_query": {
                     "inventory_agent": [f"Stress test task {i}"]  # Tasks for this agent
                 },
-                "created_at": datetime.now().isoformat(),
                 "graph": {},
             }
 

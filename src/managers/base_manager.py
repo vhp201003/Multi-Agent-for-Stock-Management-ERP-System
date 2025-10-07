@@ -274,14 +274,11 @@ class BaseManager:
             if current_data:
                 data = current_data
             else:
-                # Create minimal SharedData structure if not exists
-                from datetime import datetime
 
                 data = {
                     "original_query": f"Test query {query_id}",
                     "agents_needed": [self.agent_type],
                     "sub_queries": {self.agent_type: [update.get("sub_query", "")]},
-                    "created_at": datetime.now().isoformat(),
                     "graph": {"nodes": {}, "edges": []},
                     "results": {},
                     "context": {},

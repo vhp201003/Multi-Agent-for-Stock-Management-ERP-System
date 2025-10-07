@@ -196,7 +196,6 @@ class BaseAgent(ABC):
                         context={},
                         llm_usage={},
                         status="processing",
-                        created_at="",
                         graph={"nodes": {}, "edges": []},
                     )
 
