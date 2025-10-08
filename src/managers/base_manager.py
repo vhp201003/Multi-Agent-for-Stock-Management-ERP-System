@@ -17,18 +17,15 @@ class BaseManager:
         self.redis = redis.from_url(redis_url, decode_responses=True)
 
     async def get_pub_channels(self) -> list[str]:
-        """Channels for publishing execute commands to agents."""
         return [RedisChannels.get_command_channel(self.agent_type)]
 
     async def get_sub_channels(self) -> list[str]:
-        """Channels for subscribing to query and task update events."""
         return [
             RedisChannels.QUERY_CHANNEL,
             RedisChannels.get_task_updates_channel(self.agent_type),
         ]
 
     async def listen_channels(self):
-        """Listen to all subscribed channels using standardized pattern."""
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
@@ -40,7 +37,6 @@ class BaseManager:
                         data = json.loads(message["data"])
                         channel = message["channel"]
 
-                        # Route messages based on channel type
                         if channel == RedisChannels.QUERY_CHANNEL:
                             await self._handle_query_message(data)
                         elif channel == RedisChannels.get_task_updates_channel(
@@ -69,21 +65,15 @@ class BaseManager:
         1. New query arrives (after pushing to queue)
         2. Task completion received (after processing update)
 
-        No polling loop - purely event-driven.
         """
-        # Check agent status first
         agent_status = await self._get_agent_status()
 
-        # Only distribute if agent is idle
         if agent_status == AgentStatus.IDLE:
-            # First check pending queue and move to active if dependencies met
             await self._process_pending_tasks()
 
-            # Then check active queue for ready tasks
             await self._execute_ready_tasks()
 
     async def _process_pending_tasks(self):
-        """Move tasks from pending to active queue if dependencies are satisfied."""
         pending_task = await self.redis.lpop(
             RedisKeys.get_agent_pending_queue(self.agent_type)
         )
@@ -91,24 +81,19 @@ class BaseManager:
             task = json.loads(pending_task)
             query_id = task["query_id"]
 
-            # Check if dependencies are satisfied
             dependencies_done = await self._check_dependencies(query_id, task)
 
             if dependencies_done:
-                # Move to active queue (push right - FIFO)
                 await self.redis.rpush(
                     RedisKeys.get_agent_queue(self.agent_type), json.dumps(task)
                 )
                 logger.info(f"Moved task to active queue for {self.agent_type}: {task}")
             else:
-                # Put back in pending queue (push right - maintain order)
                 await self.redis.rpush(
                     RedisKeys.get_agent_pending_queue(self.agent_type), json.dumps(task)
                 )
 
     async def _execute_ready_tasks(self):
-        """Pop task from active queue and send execute command with task data."""
-        # Pop task from active queue (pop left - FIFO)
         task_data = await self.redis.lpop(RedisKeys.get_agent_queue(self.agent_type))
         if task_data:
             try:
@@ -116,7 +101,6 @@ class BaseManager:
                 query_id = task["query_id"]
                 sub_query = task["query"]
 
-                # Send execute command with task data directly to agent
                 await self._publish_execute_command(query_id, sub_query)
                 logger.info(f"Sent execute command to {self.agent_type}: {task}")
 
@@ -133,9 +117,36 @@ class BaseManager:
         Returns:
             bool: True if dependencies are satisfied
         """
-        # Placeholder: Implement proper DAG dependency checking
-        # This should check shared data to see if required agents have completed
-        return True  # For now, assume dependencies are always met
+        try:
+            shared_key = RedisKeys.get_shared_data_key(query_id)
+            shared_data = await self.redis.json().get(shared_key)
+
+            if not shared_data:
+                logger.warning(f"No shared data found for query {query_id}")
+                return True
+
+            agents_needed = shared_data.get("agents_needed", [])
+            agents_done = shared_data.get("agents_done", [])
+
+            if agents_needed:
+                agent_index = (
+                    agents_needed.index(self.agent_type)
+                    if self.agent_type in agents_needed
+                    else -1
+                )
+                if agent_index > 0:
+                    required_agents = agents_needed[:agent_index]
+                    if not all(agent in agents_done for agent in required_agents):
+                        logger.info(
+                            f"Dependencies not satisfied for {self.agent_type}: waiting for {required_agents}"
+                        )
+                        return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking dependencies for {query_id}: {e}")
+            return True  # Allow execution on error
 
     async def _publish_execute_command(self, query_id: str, sub_query: str):
         """Send execute command with task data directly to agent.
@@ -155,8 +166,6 @@ class BaseManager:
         await self.publish_channel(channel, message)
 
     async def publish_channel(self, channel: str, message: dict):
-        """Publish validated message to specified channel."""
-        # Validate channel
         if channel not in await self.get_pub_channels():
             raise ValueError(f"BaseManager cannot publish to {channel}")
 
@@ -168,54 +177,59 @@ class BaseManager:
             raise
 
     async def _handle_query_message(self, data: dict):
-        """Handle incoming query messages from orchestrator."""
         logger.info(f"Manager {self.agent_type} received query message: {data}")
         logger.info(f"Checking if {self.agent_type} in {data.get('agent_type', [])}")
         if self.agent_type in data.get("agent_type", []):
             query_id = data["query_id"]
             sub_queries = data.get("sub_query", {}).get(self.agent_type, [])
+
             shared_key = RedisKeys.get_shared_data_key(query_id)
             shared_data = await self.redis.json().get(shared_key)
-            graph = None
+
+            dependencies_done = True  # Default to true
             if shared_data:
                 try:
-                    graph = shared_data.get("graph")
-                except (TypeError, AttributeError):
-                    pass
-            dependencies_done = True  # Placeholder: implement DAG check
-            if graph:
-                # graph_data = json.loads(graph)  # Placeholder for DAG check
-                pass  # Implement DAG logic later
+                    agents_needed = shared_data.get("agents_needed", [])
+                    agents_done = shared_data.get("agents_done", [])
+
+                    if agents_needed and self.agent_type in agents_needed:
+                        agent_index = agents_needed.index(self.agent_type)
+                        if agent_index > 0:
+                            required_agents = agents_needed[:agent_index]
+                            dependencies_done = all(
+                                agent in agents_done for agent in required_agents
+                            )
+                except Exception as e:
+                    logger.error(f"Error checking dependencies in query handler: {e}")
+                    dependencies_done = True  # Allow execution on error
+
             queue_key = (
                 RedisKeys.get_agent_queue(self.agent_type)
                 if dependencies_done
                 else RedisKeys.get_agent_pending_queue(self.agent_type)
             )
+
             for sub_query in sub_queries:
                 task = {"query_id": query_id, "query": sub_query}
                 await self.redis.rpush(queue_key, json.dumps(task))
                 logger.info(f"Pushed task to {queue_key}: {task}")
 
-            # Reactively try to execute tasks after pushing to queue
             await self._try_execute_next_task()
             logger.info(
                 f"Triggered task execution check for {self.agent_type} after query"
             )
 
     async def _handle_task_update_message(self, data: dict):
-        """Handle task completion updates from agents."""
         query_id = data.get("query_id")
         if not query_id:
             logger.error(f"Missing query_id in task update from {self.agent_type}")
             return
 
-        # Process task completion
         await self._process_task_completion(query_id, data)
         logger.info(
             f"Processed completion update for {query_id} from {self.agent_type}"
         )
 
-        # Reactively try to execute next task after completion
         await self._try_execute_next_task()
         logger.info(
             f"Triggered next task execution check for {self.agent_type} after completion"
@@ -274,12 +288,11 @@ class BaseManager:
             if current_data:
                 data = current_data
             else:
-
+                # Create new shared data with new schema (no graph field)
                 data = {
                     "original_query": f"Test query {query_id}",
                     "agents_needed": [self.agent_type],
                     "sub_queries": {self.agent_type: [update.get("sub_query", "")]},
-                    "graph": {"nodes": {}, "edges": []},
                     "results": {},
                     "context": {},
                     "agents_done": [],
@@ -287,11 +300,9 @@ class BaseManager:
                     "llm_usage": {},
                 }
 
-            # Mark agent as done only if ALL tasks for this agent are completed
             if "agents_done" not in data:
                 data["agents_done"] = []
 
-            # Check if all sub-queries for this agent are now completed
             agent_sub_queries = data.get("sub_queries", {}).get(self.agent_type, [])
             agent_results = data.get("results", {}).get(self.agent_type, {})
 
@@ -301,7 +312,6 @@ class BaseManager:
             ):
                 data["agents_done"].append(self.agent_type)
 
-            # Update results and context (merge instead of overwrite)
             if "results" not in data:
                 data["results"] = {}
             if self.agent_type not in data["results"]:
@@ -314,22 +324,18 @@ class BaseManager:
                 data["context"][self.agent_type] = {}
             data["context"][self.agent_type].update(update.get("context", {}))
 
-            # Update LLM usage if available
             if "llm_usage" not in data:
                 data["llm_usage"] = {}
             data["llm_usage"][self.agent_type] = update.get("llm_usage", {})
 
-            # Check if all agents are done and update status
             all_agents_needed = set(data.get("agents_needed", []))
             agents_done = set(data.get("agents_done", []))
             if all_agents_needed and all_agents_needed.issubset(agents_done):
-                # All agents completed, mark as done
                 data["status"] = TaskStatus.DONE
                 logger.info(
                     f"All agents completed for query {query_id}, marking as done"
                 )
 
-                # Publish completion notification
                 completion_message = {
                     "query_id": query_id,
                     "status": "completed",
@@ -344,7 +350,6 @@ class BaseManager:
                 )
                 logger.info(f"Published completion notification for query {query_id}")
 
-            # Validate and save with Pydantic using Redis JSON
             from src.typing.redis import SharedData
 
             validated = SharedData(**data)
@@ -352,7 +357,6 @@ class BaseManager:
                 shared_key, Path.root_path(), validated.model_dump()
             )
 
-            # Trigger next dependent tasks
             await self.check_and_trigger_next(query_id)
 
         except Exception as e:
