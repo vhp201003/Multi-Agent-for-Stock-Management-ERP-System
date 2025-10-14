@@ -79,17 +79,10 @@ class ChatAgent(BaseAgent):
             return self._create_error_response(str(e))
 
     def _build_layout_prompt(self, request: ChatRequest) -> str:
-        logger.info(
-            f"DEBUG: Building prompt with request.context type: {type(request.context)}"
-        )
-        logger.info(f"DEBUG: request.context value: {request.context}")
-
         context_str = json.dumps(request.context) if request.context else "None"
-
-        prompt = self.layout_prompts["user_template"].format(
+        return self.layout_prompts["user_template"].format(
             query=request.query, context=context_str
         )
-        return prompt
 
     def _create_fallback_response(self, query: str) -> ChatResponse:
         return ChatResponse(
@@ -142,8 +135,6 @@ class ChatAgent(BaseAgent):
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-
-        logger.info(f"ChatAgent listening on channels: {channels}")
 
         try:
             async for message in pubsub.listen():
@@ -289,12 +280,11 @@ class ChatAgent(BaseAgent):
     async def publish_channel(self, channel: str, message: Dict[str, Any]):
         try:
             await self.redis.publish(channel, json.dumps(message))
-            logger.debug(f"Published to {channel}: {message}")
+
         except Exception as e:
             logger.error(f"Failed to publish to {channel}: {e}")
             raise
 
     async def start(self):
         """Start the ChatAgent."""
-        logger.info("Starting ChatAgent...")
         await self.listen_channels()

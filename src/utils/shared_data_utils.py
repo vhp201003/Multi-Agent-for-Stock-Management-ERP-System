@@ -148,7 +148,7 @@ async def update_shared_data_field(
 
     try:
         await redis_client.json().set(key, Path(json_path), value)
-        logger.debug(f"Updated field {json_path} for {query_id}: {value}")
+
     except redis.RedisError as e:
         logger.error(f"Redis error updating field {json_path} for {query_id}: {e}")
         raise

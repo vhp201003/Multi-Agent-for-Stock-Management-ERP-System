@@ -34,8 +34,6 @@ class BaseManager:
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-        logger.info(f"Manager {self.agent_type} listening on {channels}")
-
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -76,13 +74,7 @@ class BaseManager:
                     for task in shared_data.task_graph.nodes[agent_type]:
                         if task.sub_query in agent_results:
                             completed_ids.add(task.task_id)
-                            logger.debug(
-                                f"Task {task.task_id} ({task.sub_query}) marked as completed"
-                            )
 
-            logger.debug(
-                f"Found {len(completed_ids)} completed tasks for query {query_id}"
-            )
             return completed_ids
 
         except Exception as e:
@@ -104,7 +96,7 @@ class BaseManager:
         if self.agent_type not in data.agents_needed:
             return
 
-        logger.info(f"Manager {self.agent_type} processing query: {data.query_id}")
+        # Create tasks for each subtask
 
         shared_key = RedisKeys.get_shared_data_key(data.query_id)
         shared_data_raw = await self.redis.json().get(shared_key)
@@ -132,10 +124,8 @@ class BaseManager:
                 task_node.task_id, shared_data, data.query_id
             ):
                 queue_key = RedisKeys.get_agent_queue(self.agent_type)
-                logger.info(f"Task {task_node.task_id} ready")
             else:
                 queue_key = RedisKeys.get_agent_pending_queue(self.agent_type)
-                logger.info(f"Task {task_node.task_id} pending dependencies")
 
             await self.redis.rpush(queue_key, task_item.model_dump_json())
 
@@ -152,16 +142,11 @@ class BaseManager:
             return
 
         if task_update.agent_type == self.agent_type:
-            logger.info(f"Own agent {self.agent_type} completed task, checking queue")
             await self._try_execute_next_task()
         elif task_update.agent_type == "chat_agent":
-            logger.info(
-                f"ChatAgent completed for query {query_id} - no dependency updates needed"
-            )
+            # ChatAgent is final - no dependency updates needed
+            pass
         else:
-            logger.info(
-                f"Agent {task_update.agent_type} completed, checking pending dependencies"
-            )
             await self._update_pending_tasks_after_completion(query_id)
 
     async def _update_pending_tasks_after_completion(self, query_id: str):
@@ -244,7 +229,6 @@ class BaseManager:
             return False
 
         if not shared_data or not shared_data.task_graph:
-            logger.debug("No task graph available for dependency check")
             return True
 
         try:
@@ -257,10 +241,8 @@ class BaseManager:
 
             for dep_id in task_node.dependencies:
                 if dep_id not in completed_task_ids:
-                    logger.debug(f"Task {task_id} waiting for dependency {dep_id}")
                     return False
 
-            logger.debug(f"Task {task_id} dependencies satisfied")
             return True
 
         except Exception as e:
@@ -275,7 +257,6 @@ class BaseManager:
                 await self.redis.hset(
                     RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
                 )
-                logger.info(f"Reset {self.agent_type} from ERROR to IDLE")
                 agent_status = AgentStatus.IDLE
 
             if agent_status == AgentStatus.IDLE:
@@ -314,5 +295,4 @@ class BaseManager:
             return AgentStatus.ERROR
 
     async def start(self):
-        logger.info(f"Starting BaseManager for {self.agent_type}")
         await self.listen_channels()

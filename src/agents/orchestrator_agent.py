@@ -30,9 +30,7 @@ AGENT_TYPE = "OrchestratorAgent"
 class OrchestratorAgent(BaseAgent):
     def __init__(self):
         super().__init__(agent_type=AGENT_TYPE)
-        self.prompt = build_orchestrator_prompt(
-            OrchestratorSchema
-        )
+        self.prompt = build_orchestrator_prompt(OrchestratorSchema)
 
     def get_pub_channels(self) -> List[str]:
         return [RedisChannels.QUERY_CHANNEL]
@@ -55,41 +53,17 @@ class OrchestratorAgent(BaseAgent):
             return
 
         try:
-            logger.info(
-                f"DEBUG: About to update shared data for query_id {query_id}, agent_type {agent_type}"
-            )
-
             shared_data = await self._update_shared_data_atomic(
                 query_id, agent_type, task_update_message
             )
 
             if not shared_data:
-                logger.warning(
-                    f"DEBUG: No shared data returned for query_id {query_id}"
-                )
                 return
 
-            logger.info(
-                f"DEBUG: Shared data updated successfully for query_id {query_id}"
-            )
-
-            logger.info(
-                f"DEBUG: Checking completion - agent_type={agent_type}, status={task_update_message.status}"
-            )
             if agent_type == "chat_agent" and task_update_message.status == "done":
-                logger.info(
-                    f"DEBUG: ChatAgent completion detected! Triggering final completion for {query_id}"
-                )
                 await self._handle_final_completion(query_id, task_update_message)
             elif shared_data.status == TaskStatus.DONE and agent_type != "chat_agent":
-                logger.info(
-                    f"DEBUG: All non-chat tasks done, triggering ChatAgent for {query_id}"
-                )
                 await self._handle_trigger_chat_agent(query_id, shared_data)
-            else:
-                logger.info(
-                    f"DEBUG: No action needed - shared_data.status={shared_data.status}, agent_type={agent_type}"
-                )
 
         except Exception as e:
             logger.error(f"Task update failed for {query_id}: {e}")
@@ -359,7 +333,6 @@ class OrchestratorAgent(BaseAgent):
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-        logger.info(f"{self.agent_type} listening on channels {channels}")
 
         try:
             async for message in pubsub.listen():
@@ -371,8 +344,6 @@ class OrchestratorAgent(BaseAgent):
                         logger.info(
                             f"DEBUG: OrchestratorAgent received message on channel {channel}"
                         )
-                        logger.info(f"DEBUG: Message data keys: {list(data.keys())}")
-                        logger.info(f"DEBUG: Message data: {data}")
 
                         if channel == RedisChannels.TASK_UPDATES:
                             required_fields = [
@@ -386,7 +357,6 @@ class OrchestratorAgent(BaseAgent):
                                 field for field in required_fields if field not in data
                             ]
 
-                            logger.info(f"DEBUG: Required fields: {required_fields}")
                             logger.info(f"DEBUG: Missing fields: {missing_fields}")
 
                             if missing_fields:
@@ -411,16 +381,8 @@ class OrchestratorAgent(BaseAgent):
 
                             parsed_message = TaskUpdate(**data)
 
-                            logger.info(
-                                "DEBUG: Successfully parsed TaskUpdate, calling handle_task_update_message"
-                            )
-
                             await self.handle_task_update_message(
                                 channel=channel, task_update_message=parsed_message
-                            )
-
-                            logger.info(
-                                f"DEBUG: Completed handle_task_update_message for query_id {parsed_message.query_id}"
                             )
                         else:
                             logger.warning(

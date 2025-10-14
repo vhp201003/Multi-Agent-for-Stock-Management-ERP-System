@@ -59,7 +59,6 @@ class BaseAgent(ABC):
                 response_format=response_format,
             )
 
-            logger.debug("LLM raw response: %s", response)
             choice = response.choices[0]
             message = getattr(choice, "message", None)
             content = (

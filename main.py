@@ -256,7 +256,7 @@ async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
                     pubsub.unsubscribe(completion_channel), timeout=2.0
                 )
                 await asyncio.wait_for(pubsub.aclose(), timeout=2.0)
-                logger.debug(f"Cleaned up pubsub connection for {query_id}")
+
             except Exception as cleanup_error:
                 logger.warning(
                     f"Pubsub cleanup timeout/error for {query_id}: {cleanup_error}"

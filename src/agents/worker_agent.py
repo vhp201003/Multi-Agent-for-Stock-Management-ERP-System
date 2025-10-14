@@ -88,13 +88,10 @@ class WorkerAgent(BaseAgent):
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-        logger.info(f"{self.agent_type} listening on {channels}")
-
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
-                        print(f"worker listen message: {message}")
                         data = json.loads(message["data"])
                         channel = message["channel"]
 
@@ -130,7 +127,6 @@ class WorkerAgent(BaseAgent):
                 )
             else:
                 await self.redis.publish(channel=channel, message=json.dumps(message))
-            logger.info(f"{self.agent_type} published on {channel}: {message}")
         except Exception as e:
             logger.error(f"Message publish failed for {channel}: {e}")
             raise
@@ -155,8 +151,6 @@ class WorkerAgent(BaseAgent):
         if not self._mcp_client:
             self._mcp_client = BaseMCPClient(self.mcp_server_url, self.mcp_timeout)
             await self._mcp_client.__aenter__()
-            logger.info(f"{self.agent_type}: Connected to MCP server")
-
         return self._mcp_client
 
     async def initialize_prompt(self, tools_example: str):
@@ -179,9 +173,7 @@ class WorkerAgent(BaseAgent):
                 tools_example=tools_example,
             )
 
-            logger.info(
-                f"{self.agent_type}: Initialized with {len(tools)} tools, {len(resources)} resources"
-            )
+        # Initialization complete
 
         except Exception as e:
             logger.error(f"{self.agent_type}: Prompt initialization failed: {e}")
