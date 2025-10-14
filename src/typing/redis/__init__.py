@@ -4,6 +4,7 @@ from .messages import CommandMessage, QueryTask, TaskUpdate
 from .shared_data import SharedData
 from .conversation import ConversationData, Message
 from .constants import RedisChannels, TaskStatus, RedisKeys
+from .queue import TaskQueueItem, Queue, PendingQueue
 
 __all__ = [
     "SharedData",
@@ -15,5 +16,8 @@ __all__ = [
     "Message",
     "RedisChannels",
     "TaskStatus",
-    "RedisKeys"
+    "RedisKeys",
+    "TaskQueueItem",
+    "Queue",
+    "PendingQueue",
 ]

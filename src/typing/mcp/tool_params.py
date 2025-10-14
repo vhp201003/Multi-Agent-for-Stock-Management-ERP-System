@@ -1,7 +1,5 @@
-"""Pydantic models for MCP tool parameters and outputs."""
-
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
-
 
 class CheckStockParams(BaseModel):
     """Parameters for check_stock tool.
@@ -16,14 +14,24 @@ class CheckStockParams(BaseModel):
 
 
 class CheckStockOutput(BaseModel):
-    """Output schema for check_stock tool.
-
-    Provides structured response with stock information.
-    """
-
+    """Enhanced output schema with complete product information."""
+    
     product_id: str = Field(description="Product ID that was queried")
-    stock_level: int = Field(description="Current stock level for the product")
-    warehouse: str = Field(description="Warehouse where stock was checked")
-    status: str = Field(
-        default="available", description="Stock status (available/low/out_of_stock)"
+    stock_level: int = Field(description="Current stock level")
+    warehouse: str = Field(description="Warehouse location")
+    status: str = Field(description="Stock status (available/low/critical/out_of_stock)")
+    
+    reserved_qty: int = Field(default=0, description="Reserved quantity")
+    available_qty: int = Field(description="Available quantity for use")
+    timestamp: str = Field(description="Query timestamp")
+    
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Complete product metadata including supplier"
     )
+    
+    product_name: Optional[str] = Field(None, description="Product display name")
+    supplier: Optional[str] = Field(None, description="Supplier name")
+    category: Optional[str] = Field(None, description="Product category")
+    unit_cost: Optional[float] = Field(None, description="Unit cost")
+    reorder_level: Optional[int] = Field(None, description="Reorder threshold")

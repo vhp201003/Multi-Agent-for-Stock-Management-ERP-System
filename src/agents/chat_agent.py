@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from config.prompts.chat_agent import CHAT_AGENT_PROMPTS
 
@@ -13,7 +13,7 @@ from src.typing.chat_layout import (
     MarkdownLayoutField,
     SectionBreakLayoutField,
 )
-from src.typing.redis.constants import RedisChannels
+from src.typing.redis import RedisChannels, RedisKeys, SharedData
 from src.typing.schema import ChatAgentSchema
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class ChatAgent(BaseAgent):
         self.layout_prompts = CHAT_AGENT_PROMPTS
 
     async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.get_task_updates_channel("chat_agent")]
+        return [RedisChannels.TASK_UPDATES]
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel("chat_agent")]
@@ -55,14 +55,12 @@ class ChatAgent(BaseAgent):
         try:
             logger.info(f"Processing chat request: {request.query[:100]}...")
 
-            # Prepare LLM messages for layout generation
             messages = [
                 {"role": "system", "content": self.layout_prompts["system"]},
                 {"role": "user", "content": self.layout_prompts["layout_guidelines"]},
                 {"role": "user", "content": self._build_layout_prompt(request)},
             ]
 
-            # Call LLM with structured response
             response = await self._call_llm(
                 messages=messages,
                 response_schema=ChatAgentSchema,
@@ -113,7 +111,6 @@ class ChatAgent(BaseAgent):
             elif hasattr(response.llm_usage, "model_dump"):
                 llm_usage_data = response.llm_usage.model_dump()
             else:
-                # Convert to dict manually
                 llm_usage_data = {
                     "completion_tokens": getattr(
                         response.llm_usage, "completion_tokens", None
@@ -212,28 +209,61 @@ class ChatAgent(BaseAgent):
             else str(sub_query)
         )
 
+        task_id = await self._resolve_task_id(query_id, sub_query_str)
+
         completion_message = {
             "query_id": query_id,
             "sub_query": sub_query_str,
-            "status": "done",  # This triggers orchestrator's final completion logic
+            "task_id": task_id,  # Include for task_graph tracking
+            "status": "done",
             "results": {
-                "final_response": response.model_dump(),  # Final user-facing response
+                "final_response": response.model_dump(),
                 "layout_response": response.model_dump(),
                 "field_count": len(response.layout),
                 "response_type": "structured_layout",
             },
             "context": {
                 "agent_type": "chat_agent",
-                "final_agent": True,  # Mark as final completion
+                "final_agent": True,
                 "response_ready": True,
             },
             "llm_usage": self._extract_llm_usage(response),
             "timestamp": datetime.now().isoformat(),
+            "agent_type": "chat_agent",
         }
 
-        channel = RedisChannels.get_task_updates_channel("chat_agent")
+        channel = RedisChannels.TASK_UPDATES
         await self.publish_channel(channel, completion_message)
         logger.info(f"Published FINAL completion for query {query_id}")
+
+    async def _resolve_task_id(self, query_id: str, sub_query: str) -> Optional[str]:
+        try:
+            shared_key = RedisKeys.get_shared_data_key(query_id)
+            shared_data_raw = await self.redis.json().get(shared_key)
+
+            if not shared_data_raw:
+                logger.warning(f"No shared data for query {query_id}")
+                return None
+
+            shared_data = SharedData(**shared_data_raw)
+
+            if "chat_agent" in shared_data.task_graph.nodes:
+                for task in shared_data.task_graph.nodes["chat_agent"]:
+                    if (
+                        task.sub_query == sub_query
+                        or "Generate final response" in task.sub_query
+                        or "final response" in sub_query.lower()
+                    ):
+                        return task.task_id
+
+            logger.info(
+                f"ChatAgent task not found in graph, using fallback ID for {query_id}"
+            )
+            return "chat_1"
+
+        except Exception as e:
+            logger.error(f"ChatAgent task ID resolution failed for {query_id}: {e}")
+            return "chat_1"  # Fail-safe fallback
 
     async def _publish_error(self, query_id: str, sub_query: Any, error: str):
         sub_query_str = (
@@ -250,9 +280,10 @@ class ChatAgent(BaseAgent):
             "context": {"agent_type": "chat_agent", "error": error},
             "llm_usage": {},  # REQUIRED field
             "timestamp": datetime.now().isoformat(),
+            "agent_type": "chat_agent",  # Include agent type for easier identification
         }
 
-        channel = RedisChannels.get_task_updates_channel("chat_agent")
+        channel = RedisChannels.TASK_UPDATES
         await self.publish_channel(channel, error_message)
 
     async def publish_channel(self, channel: str, message: Dict[str, Any]):

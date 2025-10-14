@@ -1,5 +1,7 @@
 import logging
 
+from src.typing import BaseAgentResponse
+
 from .worker_agent import WorkerAgent
 
 logger = logging.getLogger(__name__)
@@ -29,16 +31,12 @@ class InventoryAgent(WorkerAgent):
         await super().initialize_prompt(tools_example=TOOLS_EXAMPLE)
 
     async def process(self, request):
-        from src.typing import BaseAgentResponse
-
         try:
             if not self.prompt:
                 raise RuntimeError("Agent not properly initialized")
 
-            # Parse query to determine tool calls (simple logic for inventory)
             tool_calls_result = await self._parse_and_execute_tools(request.query)
 
-            # Convert result to JSON string for BaseAgentResponse
             import json
 
             result_str = (
@@ -64,16 +62,12 @@ class InventoryAgent(WorkerAgent):
             )
 
     async def _parse_and_execute_tools(self, query: str) -> dict:
-        """Parse query and execute appropriate MCP tools"""
         query_lower = query.lower()
 
-        # Simple parsing logic for inventory operations
         if "check stock" in query_lower or "stock level" in query_lower:
-            # Extract product ID from query
             product_id = self._extract_product_id(query)
             if product_id:
                 try:
-                    # Execute MCP tool
                     result = await self.call_mcp_tool(
                         "check_stock", {"product_id": product_id}
                     )
@@ -102,7 +96,6 @@ class InventoryAgent(WorkerAgent):
                 return {"error": "Could not extract product ID from query"}
 
         elif "update stock" in query_lower or "restock" in query_lower:
-            # TODO: Implement stock update logic
             return {"error": "Stock update not implemented yet"}
 
         else:
@@ -112,7 +105,6 @@ class InventoryAgent(WorkerAgent):
         """Extract product ID from query using simple pattern matching"""
         import re
 
-        # Look for patterns like "LAPTOP-001", "ABC123", etc.
         patterns = [
             r"[A-Z]+-\d+",  # LAPTOP-001
             r"[A-Z]{3,}\d+",  # ABC123

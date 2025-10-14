@@ -8,8 +8,15 @@ from config.prompts.worker import build_worker_agent_prompt
 
 from src.mcp.client import BaseMCPClient
 from src.typing import BaseAgentResponse, Request
-from src.typing.redis import AgentStatus, CommandMessage, TaskUpdate
-from src.typing.redis.constants import RedisChannels, RedisKeys, TaskStatus
+from src.typing.redis import (
+    AgentStatus,
+    CommandMessage,
+    RedisChannels,
+    RedisKeys,
+    SharedData,
+    TaskStatus,
+    TaskUpdate,
+)
 
 from .base_agent import BaseAgent
 
@@ -33,7 +40,7 @@ class WorkerAgent(BaseAgent):
         self._mcp_client: Optional[BaseMCPClient] = None
 
     async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.get_task_updates_channel(self.agent_type)]
+        return [RedisChannels.TASK_UPDATES]
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
@@ -113,11 +120,7 @@ class WorkerAgent(BaseAgent):
         if channel not in await self.get_pub_channels():
             raise ValueError(f"WorkerAgent cannot publish to {channel}")
 
-        model = (
-            TaskUpdate
-            if channel == RedisChannels.get_task_updates_channel(self.agent_type)
-            else None
-        )
+        model = TaskUpdate if channel == RedisChannels.TASK_UPDATES else None
 
         try:
             if model:
@@ -135,7 +138,6 @@ class WorkerAgent(BaseAgent):
     async def _parse_channel_message(self, channel: str, data: Dict[str, Any]) -> Any:
         try:
             if channel == RedisChannels.get_command_channel(self.agent_type):
-                # Worker receives execution commands
                 return CommandMessage(**data)
             else:
                 logger.warning(f"WorkerAgent: Unknown channel: {channel}")
@@ -234,16 +236,15 @@ class WorkerAgent(BaseAgent):
 
         except asyncio.TimeoutError:
             logger.error(f"{self.agent_type}: Task processing timeout")
-            await self._update_status(AgentStatus.ERROR)
+            await self._update_status(AgentStatus.IDLE)  # Reset to IDLE for next task
         except Exception as e:
             logger.exception(f"{self.agent_type}: Task processing error: {e}")
-            await self._update_status(AgentStatus.ERROR)
+            await self._update_status(AgentStatus.IDLE)  # Reset to IDLE for next task
 
     async def _publish_task_completion(
         self, query_id: str, sub_query: str, response: BaseAgentResponse
     ):
         try:
-            # Extract LLM usage properly - it should be a dict not an LLMUsage object
             llm_usage_data = {}
             if hasattr(response, "llm_usage") and response.llm_usage:
                 if isinstance(response.llm_usage, dict):
@@ -251,7 +252,6 @@ class WorkerAgent(BaseAgent):
                 elif hasattr(response.llm_usage, "model_dump"):
                     llm_usage_data = response.llm_usage.model_dump()
                 else:
-                    # Convert to dict manually
                     llm_usage_data = {
                         "completion_tokens": getattr(
                             response.llm_usage, "completion_tokens", None
@@ -270,36 +270,56 @@ class WorkerAgent(BaseAgent):
                         "total_time": getattr(response.llm_usage, "total_time", None),
                     }
 
-            # Parse JSON result if it's a string
             result_data = response.result or ""
-            if isinstance(result_data, str) and result_data.strip().startswith("{"):
+            if isinstance(result_data, str) and result_data.strip().startswith(
+                ("{", "[")
+            ):
                 try:
                     result_data = json.loads(result_data)
                 except json.JSONDecodeError:
-                    # Keep as string if not valid JSON
                     pass
+
+            task_id = await self._resolve_task_id(query_id, sub_query)
 
             completion_message = {
                 "query_id": query_id,
                 "sub_query": sub_query,
+                "task_id": task_id,  # Include for precise tracking
                 "status": TaskStatus.DONE,
                 "results": {sub_query: result_data},
                 "context": {sub_query: response.context or {}},
                 "llm_usage": llm_usage_data,
                 "timestamp": datetime.now().isoformat(),
+                "agent_type": self.agent_type,
             }
 
-            await self.publish_channel(
-                RedisChannels.get_task_updates_channel(self.agent_type),
-                completion_message,
-            )
-            logger.info(
-                f"{self.agent_type}: Broadcasted completion for query_id: {query_id}"
-            )
+            await self.publish_channel(RedisChannels.TASK_UPDATES, completion_message)
+            logger.info(f"{self.agent_type}: Task completion published for {query_id}")
 
         except Exception as e:
-            logger.error(f"{self.agent_type}: Task completion broadcasting failed: {e}")
+            logger.error(f"{self.agent_type}: Task completion publishing failed: {e}")
             raise
+
+    async def _resolve_task_id(self, query_id: str, sub_query: str) -> Optional[str]:
+        try:
+            shared_key = RedisKeys.get_shared_data_key(query_id)
+            shared_data_raw = await self.redis.json().get(shared_key)
+
+            if not shared_data_raw:
+                return None
+
+            shared_data = SharedData(**shared_data_raw)
+
+            if self.agent_type in shared_data.task_graph.nodes:
+                for task in shared_data.task_graph.nodes[self.agent_type]:
+                    if task.sub_query == sub_query:
+                        return task.task_id
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Task ID resolution failed: {e}")
+            return None
 
     async def _update_status(self, status: AgentStatus):
         try:
@@ -316,8 +336,9 @@ class WorkerAgent(BaseAgent):
     async def start(self):
         logger.info(f"{self.agent_type}: Starting worker agent")
 
-        await self.initialize_prompt()
         await self._update_status(AgentStatus.IDLE)
+
+        await self.initialize_prompt()
 
         await self.listen_channels()
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class QueryTask(BaseModel):
     query_id: str
-    agent_type: List[str]
+    agents_needed: List[str]
     sub_query: Dict[str, List[str]]  # agent_type -> list of sub_queries
 
 
@@ -17,6 +17,7 @@ class TaskUpdate(BaseModel):
     context: Optional[Dict[str, Any]] = None
     timestamp: str
     llm_usage: Dict[str, Any]
+    agent_type: Optional[str] = None  # The agent type that sent this update
 
 
 class CommandMessage(BaseModel):

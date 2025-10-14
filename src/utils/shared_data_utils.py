@@ -39,7 +39,6 @@ async def get_shared_data(
 async def save_shared_data(
     redis_client: redis.Redis, query_id: str, shared_data: SharedData
 ):
-    """Save SharedData to Redis."""
     if not isinstance(shared_data, SharedData):
         raise ValueError("shared_data must be SharedData instance")
 
@@ -47,9 +46,7 @@ async def save_shared_data(
 
     try:
         await redis_client.json().set(key, Path.root_path(), shared_data.model_dump())
-        logger.debug(f"Saved shared data for {query_id}")
-    except redis.RedisError as e:
-        logger.error(f"Redis error saving shared data for {query_id}: {e}")
+    except redis.RedisError:
         raise
 
 

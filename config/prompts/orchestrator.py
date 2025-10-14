@@ -19,17 +19,27 @@ $schema
 
 ### Example:
 {
-  "agents_needed": ["inventory", "ordering"],
-  "task_dependency": {
-    "nodes": {
-      "inventory": {
-        "tasks": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Check stock levels", "dependencies": []}]
-      },
-      "ordering": {
-        "tasks": [{"task_id": "ordering_1", "agent_type": "ordering", "sub_query": "Create purchase order", "dependencies": ["inventory_1"]}]
-      }
+    "agents_needed": ["inventory", "chat_agent"],
+    "task_dependency": {
+        "nodes": {
+            "inventory": [
+                {
+                    "task_id": "inventory_1", 
+                    "agent_type": "inventory",
+                    "sub_query": "Check stock levels",
+                    "dependencies": []
+                }
+            ],
+            "chat_agent": [
+                {
+                    "task_id": "chat_1",
+                    "agent_type": "chat_agent", 
+                    "sub_query": "Generate final response",
+                    "dependencies": ["inventory_1"]
+                }
+            ]
+        }
     }
-  }
 }
 """
 

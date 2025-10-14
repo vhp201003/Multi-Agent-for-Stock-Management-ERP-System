@@ -91,12 +91,18 @@ class BaseAgent(ABC):
                         parsed.llm_reasoning = llm_reasoning
                     return parsed
                 except (json.JSONDecodeError, ValidationError) as e:
-                    logger.exception("LLM parsing/validation error: %s", e)
-                    debug = BaseAgentResponse()
-                    debug.llm_usage = llm_usage
-                    debug.llm_reasoning = llm_reasoning
-                    debug.error = str(e) if hasattr(debug, "error") else None
-                    return debug
+                    logger.error(f"LLM parsing/validation error: {e}")
+                    logger.error(f"Raw LLM content: {content}")  # Add this debug line
+                    if hasattr(response_model, "model_construct"):
+                        error_response = response_model.model_construct(
+                            agents_needed=[],
+                            task_dependency={"nodes": {}},
+                            error=f"Validation failed: {str(e)}",
+                        )
+                        if hasattr(error_response, "llm_usage"):
+                            error_response.llm_usage = llm_usage
+                        return error_response
+                    return None  # Instead of returning string
         except Exception as e:
             logger.exception("LLM call failed: %s", e)
             return "LLM error: Unable to generate response"
@@ -150,7 +156,6 @@ class BaseAgent(ABC):
             message: Message data to publish (will be validated and serialized)
         """
         pass
-
 
     @abstractmethod
     async def start(self):

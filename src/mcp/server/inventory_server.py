@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class InventoryServerConfig(ServerConfig):
-    """Configuration for Inventory MCP Server with validation."""
-
     default_warehouse: str = Field(
         default="MAIN-WH", description="Default warehouse code"
     )
@@ -248,24 +246,16 @@ class InventoryMCPServer(BaseMCPServer):
             },
         )
         async def check_stock(
-            product_id: str = Field(
-                ..., description="Product identifier to check (e.g., LAPTOP-001)"
-            ),
+            product_id: str = Field(..., description="Product identifier"),
             warehouse: Optional[str] = Field(
-                default=None,
-                description="Warehouse code (optional, uses default if not specified)",
+                default=None, description="Warehouse code"
             ),
         ) -> CheckStockOutput:
-            """Check stock level with comprehensive validation and error handling."""
+            """Enhanced stock check with complete product information."""
             try:
                 validated_product_id = self._validate_product_id(product_id)
                 validated_warehouse = self._validate_warehouse(warehouse)
 
-                self.logger.info(
-                    f"Stock check: {validated_product_id} @ {validated_warehouse}"
-                )
-
-                # Mock ERPNext query - replace with actual API call
                 if validated_product_id not in self._mock_inventory_data:
                     raise ValueError(f"Product {validated_product_id} not found")
 
@@ -283,10 +273,19 @@ class InventoryMCPServer(BaseMCPServer):
                     available_qty=item_data["current_stock"]
                     - item_data["reserved_stock"],
                     timestamp=datetime.now().isoformat(),
+                    product_name=item_data["name"],
+                    supplier=item_data["supplier"],  # 🎯 MISSING FIELD ADDED
+                    category=item_data["category"],
+                    unit_cost=item_data["unit_cost"],
+                    reorder_level=item_data["reorder_level"],
                     metadata={
                         "product_name": item_data["name"],
+                        "supplier": item_data["supplier"],  # 🎯 CRITICAL FIX
+                        "category": item_data["category"],
                         "reorder_level": item_data["reorder_level"],
+                        "reorder_qty": item_data["reorder_qty"],
                         "unit_cost": item_data["unit_cost"],
+                        "last_updated": item_data["last_updated"],
                     },
                 )
 

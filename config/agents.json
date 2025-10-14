@@ -4,17 +4,5 @@
     "capabilities": ["check stock levels", "retrieve stock history", "query inventory data", "monitor stock availability"],
     "dependencies": [],
     "erpnext_module": "Inventory"
-  },
-  "forecasting": {
-    "description": "Predicts demand and analyzes inventory trends for planning.",
-    "capabilities": ["forecast stock demand", "analyze inventory trends", "predict restock needs", "generate demand reports"],
-    "dependencies": ["inventory"],
-    "erpnext_module": "Inventory, Reports"
-  },
-  "ordering": {
-    "description": "Manages order placement and supplier interactions in ERPNext.",
-    "capabilities": ["create purchase orders", "check supplier availability", "manage purchase requests", "process stock orders"],
-    "dependencies": ["inventory", "forecasting"],
-    "erpnext_module": "Buying"
   }
 }

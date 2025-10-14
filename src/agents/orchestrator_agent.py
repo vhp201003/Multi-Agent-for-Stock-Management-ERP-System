@@ -30,31 +30,28 @@ AGENT_TYPE = "OrchestratorAgent"
 class OrchestratorAgent(BaseAgent):
     def __init__(self):
         super().__init__(agent_type=AGENT_TYPE)
-        self.prompt = build_orchestrator_prompt(OrchestratorSchema)
-        self.completed_queries = set()  # Track queries that have been completed to avoid duplicate ChatAgent triggers
+        self.prompt = build_orchestrator_prompt(
+            OrchestratorSchema
+        )
 
     def get_pub_channels(self) -> List[str]:
         return [RedisChannels.QUERY_CHANNEL]
 
     async def get_sub_channels(self) -> List[str]:
-        return [RedisChannels.TASK_UPDATES]
+        return [RedisChannels.TASK_UPDATES]  # Listen to unified task updates channel
 
     async def handle_task_update_message(
         self, channel: str, task_update_message: TaskUpdate
     ):
-        if not channel.startswith(RedisChannels.TASK_UPDATES):
+        if channel != RedisChannels.TASK_UPDATES:
             logger.warning(f"OrchestratorAgent: Invalid channel: {channel}")
             return
 
-        agent_type = channel.split(":")[-1]
+        agent_type = self._extract_agent_type_from_update(task_update_message)
         query_id = task_update_message.query_id
 
         if not query_id:
             logger.error("Missing query_id in task update")
-            return
-
-        if query_id in self.completed_queries:
-            logger.debug(f"Query {query_id} already completed")
             return
 
         try:
@@ -97,58 +94,111 @@ class OrchestratorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Task update failed for {query_id}: {e}")
 
+    def _extract_agent_type_from_update(self, task_update: TaskUpdate) -> str:
+        """Extract agent type from task update message.
+
+        Args:
+                task_update: TaskUpdate message
+
+        Returns:
+                str: The agent type that sent this update
+        """
+        if task_update.agent_type:
+            return task_update.agent_type
+
+        if task_update.results:
+            for key in task_update.results.keys():
+                if "inventory" in str(key).lower():
+                    return "inventory_agent"
+                elif "forecast" in str(key).lower():
+                    return "forecasting_agent"
+                elif "order" in str(key).lower():
+                    return "ordering_agent"
+                elif "chat" in str(key).lower() or "response" in str(key).lower():
+                    return "chat_agent"
+
+        logger.warning(f"Could not extract agent type from update: {task_update}")
+        return ""
+
     async def _update_shared_data_atomic(
         self, query_id: str, agent_type: str, task_update: TaskUpdate
     ) -> Optional[SharedData]:
+        """Enhanced atomic update with ChatAgent task injection."""
         shared_key = RedisKeys.get_shared_data_key(query_id)
 
         try:
-            logger.info(f"DEBUG: Getting shared data from Redis for key {shared_key}")
             current_data = await self.redis.json().get(shared_key)
             if not current_data:
                 logger.warning(f"No shared data for query {query_id}")
                 return None
 
-            logger.info("DEBUG: Creating SharedData instance from current_data")
             shared_data = SharedData(**current_data)
+
+            if (
+                agent_type not in shared_data.task_graph.nodes
+                and agent_type != "chat_agent"
+            ):
+                logger.error(
+                    f"Agent {agent_type} not in task graph for query {query_id}"
+                )
+                return None
+
+            if (
+                agent_type == "chat_agent"
+                and "chat_agent" not in shared_data.task_graph.nodes
+            ):
+                from src.typing.schema.orchestrator import TaskNode
+
+                chat_task = TaskNode(
+                    task_id="chat_1",
+                    task_status="completed",  # Mark as completed since we're processing completion
+                    agent_type="chat_agent",
+                    sub_query=task_update.sub_query or "Generate final response",
+                    dependencies=[],  # ChatAgent has no dependencies when triggered
+                )
+
+                shared_data.task_graph.nodes["chat_agent"] = [chat_task]
+                logger.info(f"Added ChatAgent task to graph for query {query_id}")
 
             if agent_type not in shared_data.agents_done:
                 shared_data.agents_done.append(agent_type)
 
-            shared_data.results[agent_type] = task_update.results
-            shared_data.context[agent_type] = task_update.context
-            shared_data.llm_usage[agent_type] = task_update.llm_usage
+            if task_update.results:
+                shared_data.results[agent_type] = task_update.results
+            if task_update.context:
+                shared_data.context[agent_type] = task_update.context
+            if task_update.llm_usage:
+                shared_data.llm_usage[agent_type] = task_update.llm_usage
 
-            self._update_graph_status(shared_data, agent_type, task_update)
-
-            # Check if all needed agents are done (simpler approach)
-            if set(shared_data.agents_done) == set(shared_data.agents_needed):
+            if set(shared_data.agents_done) >= set(shared_data.agents_needed):
                 shared_data.status = TaskStatus.DONE
 
-            logger.info("DEBUG: About to call update_shared_data utility function")
             await update_shared_data(self.redis, query_id, shared_data)
 
-            logger.info(
-                f"DEBUG: Successfully updated shared data for {agent_type} on query {query_id}"
-            )
+            logger.info(f"Updated shared data for {agent_type} on query {query_id}")
             return shared_data
 
         except Exception as e:
-            logger.error(f"Failed to update shared data atomically: {e}")
+            logger.error(f"Atomic shared data update failed for {query_id}: {e}")
             return None
 
     def _update_graph_status(
         self, shared_data: SharedData, agent_type: str, task_update: TaskUpdate
     ):
-        # TaskNode schema doesn't have status field - it's for LLM generation only
-        # Status tracking is handled at SharedData level through agents_done
-        pass
+        """Update task completion in simplified graph structure."""
+        if agent_type not in shared_data.task_graph.nodes:
+            logger.warning(f"Agent {agent_type} not found in task graph")
+            return
+
+        for task in shared_data.task_graph.nodes[agent_type]:
+            if hasattr(task_update, "task_id") and task.task_id == task_update.task_id:
+                break
+            elif task.sub_query in str(task_update.sub_query):
+                break
 
     async def _handle_final_completion(
         self, query_id: str, chat_completion: TaskUpdate = None
     ):
-        self.completed_queries.add(query_id)
-
         logger.info(f"Final completion for query {query_id}")
 
         final_response_data = None
@@ -158,7 +208,6 @@ class OrchestratorAgent(BaseAgent):
         await self._publish_final_completion(query_id, final_response_data)
 
     async def _handle_trigger_chat_agent(self, query_id: str, shared_data: SharedData):
-        # Don't mark as completed yet - wait for ChatAgent to finish
         logger.info(f"All tasks done for query {query_id}, triggering ChatAgent")
 
         try:
@@ -266,29 +315,6 @@ class OrchestratorAgent(BaseAgent):
                 "error": "Context filtering failed",
             }
 
-    async def _trigger_chat_agent(self, query_id: str, shared_data: SharedData):
-        try:
-            filtered_context = self._filter_context_for_chat(shared_data)
-
-            chat_message = {
-                "command": "execute",
-                "query_id": query_id,
-                "sub_query": {
-                    "query": "Generate comprehensive response based on completed analysis",
-                    "context": filtered_context,
-                },
-            }
-
-            chat_command_channel = RedisChannels.get_command_channel("chat_agent")
-            await self.redis.publish(chat_command_channel, json.dumps(chat_message))
-
-            logger.info(
-                f"Triggered ChatAgent for query {query_id} with filtered context"
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to trigger ChatAgent for {query_id}: {e}")
-
     async def _publish_final_completion(
         self, query_id: str, final_response: dict = None
     ):
@@ -299,7 +325,6 @@ class OrchestratorAgent(BaseAgent):
             if shared_data:
                 shared_data_obj = SharedData(**shared_data)
 
-                # Convert LLMUsage objects to dicts for JSON serialization
                 llm_usage_serializable = {}
                 for agent_type, usage in shared_data_obj.llm_usage.items():
                     if hasattr(usage, "model_dump"):
@@ -332,13 +357,13 @@ class OrchestratorAgent(BaseAgent):
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
-        patterns = [f"{RedisChannels.TASK_UPDATES}:*"]
-        await pubsub.psubscribe(*patterns)
-        logger.info(f"{self.agent_type} listening on patterns {patterns}")
+        channels = await self.get_sub_channels()
+        await pubsub.subscribe(*channels)
+        logger.info(f"{self.agent_type} listening on channels {channels}")
 
         try:
             async for message in pubsub.listen():
-                if message["type"] == "pmessage":
+                if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
                         channel = message["channel"]
@@ -349,59 +374,58 @@ class OrchestratorAgent(BaseAgent):
                         logger.info(f"DEBUG: Message data keys: {list(data.keys())}")
                         logger.info(f"DEBUG: Message data: {data}")
 
-                        if not channel.startswith(RedisChannels.TASK_UPDATES):
+                        if channel == RedisChannels.TASK_UPDATES:
+                            required_fields = [
+                                "query_id",
+                                "sub_query",
+                                "status",
+                                "results",
+                                "llm_usage",
+                            ]
+                            missing_fields = [
+                                field for field in required_fields if field not in data
+                            ]
+
+                            logger.info(f"DEBUG: Required fields: {required_fields}")
+                            logger.info(f"DEBUG: Missing fields: {missing_fields}")
+
+                            if missing_fields:
+                                logger.error(
+                                    f"Invalid TaskUpdate message missing fields {missing_fields}: {data}"
+                                )
+                                continue
+
+                            if not isinstance(data.get("sub_query"), str):
+                                logger.warning(
+                                    f"Converting non-string sub_query to string: {data.get('sub_query')}"
+                                )
+                                data["sub_query"] = str(data.get("sub_query", ""))
+
+                            data.setdefault("results", {})
+                            data.setdefault("context", {})
+                            data.setdefault("llm_usage", {})
+
+                            logger.info(
+                                f"DEBUG: About to parse TaskUpdate with data keys: {list(data.keys())}"
+                            )
+
+                            parsed_message = TaskUpdate(**data)
+
+                            logger.info(
+                                "DEBUG: Successfully parsed TaskUpdate, calling handle_task_update_message"
+                            )
+
+                            await self.handle_task_update_message(
+                                channel=channel, task_update_message=parsed_message
+                            )
+
+                            logger.info(
+                                f"DEBUG: Completed handle_task_update_message for query_id {parsed_message.query_id}"
+                            )
+                        else:
                             logger.warning(
-                                f"{self.agent_type}: Ignoring non-TaskUpdate channel: {channel}"
+                                f"OrchestratorAgent: Unknown channel {channel}"
                             )
-                            continue
-
-                        required_fields = [
-                            "query_id",
-                            "sub_query",
-                            "status",
-                            "results",
-                            "llm_usage",
-                        ]
-                        missing_fields = [
-                            field for field in required_fields if field not in data
-                        ]
-
-                        logger.info(f"DEBUG: Required fields: {required_fields}")
-                        logger.info(f"DEBUG: Missing fields: {missing_fields}")
-
-                        if missing_fields:
-                            logger.error(
-                                f"Invalid TaskUpdate message missing fields {missing_fields}: {data}"
-                            )
-                            continue
-
-                        if not isinstance(data.get("sub_query"), str):
-                            logger.warning(
-                                f"Converting non-string sub_query to string: {data.get('sub_query')}"
-                            )
-                            data["sub_query"] = str(data.get("sub_query", ""))
-
-                        data.setdefault("results", {})
-                        data.setdefault("context", {})
-                        data.setdefault("llm_usage", {})
-
-                        logger.info(
-                            f"DEBUG: About to parse TaskUpdate with data keys: {list(data.keys())}"
-                        )
-
-                        parsed_message = TaskUpdate(**data)
-
-                        logger.info(
-                            "DEBUG: Successfully parsed TaskUpdate, calling handle_task_update_message"
-                        )
-
-                        await self.handle_task_update_message(
-                            channel=channel, task_update_message=parsed_message
-                        )
-
-                        logger.info(
-                            f"DEBUG: Completed handle_task_update_message for query_id {parsed_message.query_id}"
-                        )
 
                     except json.JSONDecodeError as e:
                         logger.error(f"Invalid JSON in message: {e}")
@@ -412,7 +436,7 @@ class OrchestratorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Redis error in listen_channels: {e}")
         finally:
-            await pubsub.punsubscribe(f"{RedisChannels.TASK_UPDATES}:*")
+            await pubsub.unsubscribe(*channels)
 
     async def publish_channel(self, channel: str, message: Dict[str, Any]):
         if channel not in self.get_pub_channels():
@@ -446,7 +470,7 @@ class OrchestratorAgent(BaseAgent):
                 response_schema=OrchestratorSchema,
                 response_model=OrchestratorResponse,
             )
-            logger.info(f"Orchestrator LLM response: {response_content}")
+            logger.debug(f"Orchestrator LLM response: {response_content}")
             if request.conversation_id:
                 await self._save_conversation_message(
                     request.conversation_id,
@@ -456,51 +480,20 @@ class OrchestratorAgent(BaseAgent):
                 )
 
             if response_content is None:
-                from src.typing.schema.orchestrator import TaskDependencyGraph
-
-                return OrchestratorResponse(
-                    query_id=request.query_id,
-                    agents_needed=[],
-                    task_dependency=TaskDependencyGraph(),
-                    error="no_response_from_llm",
-                )
-
-            if hasattr(response_content, "agents_needed") and hasattr(
-                response_content, "task_dependency"
-            ):
-                try:
-                    return OrchestratorResponse(
-                        query_id=request.query_id,
-                        agents_needed=response_content.agents_needed,
-                        task_dependency=response_content.task_dependency,
-                        llm_usage=getattr(response_content, "llm_usage", None),
-                        llm_reasoning=getattr(response_content, "llm_reasoning", None),
-                        error=None,
-                    )
-                except Exception:
-                    pass
-
-            from src.typing.schema.orchestrator import TaskDependencyGraph
+                return
 
             return OrchestratorResponse(
                 query_id=request.query_id,
-                agents_needed=[],
-                task_dependency=TaskDependencyGraph(),
+                agents_needed=response_content.agents_needed,
+                task_dependency=response_content.task_dependency,
                 llm_usage=getattr(response_content, "llm_usage", None),
                 llm_reasoning=getattr(response_content, "llm_reasoning", None),
-                error=getattr(response_content, "error", "parse_error"),
+                error=None,
             )
 
         except Exception as e:
             logger.exception("OrchestratorAgent process failed: %s", e)
-            from src.typing.schema.orchestrator import TaskDependencyGraph
-
-            return OrchestratorResponse(
-                query_id=request.query_id,
-                agents_needed=[],
-                task_dependency=TaskDependencyGraph(),
-                error=str(e),
-            )
+            return
 
     async def _get_conversation_history(self, conversation_id: str) -> List[Message]:
         try:

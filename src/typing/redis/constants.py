@@ -3,20 +3,15 @@ class RedisChannels:
     QUERY_CHANNEL = "agent:query_channel"
     TASK_UPDATES = "agent:task_updates"
 
-    # Agent-specific channel templates (use .format() with agent_type)
+    # Manage command channel per agent type
     COMMAND_CHANNEL = "agent:command_channel:{}"
-    TASK_UPDATES_AGENT = "agent:task_updates:{}"
 
-    # Query completion notifications
+    # Notify when a query is completed
     QUERY_COMPLETION = "query:completion:{}"
 
     @classmethod
     def get_command_channel(cls, agent_type: str) -> str:
         return cls.COMMAND_CHANNEL.format(agent_type)
-
-    @classmethod
-    def get_task_updates_channel(cls, agent_type: str) -> str:
-        return cls.TASK_UPDATES_AGENT.format(agent_type)
 
     @classmethod
     def get_query_completion_channel(cls, query_id: str) -> str:
