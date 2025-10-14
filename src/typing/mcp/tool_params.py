@@ -2,11 +2,6 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 class CheckStockParams(BaseModel):
-    """Parameters for check_stock tool.
-
-    Used to validate input when calling the check_stock tool via MCP.
-    """
-
     product_id: str = Field(description="Product ID to check stock level")
     warehouse: str = Field(
         default="default", description="Warehouse name to check stock in"
@@ -14,8 +9,6 @@ class CheckStockParams(BaseModel):
 
 
 class CheckStockOutput(BaseModel):
-    """Enhanced output schema with complete product information."""
-    
     product_id: str = Field(description="Product ID that was queried")
     stock_level: int = Field(description="Current stock level")
     warehouse: str = Field(description="Warehouse location")

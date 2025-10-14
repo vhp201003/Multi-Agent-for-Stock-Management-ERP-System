@@ -1,5 +1,3 @@
-"""Response type definitions."""
-
 from .base_response import BaseAgentResponse
 from .orchestrator import OrchestratorResponse
 from .tool_call import ToolCallPlan, ToolCallResponse

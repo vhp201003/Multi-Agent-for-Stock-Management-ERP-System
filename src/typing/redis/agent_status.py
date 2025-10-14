@@ -1,5 +1,3 @@
-"""Pydantic models for agent status tracking in Redis."""
-
 from enum import Enum
 
 

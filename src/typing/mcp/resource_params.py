@@ -1,5 +1,3 @@
-"""Pydantic models for MCP resource outputs."""
-
 from typing import Dict
 
 from pydantic import BaseModel, Field

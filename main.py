@@ -97,12 +97,10 @@ async def handle_query(request: Request):
                 query_id, "no_agents", "No agents identified for query processing"
             )
 
-        shared_data = await _initialize_query_state(request, orchestration_result)
+        await _initialize_query_state(request, orchestration_result)
 
-        # Publish orchestration task with simplified structure
         await _publish_orchestration_task(query_id, orchestration_result)
 
-        # Wait for completion with enhanced error handling
         completion_result = await _wait_for_completion(query_id)
 
         return _create_success_response(query_id, request.query, completion_result)
@@ -120,18 +118,15 @@ async def handle_query(request: Request):
 
 
 def _validate_query_request(request: Request) -> Optional[str]:
-    """Enhanced validation with security-focused checks."""
     if not request.query or not request.query.strip():
         return "Query cannot be empty"
 
-    # SECURITY: Prevent DoS attacks
     if len(request.query) > 10000:
         return "Query too long (max 10,000 characters)"
 
     if not request.query_id or not request.query_id.strip():
         return "Query ID cannot be empty"
 
-    # SECURITY: Validate query_id format to prevent injection
     if not re.match(r"^[a-zA-Z0-9_-]+$", request.query_id):
         return "Invalid query ID format (alphanumeric, underscore, hyphen only)"
 

@@ -6,16 +6,6 @@ from src.typing.schema import ToolCallPlan
 from src.typing.response import BaseAgentResponse
 
 class ToolCallResponse(BaseAgentResponse):
-    """Response for tool calls, resource reads, or error case.
-
-    Used as response_schema for Groq. LLM can return:
-    - tool_calls: List of tools to execute (actions)
-    - read_resource: List of resource URIs to read (data fetching)
-    - error: Error message if query cannot be handled
-
-    At least one field must be populated (or error if nothing applicable).
-    """
-
     tool_calls: Optional[List[ToolCallPlan]] = Field(
         None,
         description="List of tool calls to execute in sequence (for ACTIONS)",

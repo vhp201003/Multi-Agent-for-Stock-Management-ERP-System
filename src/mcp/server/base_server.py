@@ -73,7 +73,6 @@ class BaseMCPServer(ABC):
         return mcp
 
     def _get_metrics_data(self) -> dict:
-        """Extract metrics calculation for testability."""
         return {
             "server_id": self.server_id,
             "metrics": {
@@ -85,8 +84,6 @@ class BaseMCPServer(ABC):
         }
 
     def _setup_metrics_endpoint(self) -> None:
-        """Setup metrics endpoint after MCP initialization."""
-
         @self.mcp.custom_route("/metrics", methods=["GET"])
         async def metrics_endpoint(request):
             return self._get_metrics_data()
@@ -111,12 +108,10 @@ class BaseMCPServer(ABC):
             self.logger.info("Starting server initialization...")
             self.metrics.start_time = time.time()
 
-            # Initialize MCP and register components
             self.mcp = await self._initialize_mcp()
             await self._register_tools()
             await self._register_resources()
 
-            # Setup built-in endpoints after registration
             self._setup_metrics_endpoint()
 
             self._is_running = True
@@ -131,7 +126,6 @@ class BaseMCPServer(ABC):
             self.logger.info("Starting server cleanup...")
             self._is_running = False
 
-            # Bounded cleanup with timeout
             try:
                 await asyncio.wait_for(
                     self._cleanup(), timeout=self.config.shutdown_timeout
@@ -147,7 +141,6 @@ class BaseMCPServer(ABC):
                 f"Starting {self.config.name} on {self.config.host}:{self.config.port}"
             )
 
-            # Use the correct FastMCP method for streamable-http transport
             server_task = asyncio.create_task(self.mcp.run_streamable_http_async())
 
             try:
@@ -156,7 +149,6 @@ class BaseMCPServer(ABC):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # Bounded task cleanup
                 for task in pending:
                     task.cancel()
 

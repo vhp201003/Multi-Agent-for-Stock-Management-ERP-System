@@ -1,4 +1,3 @@
-# src/typing/redis/__init__.py
 from .agent_status import AgentStatus
 from .messages import CommandMessage, QueryTask, TaskUpdate
 from .shared_data import SharedData

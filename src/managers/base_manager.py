@@ -1,7 +1,6 @@
 import json
 import logging
 from datetime import datetime
-from typing import Optional, Set
 
 import redis.asyncio as redis
 from src.typing.redis import (
@@ -34,69 +33,34 @@ class BaseManager:
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
+
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
-                    try:
-                        data = json.loads(message["data"])
-                        channel = message["channel"]
-
-                        if channel == RedisChannels.QUERY_CHANNEL:
-                            await self._handle_query_message(QueryTask(**data))
-                        elif channel == RedisChannels.TASK_UPDATES:
-                            await self._handle_task_update_message(TaskUpdate(**data))
-
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Invalid JSON in channel {channel}: {e}")
-                    except Exception as e:
-                        logger.error(
-                            f"Message processing error in {self.agent_type}: {e}"
-                        )
+                    await self._handle_message(message["channel"], message["data"])
         except redis.RedisError as e:
             logger.error(f"Redis connection error: {e}")
             raise
         finally:
             await pubsub.unsubscribe(*channels)
 
-    async def _get_completed_task_ids(self, query_id: str) -> Set[str]:
+    async def _handle_message(self, channel: str, raw_data: str):
         try:
-            shared_data_raw = await self.redis.json().get(
-                RedisKeys.get_shared_data_key(query_id)
-            )
-            if not shared_data_raw:
-                return set()
+            data = json.loads(raw_data)
 
-            shared_data = SharedData(**shared_data_raw)
-            completed_ids = set()
+            if channel == RedisChannels.QUERY_CHANNEL:
+                await self._process_query_message(QueryTask(**data))
+            elif channel == RedisChannels.TASK_UPDATES:
+                await self._process_task_update(TaskUpdate(**data))
 
-            for agent_type, agent_results in shared_data.results.items():
-                if agent_type in shared_data.task_graph.nodes:
-                    for task in shared_data.task_graph.nodes[agent_type]:
-                        if task.sub_query in agent_results:
-                            completed_ids.add(task.task_id)
-
-            return completed_ids
-
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in channel {channel}: {e}")
         except Exception as e:
-            logger.error(f"Failed to get completed task IDs for {query_id}: {e}")
-            return set()
+            logger.error(f"Message processing error in {self.agent_type}: {e}")
 
-    async def _find_task_by_subquery(
-        self, shared_data: SharedData, sub_query: str
-    ) -> Optional[str]:
-        agent_tasks = TaskGraphUtils.get_tasks_for_agent(
-            shared_data.task_graph, self.agent_type
-        )
-        for task in agent_tasks:
-            if task.sub_query == sub_query:
-                return task.task_id
-        return None
-
-    async def _handle_query_message(self, data: QueryTask):
+    async def _process_query_message(self, data: QueryTask):
         if self.agent_type not in data.agents_needed:
             return
-
-        # Create tasks for each subtask
 
         shared_key = RedisKeys.get_shared_data_key(data.query_id)
         shared_data_raw = await self.redis.json().get(shared_key)
@@ -105,7 +69,6 @@ class BaseManager:
             return
 
         shared_data = SharedData(**shared_data_raw)
-
         agent_tasks = TaskGraphUtils.get_tasks_for_agent(
             shared_data.task_graph, self.agent_type
         )
@@ -120,18 +83,20 @@ class BaseManager:
                 task_id=task_node.task_id,
             )
 
-            if await self._are_dependencies_satisfied(
+            dependencies_satisfied = await self._check_dependencies(
                 task_node.task_id, shared_data, data.query_id
-            ):
-                queue_key = RedisKeys.get_agent_queue(self.agent_type)
-            else:
-                queue_key = RedisKeys.get_agent_pending_queue(self.agent_type)
+            )
+            queue_key = (
+                RedisKeys.get_agent_queue(self.agent_type)
+                if dependencies_satisfied
+                else RedisKeys.get_agent_pending_queue(self.agent_type)
+            )
 
             await self.redis.rpush(queue_key, task_item.model_dump_json())
 
-        await self._try_execute_next_task()
+        await self._execute_next_available_task()
 
-    async def _handle_task_update_message(self, task_update: TaskUpdate):
+    async def _process_task_update(self, task_update: TaskUpdate):
         query_id = task_update.query_id
         if not query_id:
             logger.error("Missing query_id in task update")
@@ -142,14 +107,11 @@ class BaseManager:
             return
 
         if task_update.agent_type == self.agent_type:
-            await self._try_execute_next_task()
-        elif task_update.agent_type == "chat_agent":
-            # ChatAgent is final - no dependency updates needed
-            pass
-        else:
-            await self._update_pending_tasks_after_completion(query_id)
+            await self._execute_next_available_task()
+        elif task_update.agent_type != "chat_agent":  # ChatAgent is final
+            await self._update_pending_tasks(query_id)
 
-    async def _update_pending_tasks_after_completion(self, query_id: str):
+    async def _update_pending_tasks(self, query_id: str):
         try:
             pending_queue_key = RedisKeys.get_agent_pending_queue(self.agent_type)
             active_queue_key = RedisKeys.get_agent_queue(self.agent_type)
@@ -166,7 +128,6 @@ class BaseManager:
                 return
 
             shared_data = SharedData(**shared_data_raw)
-
             ready_tasks = []
             still_pending = []
 
@@ -179,9 +140,13 @@ class BaseManager:
 
                 task_id = getattr(task, "task_id", None)
                 if not task_id:
-                    task_id = await self._find_task_by_subquery(
-                        shared_data, task.sub_query
+                    agent_tasks = TaskGraphUtils.get_tasks_for_agent(
+                        shared_data.task_graph, self.agent_type
                     )
+                    for t in agent_tasks:
+                        if t.sub_query == task.sub_query:
+                            task_id = t.task_id
+                            break
 
                 if not task_id:
                     logger.warning(
@@ -190,9 +155,10 @@ class BaseManager:
                     still_pending.append(task_raw)
                     continue
 
-                if await self._are_dependencies_satisfied(
+                dependencies_satisfied = await self._check_dependencies(
                     task_id, shared_data, query_id
-                ):
+                )
+                if dependencies_satisfied:
                     ready_tasks.append(task_raw)
                     logger.info(
                         f"Task {task_id} dependencies satisfied, moving to active"
@@ -202,26 +168,21 @@ class BaseManager:
 
             if ready_tasks:
                 pipeline = self.redis.pipeline()
-
                 pipeline.delete(pending_queue_key)
-
                 if still_pending:
                     pipeline.rpush(pending_queue_key, *still_pending)
-
                 pipeline.rpush(active_queue_key, *ready_tasks)
-
                 await pipeline.execute()
 
                 logger.info(
                     f"Moved {len(ready_tasks)} tasks to active, {len(still_pending)} remain pending"
                 )
-
-                await self._try_execute_next_task()
+                await self._execute_next_available_task()
 
         except Exception as e:
             logger.error(f"Failed to update pending tasks for {self.agent_type}: {e}")
 
-    async def _are_dependencies_satisfied(
+    async def _check_dependencies(
         self, task_id: str, shared_data: SharedData, query_id: str
     ) -> bool:
         if not task_id or not isinstance(task_id, str):
@@ -232,26 +193,32 @@ class BaseManager:
             return True
 
         try:
-            completed_task_ids = await self._get_completed_task_ids(query_id)
+            completed_ids = set()
+            for agent_type, agent_results in shared_data.results.items():
+                if agent_type in shared_data.task_graph.nodes:
+                    for task in shared_data.task_graph.nodes[agent_type]:
+                        if task.sub_query in agent_results:
+                            completed_ids.add(task.task_id)
 
             task_node = TaskGraphUtils.get_task_by_id(shared_data.task_graph, task_id)
             if not task_node:
                 logger.warning(f"Task {task_id} not found in task graph")
                 return True
 
-            for dep_id in task_node.dependencies:
-                if dep_id not in completed_task_ids:
-                    return False
-
-            return True
+            return all(dep_id in completed_ids for dep_id in task_node.dependencies)
 
         except Exception as e:
             logger.error(f"Dependency check failed for {task_id}: {e}")
             return True
 
-    async def _try_execute_next_task(self):
+    async def _execute_next_available_task(self):
         try:
-            agent_status = await self._get_agent_status()
+            status_value = await self.redis.hget(
+                RedisKeys.AGENT_STATUS, self.agent_type
+            )
+            agent_status = (
+                AgentStatus(status_value) if status_value else AgentStatus.IDLE
+            )
 
             if agent_status == AgentStatus.ERROR:
                 await self.redis.hset(
@@ -265,34 +232,22 @@ class BaseManager:
                 )
                 if task_data:
                     task = TaskQueueItem(**json.loads(task_data))
-                    await self._publish_execute_command(task)
+
+                    channel = RedisChannels.get_command_channel(self.agent_type)
+                    message = CommandMessage(
+                        agent_type=self.agent_type,
+                        command="execute",
+                        query_id=task.query_id,
+                        sub_query=task.sub_query,
+                        timestamp=datetime.now().isoformat(),
+                    )
+                    await self.redis.publish(channel, json.dumps(message.model_dump()))
                     logger.info(
                         f"Executing task on {self.agent_type}: {task.sub_query}"
                     )
 
         except Exception as e:
             logger.error(f"Failed to execute next task for {self.agent_type}: {e}")
-
-    async def _publish_execute_command(self, task_data: TaskQueueItem):
-        channel = RedisChannels.get_command_channel(self.agent_type)
-        message = CommandMessage(
-            agent_type=self.agent_type,
-            command="execute",
-            query_id=task_data.query_id,
-            sub_query=task_data.sub_query,
-            timestamp=datetime.now().isoformat(),
-        )
-        await self.redis.publish(channel, json.dumps(message.model_dump()))
-
-    async def _get_agent_status(self) -> AgentStatus:
-        try:
-            status_value = await self.redis.hget(
-                RedisKeys.AGENT_STATUS, self.agent_type
-            )
-            return AgentStatus(status_value) if status_value else AgentStatus.IDLE
-        except Exception as e:
-            logger.error(f"Error getting status for {self.agent_type}: {e}")
-            return AgentStatus.ERROR
 
     async def start(self):
         await self.listen_channels()

@@ -1,7 +1,3 @@
-"""
-Simple SharedData utility functions with Redis operations.
-"""
-
 import logging
 from typing import Any, Dict, Optional
 
@@ -17,7 +13,6 @@ logger = logging.getLogger(__name__)
 async def get_shared_data(
     redis_client: redis.Redis, query_id: str
 ) -> Optional[SharedData]:
-    """Get SharedData from Redis."""
     if not query_id or not isinstance(query_id, str):
         raise ValueError("query_id must be non-empty string")
 
@@ -53,7 +48,6 @@ async def save_shared_data(
 async def update_shared_data(
     redis_client: redis.Redis, query_id: str, update_data: SharedData
 ):
-    """Update SharedData with merge logic."""
     key = RedisKeys.get_shared_data_key(query_id)
 
     try:
@@ -88,7 +82,6 @@ async def update_shared_data(
 
 
 def _merge_shared_data(existing: SharedData, update: SharedData) -> Dict[str, Any]:
-    """Simple merge logic."""
     existing_dict = existing.model_dump()
     update_dict = update.model_dump()
 
@@ -97,7 +90,6 @@ def _merge_shared_data(existing: SharedData, update: SharedData) -> Dict[str, An
 
 
 def _deep_update(current_data: Dict[str, Any], update_data: Dict[str, Any]) -> None:
-    """Deep merge update_data into current_data."""
     for key, value in update_data.items():
         if (
             key == "agents_done"
@@ -105,7 +97,6 @@ def _deep_update(current_data: Dict[str, Any], update_data: Dict[str, Any]) -> N
             and key in current_data
             and isinstance(current_data[key], list)
         ):
-            # Special handling for agents_done - append unique items
             existing_agents = set(current_data["agents_done"])
             for item in value:
                 if item not in existing_agents:
@@ -124,7 +115,6 @@ def _deep_update(current_data: Dict[str, Any], update_data: Dict[str, Any]) -> N
 async def get_shared_data_field(
     redis_client: redis.Redis, query_id: str, json_path: str
 ) -> Any:
-    """Get specific field using JSONPath."""
     if not json_path or not isinstance(json_path, str):
         raise ValueError("json_path must be non-empty string")
 
@@ -140,7 +130,6 @@ async def get_shared_data_field(
 async def update_shared_data_field(
     redis_client: redis.Redis, query_id: str, json_path: str, value: Any
 ):
-    """Update specific field using JSONPath."""
     if not json_path or not isinstance(json_path, str):
         raise ValueError("json_path must be non-empty string")
 

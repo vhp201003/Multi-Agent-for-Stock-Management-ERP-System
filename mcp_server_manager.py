@@ -40,7 +40,6 @@ class MCPServerManager:
             server.stop()
             logger.info(f"⏹️ Stopped: {name}")
 
-        # Cancel all tasks
         for task in self.tasks:
             if not task.done():
                 task.cancel()
@@ -48,7 +47,6 @@ class MCPServerManager:
         logger.info("All servers stopped!")
 
     async def wait_until_stopped(self):
-        """Đợi cho đến khi tất cả servers dừng."""
         if self.tasks:
             await asyncio.gather(*self.tasks, return_exceptions=True)
 
@@ -68,15 +66,12 @@ def create_inventory_server(
 async def run_default_setup():
     manager = MCPServerManager()
 
-    # Thêm Inventory server
     inventory_server = create_inventory_server()
     manager.add_server("inventory", inventory_server)
 
     try:
-        # Start all servers
         await manager.start_all()
 
-        # Keep running until KeyboardInterrupt
         print("\n🚀 Servers are running. Press Ctrl+C to stop.\n")
         await manager.wait_until_stopped()
 

@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class BaseMCPClient:
-    """Production MCP client with persistent session."""
-
     def __init__(self, server_url: str, timeout: float = 30.0):
         parsed = urlparse(server_url)
         if not parsed.scheme or not parsed.netloc:
@@ -23,7 +21,6 @@ class BaseMCPClient:
         self._exit_stack = None
 
     async def __aenter__(self):
-        """Establish connection with timeout."""
         try:
             async with asyncio.timeout(self.timeout):
                 self._exit_stack = streamablehttp_client(self.server_url)
@@ -40,12 +37,10 @@ class BaseMCPClient:
             raise RuntimeError(f"Connection failed: {e}")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Clean up resources."""
         await self._cleanup()
         return False
 
     async def _cleanup(self):
-        """Safe cleanup of all resources."""
         for resource in [self._session, self._exit_stack]:
             if resource:
                 try:
@@ -57,7 +52,6 @@ class BaseMCPClient:
         self._exit_stack = None
 
     async def _execute(self, operation: str, func: Callable):
-        """Execute operation with timeout and validation."""
         if not self._session:
             raise RuntimeError("Client not connected. Use 'async with' pattern.")
         
@@ -68,7 +62,6 @@ class BaseMCPClient:
             raise RuntimeError(f"{operation} timeout")
 
     async def list_tools(self) -> List[Dict[str, Any]]:
-        """List available tools."""
         async def _impl():
             result = await self._session.list_tools()
             return [tool.model_dump() for tool in result.tools]
@@ -76,8 +69,6 @@ class BaseMCPClient:
         return await self._execute("list_tools", _impl)
 
     async def call_tool(self, tool_name: str, params: Dict[str, Any]) -> Optional[str]:
-        """Call tool with validation."""
-        # Input validation
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError("tool_name must be non-empty string")
         if not isinstance(params, dict):
@@ -90,7 +81,6 @@ class BaseMCPClient:
         return await self._execute(f"call_tool({tool_name})", _impl)
 
     async def list_resource_templates(self) -> List[Dict[str, Any]]:
-        """List resource templates."""
         async def _impl():
             result = await self._session.list_resource_templates()
             return [tpl.model_dump() for tpl in result.resourceTemplates]
@@ -98,7 +88,6 @@ class BaseMCPClient:
         return await self._execute("list_resource_templates", _impl)
 
     async def read_resource(self, uri: str) -> Optional[str]:
-        """Read resource with validation."""
         if not isinstance(uri, str) or not uri.strip():
             raise ValueError("uri must be non-empty string")
         
