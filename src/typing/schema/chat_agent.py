@@ -1,13 +1,8 @@
-"""
-LLM Response Schema Classes
-
-Detailed schema classes with descriptions for LLM to understand and generate proper responses.
-Separate from actual data models used in application logic.
-"""
-
 from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
+
+from .base_schema import BaseSchema
 
 
 class LLMLayoutField(BaseModel):
@@ -24,8 +19,6 @@ class LLMLayoutField(BaseModel):
 
 
 class LLMSectionBreakField(LLMLayoutField):
-    """Section break field for creating new sections with titles."""
-
     field_type: Literal["section_break"] = Field(
         default="section_break", description="Must be 'section_break'"
     )
@@ -36,9 +29,9 @@ class LLMSectionBreakField(LLMLayoutField):
 
 
 class LLMMarkdownField(LLMLayoutField):
-    """Markdown field for all text content, metrics, and formatted text."""
-
-    field_type: Literal["markdown"] = Field(default="markdown", description="Must be 'markdown'")
+    field_type: Literal["markdown"] = Field(
+        default="markdown", description="Must be 'markdown'"
+    )
     content: str = Field(
         ...,
         description="Markdown content with formatting. Use **bold**, *italic*, ## headers, - lists. Include metrics like **Revenue**: $150K (+15%)",
@@ -46,8 +39,6 @@ class LLMMarkdownField(LLMLayoutField):
 
 
 class LLMGraphField(LLMLayoutField):
-    """Graph field for data visualization when charts help understanding."""
-
     field_type: Literal["graph"] = Field(default="graph", description="Must be 'graph'")
     graph_type: Literal["piechart", "barchart", "linechart"] = Field(
         ...,
@@ -61,8 +52,6 @@ class LLMGraphField(LLMLayoutField):
 
 
 class LLMTableField(LLMLayoutField):
-    """Table field for structured data when comparison is needed."""
-
     field_type: Literal["table"] = Field(default="table", description="Must be 'table'")
     title: Optional[str] = Field(None, description="Optional title for the table")
     data: dict = Field(
@@ -71,16 +60,12 @@ class LLMTableField(LLMLayoutField):
 
 
 class LLMColumnBreakField(LLMLayoutField):
-    """Column break field for organizing layout into columns."""
-
     field_type: Literal["column_break"] = Field(
         default="column_break", description="Must be 'column_break'"
     )
 
 
-class ChatAgentSchema(BaseModel):
-    """Complete chat response schema for LLM with detailed field descriptions."""
-
+class ChatAgentSchema(BaseSchema):
     layout: List[
         Union[
             LLMSectionBreakField,

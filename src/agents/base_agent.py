@@ -37,16 +37,19 @@ class BaseAgent(ABC):
 
     async def _call_llm(
         self,
+        query_id: Optional[str],
+        conversation_id: Optional[str],
         messages: List[Dict[str, str]],
         response_schema: Optional[Type[BaseSchema]] = None,
         response_model: Optional[Type[BaseAgentResponse]] = None,
-    ) -> Any:
+    ) -> BaseAgentResponse:
         if not self.llm:
             raise ValueError("No Groq API key provided")
         try:
             response_format = None
             if response_schema:
                 schema = response_schema.model_json_schema()
+
                 response_format = {
                     "type": "json_schema",
                     "json_schema": {"name": "response", "schema": schema},
@@ -61,12 +64,14 @@ class BaseAgent(ABC):
 
             choice = response.choices[0]
             message = getattr(choice, "message", None)
+
             content = (
                 message.content.strip() if getattr(message, "content", None) else None
             )
-            llm_reasoning = getattr(message, "reasoning", None)
 
+            llm_reasoning = getattr(message, "reasoning", None)
             raw_usage = getattr(response, "usage", None)
+
             if raw_usage:
                 llm_usage = {
                     "completion_tokens": getattr(raw_usage, "completion_tokens", None),
@@ -77,34 +82,39 @@ class BaseAgent(ABC):
                     "queue_time": getattr(raw_usage, "queue_time", None),
                     "total_time": getattr(raw_usage, "total_time", None),
                 }
+
             else:
                 llm_usage = None
 
-            if response_model:
+            llm_response_schema = None
+
+            if response_schema:
                 try:
                     data = json.loads(content) if content else {}
-                    parsed = response_model.model_validate(data)
-                    if hasattr(parsed, "llm_usage"):
-                        parsed.llm_usage = llm_usage
-                    if hasattr(parsed, "llm_reasoning"):
-                        parsed.llm_reasoning = llm_reasoning
-                    return parsed
+                    llm_response_schema = response_schema.model_validate(data)
+
                 except (json.JSONDecodeError, ValidationError) as e:
                     logger.error(f"LLM parsing/validation error: {e}")
-                    logger.error(f"Raw LLM content: {content}")  # Add this debug line
-                    if hasattr(response_model, "model_construct"):
-                        error_response = response_model.model_construct(
-                            agents_needed=[],
-                            task_dependency={"nodes": {}},
-                            error=f"Validation failed: {str(e)}",
-                        )
-                        if hasattr(error_response, "llm_usage"):
-                            error_response.llm_usage = llm_usage
-                        return error_response
-                    return None  # Instead of returning string
+                    logger.error(f"Raw LLM content: {content}")
+
+                except (json.JSONDecodeError, ValidationError) as e:
+                    logger.error(f"LLM parsing/validation error: {e}")
+                    logger.error(f"Raw LLM content: {content}")
+
+            if response_model:
+                result = response_model(
+                    query_id=query_id,
+                    conversation_id=conversation_id,
+                    llm_usage=llm_usage,
+                    llm_reasoning=llm_reasoning,
+                    result=llm_response_schema,
+                )
+
+                return result
+
         except Exception as e:
-            logger.exception("LLM call failed: %s", e)
-            return "LLM error: Unable to generate response"
+            logger.error(f"LLM call failed: {e}")
+            raise
 
     @abstractmethod
     async def get_pub_channels(self) -> List[str]:

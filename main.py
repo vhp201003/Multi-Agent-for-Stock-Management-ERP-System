@@ -10,9 +10,11 @@ from fastapi import FastAPI, HTTPException
 from src.agents.chat_agent import ChatAgent
 from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
+from src.agents.summary_agent import SummaryAgent
 from src.managers.inventory_manager import InventoryManager
-from src.typing import OrchestratorResponse, Request
-from src.typing.redis import QueryTask, RedisChannels, RedisKeys
+from src.typing import OrchestratorSchema, Request
+from src.typing.llm_response import OrchestratorResponse
+from src.typing.redis import ConversationData, QueryTask, RedisChannels, RedisKeys
 from src.typing.redis.shared_data import SharedData
 from src.utils import save_shared_data
 
@@ -23,9 +25,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+
 orchestrator: OrchestratorAgent
 inventory_agent: InventoryAgent
 chat_agent: ChatAgent
+summary_agent: SummaryAgent
 inventory_manager: InventoryManager
 tasks: list[asyncio.Task] = []
 redis_client = None
@@ -33,12 +37,19 @@ redis_client = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global orchestrator, inventory_agent, inventory_manager, tasks, redis_client
+    global \
+        orchestrator, \
+        inventory_agent, \
+        inventory_manager, \
+        summary_agent, \
+        tasks, \
+        redis_client
 
     try:
         orchestrator = OrchestratorAgent()
         inventory_agent = InventoryAgent()
         chat_agent = ChatAgent(redis_host="localhost", redis_port=6379)
+        summary_agent = SummaryAgent(redis_host="localhost", redis_port=6379)
         inventory_manager = InventoryManager()
         redis_client = orchestrator.redis
 
@@ -46,6 +57,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(orchestrator.start(), name="orchestrator"),
             asyncio.create_task(inventory_agent.start(), name="inventory_agent"),
             asyncio.create_task(chat_agent.start(), name="chat_agent"),
+            asyncio.create_task(summary_agent.start(), name="summary_agent"),
             asyncio.create_task(inventory_manager.start(), name="inventory_manager"),
         ]
 
@@ -88,18 +100,31 @@ async def handle_query(request: Request):
     query_id = request.query_id
 
     try:
-        orchestration_result = await asyncio.wait_for(
-            orchestrator.process(request), timeout=30.0
+        # Initialize conversation first
+        if not hasattr(request, "conversation_id") or not request.conversation_id:
+            request.conversation_id = request.query_id
+        await _ensure_conversation_exists(request.conversation_id)
+
+        orchestration_result: OrchestratorResponse = await asyncio.wait_for(
+            orchestrator.process(request), timeout=60.0
         )
 
-        if not orchestration_result or not orchestration_result.agents_needed:
+        if orchestration_result.error:
+            return _create_error_response(
+                query_id, "orchestration_error", orchestration_result.error
+            )
+
+        if (
+            not orchestration_result.result
+            or not orchestration_result.result.agents_needed
+        ):
             return _create_error_response(
                 query_id, "no_agents", "No agents identified for query processing"
             )
 
-        await _initialize_query_state(request, orchestration_result)
+        await _initialize_query_state(request, orchestration_result.result)
 
-        await _publish_orchestration_task(query_id, orchestration_result)
+        await _publish_orchestration_task(query_id, orchestration_result.result)
 
         completion_result = await _wait_for_completion(query_id)
 
@@ -133,38 +158,58 @@ def _validate_query_request(request: Request) -> Optional[str]:
     return None
 
 
+async def _ensure_conversation_exists(conversation_id: str) -> None:
+    try:
+        conversation_key = RedisKeys.get_conversation_key(conversation_id)
+        logger.info(f"Main: Ensuring conversation exists with key: {conversation_key}")
+
+        existing = await orchestrator.redis.json().get(conversation_key)
+
+        if not existing:
+            new_conversation = ConversationData(
+                conversation_id=conversation_id,
+                messages=[],
+                updated_at=datetime.now(),
+                max_messages=50,
+            )
+            await orchestrator.redis.json().set(
+                conversation_key,
+                "$",
+                json.loads(json.dumps(new_conversation.model_dump())),
+            )
+            logger.info(f"Main: Created new conversation: {conversation_id}")
+        else:
+            logger.info(
+                f"Main: Conversation already exists: {conversation_id} with {len(existing.get('messages', []))} messages"
+            )
+
+    except Exception as e:
+        logger.warning(f"Main: Error ensuring conversation exists: {e}")
+
+
 async def _initialize_query_state(
-    request: Request, orchestration_result: OrchestratorResponse
+    request: Request, orchestration_schema: OrchestratorSchema
 ) -> SharedData:
     try:
-        if not hasattr(request, "conversation_id") or not request.conversation_id:
-            request.conversation_id = f"conversation:{request.query_id}"
-
-        sub_query_dict = {}
-        task_dependency = orchestration_result.task_dependency
-
-        for agent_type, task_list in task_dependency.nodes.items():
-            if task_list:
-                sub_query_list = [task.sub_query for task in task_list]
-                sub_query_dict[agent_type] = sub_query_list
-
         shared_data = SharedData(
             original_query=request.query,
-            agents_needed=orchestration_result.agents_needed,
-            sub_queries=sub_query_dict,
-            results={},
-            context={},
-            llm_usage={},
+            query_id=request.query_id,
+            agents_needed=orchestration_schema.agents_needed,
             status="processing",
-            agents_done=[],
-            task_graph=task_dependency,
+            conversation_id=request.conversation_id,
         )
+
+        for agent_type, task_list in orchestration_schema.task_dependency.items():
+            for task in task_list:
+                shared_data.add_task(task)
 
         await save_shared_data(orchestrator.redis, request.query_id, shared_data)
 
         logger.info(
-            f"Initialized shared state for query {request.query_id} with {len(sub_query_dict)} agent types"
+            f"Initialized shared state for query {request.query_id} with {len(shared_data.tasks)} tasks across {len(orchestration_schema.agents_needed)} agent types"
         )
+
+        return shared_data
 
     except Exception as e:
         logger.error(f"Failed to initialize query state for {request.query_id}: {e}")
@@ -172,12 +217,12 @@ async def _initialize_query_state(
 
 
 async def _publish_orchestration_task(
-    query_id: str, orchestration_result: OrchestratorResponse
+    query_id: str, orchestration_schema: OrchestratorSchema
 ) -> None:
     try:
         sub_query_dict = {}
 
-        for agent_type, task_list in orchestration_result.task_dependency.nodes.items():
+        for agent_type, task_list in orchestration_schema.task_dependency.items():
             if task_list:
                 sub_query_list = [task.sub_query for task in task_list]
                 if sub_query_list:
@@ -271,8 +316,7 @@ def _create_success_response(
         "result": {
             "original_query": original_query,
             "final_response": completion_data.get("final_response"),
-            "detailed_results": completion_data.get("results", {}),
-            "context": completion_data.get("context", {}),
+            "detailed_results": completion_data.get("agent_results", {}),
             "llm_usage": completion_data.get("llm_usage", {}),
             "agents_done": completion_data.get("agents_done", []),
             "processing_time": completion_data.get("processing_time"),
@@ -321,16 +365,17 @@ async def get_query_status(query_id: str):
         shared_data = SharedData(**shared_data_raw)
 
         if shared_data.is_complete:
+            agent_results = {}
+            for agent_type in shared_data.agents_needed:
+                agent_results[agent_type] = shared_data.get_agent_results(agent_type)
+
             return {
                 "query_id": query_id,
                 "status": "completed",
                 "result": {
                     "original_query": shared_data.original_query,
-                    "results": shared_data.results,
-                    "context": shared_data.context,
+                    "agent_results": agent_results,
                     "llm_usage": shared_data.llm_usage,
-                    "agents_done": shared_data.agents_done,
-                    "execution_progress": shared_data.execution_progress,
                 },
                 "metadata": {
                     "completion_timestamp": datetime.now().isoformat(),
@@ -344,15 +389,6 @@ async def get_query_status(query_id: str):
                 "message": "Query is being processed",
                 "progress": {
                     "agents_needed": shared_data.agents_needed,
-                    "agents_done": shared_data.agents_done,
-                    "completion_percentage": (
-                        len(shared_data.agents_done)
-                        / len(shared_data.agents_needed)
-                        * 100
-                        if shared_data.agents_needed
-                        else 0
-                    ),
-                    "execution_progress": shared_data.execution_progress,
                 },
                 "metadata": {
                     "last_updated": datetime.now().isoformat(),

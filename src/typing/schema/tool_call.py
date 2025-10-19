@@ -1,43 +1,21 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from src.typing.schema import BaseSchema
-
-
-class ToolCallPlan(BaseSchema):
-    """Single tool call plan returned by LLM.
-
-    Used within ToolCallResponse schema for Groq structured output.
-    The LLM reasoning will be extracted separately via llm_reasoning field.
-    """
-
-    tool_name: str = Field(
-        ...,
-        description="Name of the tool to call (must match available MCP tool names)",
-    )
-    parameters: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Parameters to pass to the tool as key-value pairs",
-    )
+from src.typing.llm_response import BaseAgentResponse
 
 
-class ToolCallSchema(BaseSchema):
-    """Response for tool calls, resource reads, or error case.
+class ToolCallPlan(BaseModel):
+    tool_name: str = Field(..., description="Name of the tool to be called")
+    parameters: dict = Field(..., description="Parameters required for the tool call")
 
-    Used as response_schema for Groq. LLM can return:
-    - tool_calls: List of tools to execute (actions)
-    - read_resource: List of resource URIs to read (data fetching)
-    - error: Error message if query cannot be handled
 
-    At least one field must be populated (or error if nothing applicable).
-    """
-
+class ToolCallSchema(BaseAgentResponse):
     tool_calls: Optional[List[ToolCallPlan]] = Field(
         None,
         description="List of tool calls to execute in sequence (for ACTIONS)",
     )
-    read_resource: Optional[List[str]] = Field(
+    read_resources: Optional[List[str]] = Field(
         None,
         description="List of resource URIs to read (for DATA FETCHING, e.g., ['stock://levels'])",
     )

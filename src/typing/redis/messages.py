@@ -1,6 +1,9 @@
+import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
+
+from .constants import TaskStatus
 
 
 class QueryTask(BaseModel):
@@ -10,19 +13,22 @@ class QueryTask(BaseModel):
 
 
 class TaskUpdate(BaseModel):
+    task_id: str = None
     query_id: str
     sub_query: str
-    status: str
-    results: Dict[str, Any]
+    status: TaskStatus
+    result: Dict[str, Any]
     context: Optional[Dict[str, Any]] = None
     timestamp: str
     llm_usage: Dict[str, Any]
+    llm_reasoning: Optional[str] = None
     agent_type: Optional[str] = None  # The agent type that sent this update
 
 
 class CommandMessage(BaseModel):
-    agent_type: str
-    command: str  # e.g., "execute"
     query_id: str
-    timestamp: str  # ISO format
-    sub_query: Optional[str] = None  # Task data for execute commands
+    conversation_id: Optional[str] = None
+    agent_type: str
+    sub_query: Optional[str] = None
+    command: str
+    timestamp: str = datetime.now().isoformat()

@@ -1,15 +1,22 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from config.prompts.worker import build_worker_agent_prompt
 
-from src.mcp.client import BaseMCPClient
-from src.typing import BaseAgentResponse, Request
+from src.mcp.client import MCPClient
+from src.typing import (
+    ResourceCallResponse,
+    ToolCallResponse,
+    ToolCallResultResponse,
+    ToolCallSchema,
+    WorkerAgentProcessResponse,
+)
 from src.typing.redis import (
     AgentStatus,
+    CommandMessage,
+    ConversationData,
     RedisChannels,
     RedisKeys,
     SharedData,
@@ -29,6 +36,7 @@ class WorkerAgent(BaseAgent):
         agent_description: str,
         mcp_server_url: Optional[str] = None,
         mcp_timeout: float = 30.0,
+        examples: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(agent_type, **kwargs)
@@ -36,7 +44,8 @@ class WorkerAgent(BaseAgent):
         self.mcp_server_url = mcp_server_url
         self.mcp_timeout = mcp_timeout
         self.prompt: Optional[str] = None
-        self._mcp_client: Optional[BaseMCPClient] = None
+        self.mcp_client: Optional[MCPClient] = None
+        self.examples = examples
 
     async def get_pub_channels(self) -> List[str]:
         return [RedisChannels.TASK_UPDATES]
@@ -44,117 +53,205 @@ class WorkerAgent(BaseAgent):
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
 
-    async def process(self, request: Request) -> BaseAgentResponse:
-        raise NotImplementedError(f"{self.__class__.__name__} must implement process() method")
+    async def process(
+        self, command_message: CommandMessage
+    ) -> WorkerAgentProcessResponse:
+        ### Phase 1: Load conversation and prepare messages
+        sub_query = command_message.sub_query
+        conversation = ConversationData.model_validate_json(
+            await self.redis.json().get(
+                RedisKeys.get_conversation_key(command_message.conversation_id)
+            )
+        )
+        # Summary conversation context
+        summary = conversation.summary
+        messages = [
+            {
+                "role": "system",
+                "content": self.prompt,
+            },
+            {
+                "role": "assistant",
+                "content": f"Conversation Summary: {summary}",
+            },
+            {
+                "role": "user",
+                "content": sub_query,
+            },
+        ]
+
+        ### Phase 2: Call LLM to get tool and resource usage
+        llm_response: ToolCallResponse = await self._call_llm(
+            query_id=command_message.query_id,
+            conversation_id=command_message.conversation_id,
+            messages=messages,
+            response_schema=ToolCallSchema,
+            response_model=ToolCallResponse,
+        )
+
+        ### Phase 3: execute tool calls and resource reads
+        ### 3.1 Extract tool calls and execute tools
+
+        mcp_result = WorkerAgentProcessResponse()
+        mcp_result.result = llm_response.result
+
+        tool_calls = mcp_result.result.tool_calls
+        read_resources = mcp_result.result.read_resources
+
+        for tool_call in tool_calls:
+            tool_name = tool_call.tool_name
+            parameters = tool_call.parameters
+            try:
+                tool_result = await self.call_mcp_tool(tool_name, parameters)
+                mcp_result.tools_result.append(
+                    ToolCallResultResponse(tool_name=tool_name, tool_result=tool_result)
+                )
+            except Exception as e:
+                mcp_result.tools_result.append(
+                    ToolCallResultResponse(
+                        tool_name=tool_name,
+                        tool_result={"error": f"Tool call failed: {str(e)}"},
+                    )
+                )
+
+        ### 3.1 Extract resource reads and read resources
+        for resource in read_resources:
+            try:
+                resource_result = await self.read_mcp_resource(resource)
+                mcp_result.data_resources.append(
+                    ResourceCallResponse(
+                        resource_name=resource, resource_data=resource_result
+                    )
+                )
+            except Exception as e:
+                mcp_result.data_resources.append(
+                    ResourceCallResponse(
+                        resource_name=resource,
+                        resource_data={"error": f"Resource read failed: {str(e)}"},
+                    )
+                )
+
+        return mcp_result
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
         channels = await self.get_sub_channels()
         await pubsub.subscribe(*channels)
-        
+
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
-                    await self._handle_command_message(message["channel"], message["data"])
+                    command_message = CommandMessage.model_validate_json(
+                        message["data"]
+                    )
+                    await self.handle_command_message(command_message)
         except Exception as e:
             logger.error(f"Redis error in listen_channels: {e}")
         finally:
             await pubsub.unsubscribe(*channels)
 
-    async def _handle_command_message(self, channel: str, raw_data: str):
-        if channel != RedisChannels.get_command_channel(self.agent_type):
-            logger.warning(f"{self.agent_type}: Ignoring message from wrong channel: {channel}")
-            return
-
+    async def handle_command_message(self, command_message: CommandMessage):
         try:
-            data = json.loads(raw_data)
-            command = data.get("command")
-            
-            if command != "execute":
-                logger.debug(f"{self.agent_type}: Ignoring non-execute command: {command}")
+            if command_message.command != "execute":
+                logger.debug(
+                    f"{self.agent_type}: Ignoring non-execute command: {command_message.command}"
+                )
                 return
 
-            query_id = data.get("query_id")
-            sub_query = data.get("sub_query")
+            query_id = command_message.query_id
+            sub_query = command_message.sub_query
 
             if not query_id or not sub_query:
-                logger.error(f"{self.agent_type}: Missing query_id or sub_query in execute command")
+                logger.error(
+                    f"{self.agent_type}: Missing query_id or sub_query in execute command"
+                )
                 return
 
-            logger.info(f"{self.agent_type}: Received task execution: '{sub_query}' for {query_id}")
-            await self._process_task_with_timeout(query_id, sub_query)
+            await self.process_task_with_timeout(command_message)
 
-        except json.JSONDecodeError as e:
-            logger.error(f"{self.agent_type}: Invalid JSON in command message: {e}")
         except Exception as e:
             logger.error(f"{self.agent_type}: Command message processing failed: {e}")
 
-    async def _process_task_with_timeout(self, query_id: str, sub_query: str):
-        await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value)
+    async def process_task_with_timeout(self, command_message: CommandMessage):
+        # Mark agent as processing
+        await self.redis.hset(
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value
+        )
 
         try:
-            logger.info(f"{self.agent_type}: Processing '{sub_query}' for query_id: {query_id}")
+            logger.info(
+                f"{self.agent_type}: Processing '{command_message.sub_query}' for query_id: {command_message.query_id}"
+            )
 
-            request = Request(query=sub_query, query_id=query_id)
-            
             async with asyncio.timeout(300.0):
-                response = await self.process(request)
+                response: WorkerAgentProcessResponse = await self.process(
+                    command_message
+                )
 
-            await self._publish_task_completion_consolidated(query_id, sub_query, response)
-            
-            await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value)
+            await self.publish_task_completion(command_message, response)
+
+            # Mark agent as idle
+            await self.redis.hset(
+                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+            )
 
         except asyncio.TimeoutError:
             logger.error(f"{self.agent_type}: Task processing timeout")
-            await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value)
+            await self.redis.hset(
+                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+            )
         except Exception as e:
             logger.error(f"{self.agent_type}: Task processing error: {e}")
-            await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value)
+            await self.redis.hset(
+                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+            )
 
-    async def _publish_task_completion_consolidated(self, query_id: str, sub_query: str, response: BaseAgentResponse):
+    async def publish_task_completion(
+        self, command_message: CommandMessage, response: WorkerAgentProcessResponse
+    ):
         try:
-            llm_usage_data = {}
-            if hasattr(response, "llm_usage") and response.llm_usage:
-                if isinstance(response.llm_usage, dict):
-                    llm_usage_data = response.llm_usage
-                elif hasattr(response.llm_usage, "model_dump"):
-                    llm_usage_data = response.llm_usage.model_dump()
-                else:
-                    llm_usage_data = {
-                        attr: getattr(response.llm_usage, attr, None)
-                        for attr in ["completion_tokens", "prompt_tokens", "total_tokens", 
-                                   "completion_time", "prompt_time", "queue_time", "total_time"]
-                    }
+            task_id = await self.find_task_id_by_query(
+                command_message.query_id, command_message.sub_query
+            )
 
-            result_data = response.result or ""
-            if isinstance(result_data, str) and result_data.strip().startswith(("{", "[")):
-                try:
-                    result_data = json.loads(result_data)
-                except json.JSONDecodeError:
-                    pass
+            task_update: TaskUpdate = TaskUpdate(
+                task_id=task_id,
+                query_id=command_message.query_id,
+                sub_query=command_message.sub_query,
+                status=TaskStatus.DONE,
+                results={command_message.sub_query: response.result},
+                context={command_message.sub_query: response.result},
+                llm_usage=response.llm_usage,
+                llm_reasoning=response.llm_reasoning,
+                agent_type=self.agent_type,
+            )
 
-            task_id = await self._resolve_task_id_inline(query_id, sub_query)
-
-            completion_message = {
-                "query_id": query_id,
-                "sub_query": sub_query,
-                "task_id": task_id,
-                "status": TaskStatus.DONE,
-                "results": {sub_query: result_data},
-                "context": {sub_query: response.context or {}},
-                "llm_usage": llm_usage_data,
-                "timestamp": datetime.now().isoformat(),
-                "agent_type": self.agent_type,
-            }
-
-            await self.publish_channel(RedisChannels.TASK_UPDATES, completion_message)
-            logger.info(f"{self.agent_type}: Task completion published for {query_id}")
+            await self.publish_channel(
+                RedisChannels.TASK_UPDATES, task_update.model_dump_json()
+            )
 
         except Exception as e:
             logger.error(f"{self.agent_type}: Task completion publishing failed: {e}")
+            task_update: TaskUpdate = TaskUpdate(
+                task_id=task_id,
+                query_id=command_message.query_id,
+                sub_query=command_message.sub_query,
+                status=TaskStatus.ERROR.value,
+                results={command_message.sub_query: {"error": str(e)}},
+                context={command_message.sub_query: {"error": str(e)}},
+                llm_usage=response.llm_usage,
+                llm_reasoning=response.llm_reasoning,
+                agent_type=self.agent_type,
+            )
+
+            await self.publish_channel(
+                RedisChannels.TASK_UPDATES, task_update.model_dump_json()
+            )
             raise
 
-    async def _resolve_task_id_inline(self, query_id: str, sub_query: str) -> Optional[str]:
+    async def find_task_id_by_query(
+        self, query_id: str, sub_query: str
+    ) -> Optional[str]:
         try:
             shared_key = RedisKeys.get_shared_data_key(query_id)
             shared_data_raw = await self.redis.json().get(shared_key)
@@ -175,48 +272,60 @@ class WorkerAgent(BaseAgent):
             raise ValueError(f"WorkerAgent cannot publish to {channel}")
 
         try:
-            validated = TaskUpdate(**message) if channel == RedisChannels.TASK_UPDATES else message
-            message_json = validated.model_dump_json() if hasattr(validated, 'model_dump_json') else json.dumps(validated)
+            validated = (
+                TaskUpdate(**message)
+                if channel == RedisChannels.TASK_UPDATES
+                else message
+            )
+            message_json = (
+                validated.model_dump_json()
+                if hasattr(validated, "model_dump_json")
+                else json.dumps(validated)
+            )
             await self.redis.publish(channel=channel, message=message_json)
         except Exception as e:
             logger.error(f"Message publish failed for {channel}: {e}")
             raise
 
-    async def _get_mcp_client(self) -> BaseMCPClient:
+    async def get_mcp_client(self) -> MCPClient:
         if not self.mcp_server_url:
             raise RuntimeError(f"{self.agent_type}: No MCP server configured")
 
-        if not self._mcp_client:
-            self._mcp_client = BaseMCPClient(self.mcp_server_url, self.mcp_timeout)
-            await self._mcp_client.__aenter__()
-        return self._mcp_client
+        if not self.mcp_client:
+            self.mcp_client = MCPClient(self.mcp_server_url)
+            await self.mcp_client.__aenter__()
+        return self.mcp_client
 
-    async def call_mcp_tool(self, tool_name: str, params: Dict[str, Any]) -> Optional[str]:
+    async def call_mcp_tool(
+        self, tool_name: str, parameters: Dict[str, Any]
+    ) -> Optional[str]:
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError("tool_name must be non-empty string")
-        if not isinstance(params, dict):
-            raise ValueError("params must be dictionary")
+        if not isinstance(parameters, dict):
+            raise ValueError("parameters must be dictionary")
 
-        client = await self._get_mcp_client()
-        return await client.call_tool(tool_name, params)
+        client = await self.get_mcp_client()
+        return await client.call_tool(tool_name, parameters)
 
-    async def read_mcp_resource(self, uri: str) -> Optional[str]:
+    async def read_mcp_resource(self, uri: str) -> Dict[str, Any]:
         if not isinstance(uri, str) or not uri.strip():
             raise ValueError("uri must be non-empty string")
 
-        client = await self._get_mcp_client()
+        client = await self.get_mcp_client()
         return await client.read_resource(uri)
 
     async def start(self):
         logger.info(f"{self.agent_type}: Starting worker agent")
 
-        await self.redis.hset(RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value)
+        await self.redis.hset(
+            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+        )
 
-        await self._initialize_prompt_consolidated()
+        await self.init_prompt()
 
         await self.listen_channels()
 
-    async def _initialize_prompt_consolidated(self):
+    async def init_prompt(self):
         if not self.mcp_server_url:
             logger.warning(f"{self.agent_type}: No MCP server, using fallback prompt")
             self.prompt = (
@@ -227,21 +336,17 @@ class WorkerAgent(BaseAgent):
             return
 
         try:
-            client = await self._get_mcp_client()
+            client = await self.get_mcp_client()
 
             tools = await client.list_tools()
-            resources = []
-            try:
-                resources = await client.list_resource_templates()
-            except Exception as e:
-                logger.debug(f"{self.agent_type}: Resource templates unavailable: {e}")
+            resources = await client.list_resource_templates()
 
             self.prompt = build_worker_agent_prompt(
                 agent_type=self.agent_type,
                 agent_description=self.agent_description,
                 tools=tools,
                 resources=resources,
-                tools_example="",
+                examples=self.examples,
             )
 
         except Exception as e:
@@ -255,14 +360,14 @@ class WorkerAgent(BaseAgent):
     async def stop(self):
         logger.info(f"{self.agent_type}: Stopping worker agent")
 
-        if self._mcp_client:
+        if self.mcp_client:
             try:
-                await self._mcp_client.__aexit__(None, None, None)
+                await self.mcp_client.__aexit__(None, None, None)
                 logger.info(f"{self.agent_type}: MCP connection closed")
             except Exception as e:
                 logger.error(f"{self.agent_type}: MCP cleanup error: {e}")
             finally:
-                self._mcp_client = None
+                self.mcp_client = None
 
         if hasattr(super(), "stop"):
             await super().stop()

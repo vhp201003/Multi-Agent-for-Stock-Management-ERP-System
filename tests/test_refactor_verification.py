@@ -18,9 +18,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import redis.asyncio as redis
+from src.typing.llm_response import BaseAgentResponse
 from src.typing.redis import AgentStatus
 from src.typing.redis.constants import RedisChannels, RedisKeys, TaskStatus
-from src.typing.response import BaseAgentResponse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

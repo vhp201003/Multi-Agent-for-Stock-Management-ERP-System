@@ -34,7 +34,7 @@ def build_worker_agent_prompt(
     agent_description: str,
     tools: list,
     resources: list,
-    tools_example: str,
+    examples: str,
 ) -> str:
     """Build prompt for WorkerAgent with agent info and MCP tools/resources.
 
@@ -69,5 +69,5 @@ def build_worker_agent_prompt(
         agent_description=agent_description,
         tools_description=tools_description,
         resources_description=resources_description,
-        examples=tools_example,
+        examples=examples,
     )

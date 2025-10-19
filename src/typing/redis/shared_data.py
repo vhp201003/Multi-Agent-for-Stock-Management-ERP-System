@@ -1,8 +1,15 @@
-from typing import Any, Dict, List, Optional, Set
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from src.typing.schema.orchestrator import TaskDependencyGraph, TaskNode
+from src.typing.schema.orchestrator import TaskNode
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class LLMUsage(BaseModel):
@@ -15,145 +22,108 @@ class LLMUsage(BaseModel):
     total_time: Optional[float] = None
 
 
-class TaskGraphUtils:
-    @staticmethod
-    def get_task_by_id(graph: TaskDependencyGraph, task_id: str) -> Optional[TaskNode]:
-        if not task_id or not graph.nodes:
-            return None
-
-        for tasks in graph.nodes.values():
-            for task in tasks:
-                if task.task_id == task_id:
-                    return task
-        return None
-
-    @staticmethod
-    def mark_task_done(graph: TaskDependencyGraph, task_id: str) -> bool:
-        if not task_id:
-            return False
-        return TaskGraphUtils.get_task_by_id(graph, task_id) is not None
-
-    @staticmethod
-    def get_ready_tasks(
-        graph: TaskDependencyGraph, completed_task_ids: Set[str]
-    ) -> List[TaskNode]:
-        if not graph.nodes or not isinstance(completed_task_ids, set):
-            return []
-
-        ready_tasks = []
-        for tasks in graph.nodes.values():
-            for task in tasks:
-                if task.task_id not in completed_task_ids and all(
-                    dep_id in completed_task_ids for dep_id in task.dependencies
-                ):
-                    ready_tasks.append(task)
-        return ready_tasks
-
-    @staticmethod
-    def is_agent_complete(
-        graph: TaskDependencyGraph, agent_type: str, completed_task_ids: Set[str]
-    ) -> bool:
-        if not agent_type or agent_type not in graph.nodes:
-            return False
-        if not isinstance(completed_task_ids, set):
-            return False
-
-        return all(
-            task.task_id in completed_task_ids for task in graph.nodes[agent_type]
-        )
-
-    @staticmethod
-    def get_completion_status(
-        graph: TaskDependencyGraph, completed_task_ids: Set[str]
-    ) -> Dict[str, Dict[str, int]]:
-        status = {}
-        if not graph.nodes:
-            return status
-
-        for agent_type, tasks in graph.nodes.items():
-            total_tasks = len(tasks)
-            done_tasks = sum(1 for t in tasks if t.task_id in completed_task_ids)
-            status[agent_type] = {
-                "total": total_tasks,
-                "done": done_tasks,
-                "pending": total_tasks - done_tasks,
-            }
-        return status
-
-    @staticmethod
-    def get_tasks_for_agent(
-        graph: TaskDependencyGraph, agent_type: str
-    ) -> List[TaskNode]:
-        if not agent_type or not graph.nodes:
-            return []
-        return graph.nodes.get(agent_type, [])
+class TaskExecution(BaseModel):
+    task: TaskNode
+    status: TaskStatus = TaskStatus.PENDING
+    result: Optional[Any] = None
+    error: Optional[str] = None
 
 
 class SharedData(BaseModel):
     original_query: str
+    query_id: str
     agents_needed: List[str]
-    agents_done: List[str] = Field(default_factory=list)
-
-    sub_queries: Dict[str, List[str]] = Field(default_factory=dict)
-    results: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    context: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-
+    tasks: Dict[str, TaskExecution] = Field(
+        default_factory=dict
+    )  # task_id -> TaskExecution
     status: str = "pending"
     llm_usage: Dict[str, LLMUsage] = Field(default_factory=dict)
-    task_graph: TaskDependencyGraph = Field(default_factory=TaskDependencyGraph)
-    summary_previous_query: Optional[str] = None
+    conversation_id: Optional[str] = None
 
-    def add_task_result(self, task_id: str, result: Any) -> bool:
-        if not task_id:
+    def add_task(self, task: TaskNode) -> bool:
+        if not task.task_id or task.task_id in self.tasks:
             return False
 
-        task = TaskGraphUtils.get_task_by_id(self.task_graph, task_id)
-        if not task:
-            return False
-
-        agent_type = task.agent_type
-        sub_query = task.sub_query
-
-        if agent_type not in self.results:
-            self.results[agent_type] = {}
-        self.results[agent_type][sub_query] = result
+        self.tasks[task.task_id] = TaskExecution(task=task)
         return True
 
-    def mark_task_done(self, task_id: str) -> bool:
-        if not TaskGraphUtils.mark_task_done(self.task_graph, task_id):
+    def get_ready_tasks(self) -> List[TaskNode]:
+        ready = []
+
+        for execution in self.tasks.values():
+            if execution.status != TaskStatus.PENDING:
+                continue
+
+            dependencies_met = True
+            for dep_id in execution.task.dependencies:
+                if (
+                    dep_id not in self.tasks
+                    or self.tasks[dep_id].status != TaskStatus.COMPLETED
+                ):
+                    dependencies_met = False
+                    break
+
+            if dependencies_met:
+                ready.append(execution.task)
+
+        return ready
+
+    def complete_task(self, task_id: str, result: Any) -> bool:
+        if not task_id or task_id not in self.tasks:
             return False
 
-        completed_task_ids = self._get_completed_task_ids()
-
-        task = TaskGraphUtils.get_task_by_id(self.task_graph, task_id)
-        if task and TaskGraphUtils.is_agent_complete(
-            self.task_graph, task.agent_type, completed_task_ids
-        ):
-            if task.agent_type not in self.agents_done:
-                self.agents_done.append(task.agent_type)
-
+        self.tasks[task_id].status = TaskStatus.COMPLETED
+        self.tasks[task_id].result = result
         return True
 
-    def _get_completed_task_ids(self) -> Set[str]:
-        completed_task_ids = set()
-        for agent_type in self.agents_done:
-            if agent_type in self.task_graph.nodes:
-                for task in self.task_graph.nodes[agent_type]:
-                    completed_task_ids.add(task.task_id)
-        return completed_task_ids
+    def fail_task(self, task_id: str, error: str) -> bool:
+        if not task_id or task_id not in self.tasks:
+            return False
+
+        self.tasks[task_id].status = TaskStatus.FAILED
+        self.tasks[task_id].error = error or "Unknown error"
+        return True
+
+    def get_agent_results(self, agent_type: str) -> Dict[str, Any]:
+        if not agent_type:
+            return {}
+
+        results = {}
+        for execution in self.tasks.values():
+            if (
+                execution.task.agent_type == agent_type
+                and execution.status == TaskStatus.COMPLETED
+                and execution.result is not None
+            ):
+                results[execution.task.task_id] = execution.result
+
+        return results
+
+    def get_tasks_for_agent(self, agent_type: str) -> List[TaskNode]:
+        if not agent_type:
+            return []
+
+        return [
+            execution.task
+            for execution in self.tasks.values()
+            if execution.task.agent_type == agent_type
+        ]
+
+    def get_task_id_by_sub_query(
+        self, agent_type: str, sub_query: str
+    ) -> Optional[str]:
+        for execution in self.tasks.values():
+            if (
+                execution.task.agent_type == agent_type
+                and execution.task.sub_query == sub_query
+            ):
+                return execution.task.task_id
+        return None
 
     @property
     def is_complete(self) -> bool:
-        return set(self.agents_done) >= set(self.agents_needed)
-
-    @property
-    def execution_progress(self) -> Dict[str, Any]:
-        completed_task_ids = self._get_completed_task_ids()
-        return {
-            "agents_total": len(self.agents_needed),
-            "agents_complete": len(self.agents_done),
-            "task_status": TaskGraphUtils.get_completion_status(
-                self.task_graph, completed_task_ids
-            ),
-            "overall_complete": self.is_complete,
-        }
+        """Check if all tasks completed successfully."""
+        return len(self.tasks) > 0 and all(
+            execution.status == TaskStatus.COMPLETED
+            for execution in self.tasks.values()
+        )

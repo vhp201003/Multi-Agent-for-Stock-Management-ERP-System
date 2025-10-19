@@ -1,3 +1,6 @@
+from enum import Enum
+
+
 class RedisChannels:
     # Core channels
     QUERY_CHANNEL = "agent:query_channel"
@@ -29,6 +32,9 @@ class RedisKeys:
     # Shared data storage
     SHARED_DATA = "agent:shared_data:{}"
 
+    # Conversation storage (JSON document)
+    CONVERSATION = "conversation:{}"
+
     @classmethod
     def get_agent_queue(cls, agent_type: str) -> str:
         return cls.AGENT_QUEUE.format(agent_type)
@@ -41,8 +47,12 @@ class RedisKeys:
     def get_shared_data_key(cls, query_id: str) -> str:
         return cls.SHARED_DATA.format(query_id)
 
+    @classmethod
+    def get_conversation_key(cls, conversation_id: str) -> str:
+        return cls.CONVERSATION.format(conversation_id)
 
-class TaskStatus:
+
+class TaskStatus(str, Enum):
     DONE = "done"
     PENDING = "pending"
     ERROR = "error"

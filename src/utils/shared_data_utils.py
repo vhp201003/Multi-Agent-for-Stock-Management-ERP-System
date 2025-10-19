@@ -13,22 +13,16 @@ logger = logging.getLogger(__name__)
 async def get_shared_data(
     redis_client: redis.Redis, query_id: str
 ) -> Optional[SharedData]:
-    if not query_id or not isinstance(query_id, str):
-        raise ValueError("query_id must be non-empty string")
-
-    key = RedisKeys.get_shared_data_key(query_id)
-
     try:
-        data = await redis_client.json().get(key)
-        if data:
-            return SharedData(**data)
-        return None
-    except redis.RedisError as e:
-        logger.error(f"Redis error getting shared data for {query_id}: {e}")
-        raise
+        if not query_id or not isinstance(query_id, str):
+            raise ValueError("query_id must be non-empty string")
+
+        shared_data_key = RedisKeys.get_shared_data_key(query_id)
+        data = await redis_client.json().get(shared_data_key)
+        return SharedData.model_validate_json(data)
     except (TypeError, ValueError) as e:
-        logger.error(f"Invalid shared data format for {query_id}: {e}")
-        raise
+        logger.error(f"Error parsing shared data for {query_id}: {e}")
+        return None
 
 
 async def save_shared_data(
