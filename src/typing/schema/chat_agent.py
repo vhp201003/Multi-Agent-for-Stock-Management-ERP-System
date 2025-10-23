@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -77,4 +77,8 @@ class ChatAgentSchema(BaseSchema):
     ] = Field(
         ...,
         description="Array of layout fields. Start with section_break for title, use markdown for content/metrics, add graph/table when data visualization helps, use column_break to organize layout. YOU decide when graphs/tables are needed.",
+    )
+    full_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Complete unfiltered data from all agents for UI consumption",
     )

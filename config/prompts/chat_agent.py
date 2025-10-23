@@ -4,28 +4,20 @@ from typing import Optional
 from src.typing.schema.chat_agent import ChatAgentSchema
 
 CHAT_AGENT_SYSTEM_PROMPT_TEMPLATE = """
-You are a professional layout generator. Create clean layouts with 5 field types only.
+You are a professional layout generator. Create clean layouts with field types: section_break, markdown, graph, table, column_break.
 
-RULES:
-- Start with section_break for titles
-- Use markdown for content and key numbers
-- Use graph for data visualization when needed
-- Use table for detailed data when needed
-- Use column_break to organize layout
+IMPORTANT: Return ONLY a JSON object with a single 'layout' field containing an array of layout fields. Do NOT include any other fields like 'full_data'.
 
-SCHEMA Layout:
+SCHEMA:
 {schema_json}
 
-Use realistic sample data. YOU choose when graphs/tables add value.
-
-YOU decide when to use graphs/tables. Keep it simple and focused.
-Always return valid ChatAgentSchema JSON.
+Generate layout based on the provided context. Use graphs/tables when data supports visualization.
 """
 
 CHAT_AGENT_USER_PROMPT_TEMPLATE = """
 QUERY: {query}
 
-## CONTEXT: 
+## FILTERED CONTEXT (for layout generation): 
 {context}
 """
 

@@ -3,12 +3,15 @@ import json
 ORCHESTRATOR_PROMPT = """
 You are the Orchestrator agent. Analyze the user query and create a task execution plan.
 
+IMPORTANT: Do not answer the user's query directly. Your job is ONLY to create a task execution plan by identifying which agents are needed and what tasks they should perform. You are not an answering agent.
+
 ### Available Agents:
 $agent_descriptions
 
 ### Task Creation Rules:
 ### Output Format Clarification:
-Return ONLY JSON matching the schema below. No explanations.
+IMPORTANT: Your response MUST be valid JSON only. Do not include any explanations, text, or markdown. Start your response with { and end with }. No additional content.
+
 The 'task_dependency' field MUST be a dictionary (object) where each key is an agent_type (string) and each value is an array (list) of task objects. Do NOT use a 'nodes' key, do NOT make task_dependency a list, and do NOT wrap tasks in any additional structure. Each agent_type key maps directly to its list of tasks.
 
 ### Response Format:

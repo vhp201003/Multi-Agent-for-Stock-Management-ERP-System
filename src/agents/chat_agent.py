@@ -1,7 +1,6 @@
 import json
 import logging
-from datetime import datetime
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 
@@ -35,14 +34,12 @@ class ChatAgent(BaseAgent):
         try:
             logger.info(f"Processing chat request: {request.query[:100]}...")
 
-            context_str = json.dumps(request.context) if request.context else "None"
-
             messages = [
                 {"role": "system", "content": build_system_prompt()},
                 {
                     "role": "user",
                     "content": build_chat_agent_prompt(
-                        query=request.query, context=context_str
+                        query=request.query, context=request.context
                     ),
                 },
             ]
@@ -55,14 +52,20 @@ class ChatAgent(BaseAgent):
                 response_model=ChatResponse,
             )
 
-            if isinstance(response, ChatResponse):
+            if isinstance(response, ChatResponse) and response.result:
+                # Add full_data to the schema
+                response.result.full_data = request.full_context
                 return response
             else:
-                return self._create_fallback_response(request.query)
+                return self._create_fallback_response(
+                    request.query_id, request.conversation_id, request.full_context
+                )
 
         except Exception as e:
             logger.error(f"Chat processing failed: {e}")
-            return self._create_error_response(str(e))
+            return self._create_error_response(
+                str(e), request.query_id, request.conversation_id, request.full_context
+            )
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
@@ -125,23 +128,36 @@ class ChatAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to publish completion for {response.query_id}: {e}")
 
-    def _create_fallback_response(self, query: str) -> ChatResponse:
+    def _create_fallback_response(
+        self,
+        query_id: str,
+        conversation_id: Optional[str],
+        full_context: Optional[Dict[str, Any]],
+    ) -> ChatResponse:
         schema = ChatAgentSchema(
             layout=[
                 LLMSectionBreakField(
                     title="Response",
                 ),
                 LLMMarkdownField(
-                    content=f"I received your query: **{query}**\n\nLet me help you with that. Please provide more specific details for a better response.",
+                    content=f"I received your query: **{query_id}**\n\nLet me help you with that. Please provide more specific details for a better response.",
                 ),
             ]
         )
+        schema.full_data = full_context
         return ChatResponse(
+            query_id=query_id,
+            conversation_id=conversation_id,
             result=schema,
-            metadata={"generated_at": datetime.now().isoformat(), "fallback": True},
         )
 
-    def _create_error_response(self, error: str) -> ChatResponse:
+    def _create_error_response(
+        self,
+        error: str,
+        query_id: str,
+        conversation_id: Optional[str],
+        full_context: Optional[Dict[str, Any]],
+    ) -> ChatResponse:
         schema = ChatAgentSchema(
             layout=[
                 LLMSectionBreakField(
@@ -152,9 +168,11 @@ class ChatAgent(BaseAgent):
                 ),
             ]
         )
+        schema.full_data = full_context
         return ChatResponse(
+            query_id=query_id,
+            conversation_id=conversation_id,
             result=schema,
-            metadata={"generated_at": datetime.now().isoformat(), "error": True},
         )
 
     async def start(self):

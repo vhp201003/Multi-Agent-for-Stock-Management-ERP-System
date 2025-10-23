@@ -517,7 +517,6 @@ class OrchestratorAgent(BaseAgent):
             return {}
 
         if _current_depth > max_depth:
-            logger.warning("Max recursion depth reached in context filtering")
             return {"_truncated": True}
 
         filtered = {}

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -116,6 +117,9 @@ class WorkerAgent(BaseAgent):
                 parameters = tool_call.parameters
                 try:
                     tool_result = await self.call_mcp_tool(tool_name, parameters)
+                    # Parse JSON string to dict if needed
+                    if isinstance(tool_result, str):
+                        tool_result = json.loads(tool_result)
                     mcp_result.tools_result.append(
                         ToolCallResultResponse(
                             tool_name=tool_name, tool_result=tool_result
@@ -235,8 +239,20 @@ class WorkerAgent(BaseAgent):
                 query_id=command_message.query_id,
                 sub_query=command_message.sub_query,
                 status=TaskStatus.DONE,
-                result={command_message.sub_query: response.result},
-                context={command_message.sub_query: response.result},
+                result={
+                    command_message.sub_query: {
+                        "llm_output": response.result,
+                        "tool_results": response.tools_result,
+                        "resource_results": response.data_resources,
+                    }
+                },
+                context={
+                    command_message.sub_query: {
+                        "llm_output": response.result,
+                        "tool_results": response.tools_result,
+                        "resource_results": response.data_resources,
+                    }
+                },
                 llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
@@ -253,8 +269,22 @@ class WorkerAgent(BaseAgent):
                 query_id=command_message.query_id,
                 sub_query=command_message.sub_query,
                 status=TaskStatus.ERROR,
-                result={command_message.sub_query: {"error": str(e)}},
-                context={command_message.sub_query: {"error": str(e)}},
+                result={
+                    command_message.sub_query: {
+                        "llm_output": response.result,
+                        "tool_results": response.tools_result,
+                        "resource_results": response.data_resources,
+                        "error": str(e),
+                    }
+                },
+                context={
+                    command_message.sub_query: {
+                        "llm_output": response.result,
+                        "tool_results": response.tools_result,
+                        "resource_results": response.data_resources,
+                        "error": str(e),
+                    }
+                },
                 llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
