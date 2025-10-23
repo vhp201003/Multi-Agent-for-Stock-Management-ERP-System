@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .base_schema import BaseSchema
 
@@ -39,3 +39,31 @@ class OrchestratorSchema(BaseSchema):
         default_factory=dict,
         description="Direct mapping: agent_type -> list of tasks",
     )
+
+    @field_validator("task_dependency", mode="before")
+    @classmethod
+    def transform_task_dependency(cls, v):
+        if isinstance(v, dict):
+            if "nodes" in v:
+                if isinstance(v["nodes"], list):
+                    # Old format: {'nodes': List[TaskNode]}
+                    transformed = {}
+                    for task in v["nodes"]:
+                        if isinstance(task, dict):
+                            task_obj = TaskNode(**task)
+                            agent_type = task_obj.agent_type
+                            if agent_type not in transformed:
+                                transformed[agent_type] = []
+                            transformed[agent_type].append(task_obj)
+                    return transformed
+                elif isinstance(v["nodes"], dict):
+                    # New old format: {'nodes': {'agent_type': List[TaskNode]}}
+                    transformed = {}
+                    for agent_type, tasks in v["nodes"].items():
+                        if isinstance(tasks, list):
+                            transformed[agent_type] = [
+                                TaskNode(**task) if isinstance(task, dict) else task
+                                for task in tasks
+                            ]
+                    return transformed
+        return v

@@ -1,10 +1,9 @@
 import asyncio
-import json
 import logging
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from src.agents.chat_agent import ChatAgent
@@ -12,11 +11,9 @@ from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.agents.summary_agent import SummaryAgent
 from src.managers.inventory_manager import InventoryManager
-from src.typing import OrchestratorSchema, Request
-from src.typing.llm_response import OrchestratorResponse
-from src.typing.redis import ConversationData, QueryTask, RedisChannels, RedisKeys
+from src.typing import Request
+from src.typing.redis import RedisKeys
 from src.typing.redis.shared_data import SharedData
-from src.utils import save_shared_data
 
 logger = logging.getLogger(__name__)
 
@@ -91,55 +88,18 @@ app = FastAPI(title="Multi Agent Stock Management System", lifespan=lifespan)
 
 @app.post("/query")
 async def handle_query(request: Request):
-    global orchestrator, redis_client
+    global orchestrator
 
     validation_error = _validate_query_request(request)
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
 
-    query_id = request.query_id
-
     try:
-        # Initialize conversation first
-        if not hasattr(request, "conversation_id") or not request.conversation_id:
-            request.conversation_id = request.query_id
-        await _ensure_conversation_exists(request.conversation_id)
-
-        orchestration_result: OrchestratorResponse = await asyncio.wait_for(
-            orchestrator.process(request), timeout=60.0
-        )
-
-        if orchestration_result.error:
-            return _create_error_response(
-                query_id, "orchestration_error", orchestration_result.error
-            )
-
-        if (
-            not orchestration_result.result
-            or not orchestration_result.result.agents_needed
-        ):
-            return _create_error_response(
-                query_id, "no_agents", "No agents identified for query processing"
-            )
-
-        await _initialize_query_state(request, orchestration_result.result)
-
-        await _publish_orchestration_task(query_id, orchestration_result.result)
-
-        completion_result = await _wait_for_completion(query_id)
-
-        return _create_success_response(query_id, request.query, completion_result)
-
-    except asyncio.TimeoutError:
-        logger.warning(f"Query {query_id} orchestration timeout")
-        return _create_error_response(
-            query_id, "orchestration_timeout", "Query analysis timed out"
-        )
+        result = await orchestrator.process(request)
+        return result
     except Exception as e:
-        logger.exception(f"Critical error processing query {query_id}: {e}")
-        return _create_error_response(
-            query_id, "internal_error", "Query processing failed"
-        )
+        logger.exception(f"Critical error processing query {request.query_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 def _validate_query_request(request: Request) -> Optional[str]:
@@ -156,192 +116,6 @@ def _validate_query_request(request: Request) -> Optional[str]:
         return "Invalid query ID format (alphanumeric, underscore, hyphen only)"
 
     return None
-
-
-async def _ensure_conversation_exists(conversation_id: str) -> None:
-    try:
-        conversation_key = RedisKeys.get_conversation_key(conversation_id)
-        logger.info(f"Main: Ensuring conversation exists with key: {conversation_key}")
-
-        existing = await orchestrator.redis.json().get(conversation_key)
-
-        if not existing:
-            new_conversation = ConversationData(
-                conversation_id=conversation_id,
-                messages=[],
-                updated_at=datetime.now(),
-                max_messages=50,
-            )
-            await orchestrator.redis.json().set(
-                conversation_key,
-                "$",
-                json.loads(json.dumps(new_conversation.model_dump())),
-            )
-            logger.info(f"Main: Created new conversation: {conversation_id}")
-        else:
-            logger.info(
-                f"Main: Conversation already exists: {conversation_id} with {len(existing.get('messages', []))} messages"
-            )
-
-    except Exception as e:
-        logger.warning(f"Main: Error ensuring conversation exists: {e}")
-
-
-async def _initialize_query_state(
-    request: Request, orchestration_schema: OrchestratorSchema
-) -> SharedData:
-    try:
-        shared_data = SharedData(
-            original_query=request.query,
-            query_id=request.query_id,
-            agents_needed=orchestration_schema.agents_needed,
-            status="processing",
-            conversation_id=request.conversation_id,
-        )
-
-        for agent_type, task_list in orchestration_schema.task_dependency.items():
-            for task in task_list:
-                shared_data.add_task(task)
-
-        await save_shared_data(orchestrator.redis, request.query_id, shared_data)
-
-        logger.info(
-            f"Initialized shared state for query {request.query_id} with {len(shared_data.tasks)} tasks across {len(orchestration_schema.agents_needed)} agent types"
-        )
-
-        return shared_data
-
-    except Exception as e:
-        logger.error(f"Failed to initialize query state for {request.query_id}: {e}")
-        raise
-
-
-async def _publish_orchestration_task(
-    query_id: str, orchestration_schema: OrchestratorSchema
-) -> None:
-    try:
-        sub_query_dict = {}
-
-        for agent_type, task_list in orchestration_schema.task_dependency.items():
-            if task_list:
-                sub_query_list = [task.sub_query for task in task_list]
-                if sub_query_list:
-                    sub_query_dict[agent_type] = sub_query_list
-
-        if not sub_query_dict:
-            raise ValueError(f"No valid sub-queries found for query {query_id}")
-
-        message = QueryTask(
-            query_id=query_id,
-            agents_needed=list(sub_query_dict.keys()),
-            sub_query=sub_query_dict,
-        )
-
-        await orchestrator.publish_channel(RedisChannels.QUERY_CHANNEL, message)
-
-        logger.info(
-            f"Published orchestration for {query_id} to {len(sub_query_dict)} agents: {list(sub_query_dict.keys())}"
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to publish orchestration for {query_id}: {e}")
-        raise
-
-
-async def _wait_for_completion(query_id: str) -> Dict[str, Any]:
-    completion_channel = RedisChannels.get_query_completion_channel(query_id)
-    pubsub = None
-
-    try:
-        pubsub = orchestrator.redis.pubsub()
-        await asyncio.wait_for(pubsub.subscribe(completion_channel), timeout=5.0)
-
-        start_time = asyncio.get_event_loop().time()
-        max_wait_time = 300.0  # 5 minutes timeout
-
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    completion_data = json.loads(message["data"])
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"Invalid JSON in completion message for {query_id}: {e}"
-                    )
-                    continue
-
-                if not isinstance(completion_data, dict):
-                    logger.warning(f"Invalid completion data type for {query_id}")
-                    continue
-
-                if completion_data.get("query_id") == query_id:
-                    logger.info(f"Received completion for query {query_id}")
-                    return completion_data
-
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed >= max_wait_time:
-                logger.warning(
-                    f"Query {query_id} completion timeout after {elapsed:.1f}s"
-                )
-                raise asyncio.TimeoutError("Query completion timeout")
-
-        raise asyncio.TimeoutError("Completion stream ended unexpectedly")
-
-    except Exception as e:
-        logger.error(f"Error waiting for completion of {query_id}: {e}")
-        raise
-    finally:
-        if pubsub:
-            try:
-                await asyncio.wait_for(
-                    pubsub.unsubscribe(completion_channel), timeout=2.0
-                )
-                await asyncio.wait_for(pubsub.aclose(), timeout=2.0)
-
-            except Exception as cleanup_error:
-                logger.warning(
-                    f"Pubsub cleanup timeout/error for {query_id}: {cleanup_error}"
-                )
-                try:
-                    pubsub.connection.disconnect()
-                except Exception:
-                    pass
-
-
-def _create_success_response(
-    query_id: str, original_query: str, completion_data: Dict[str, Any]
-) -> Dict[str, Any]:
-    return {
-        "query_id": query_id,
-        "status": "completed",
-        "result": {
-            "original_query": original_query,
-            "final_response": completion_data.get("final_response"),
-            "detailed_results": completion_data.get("agent_results", {}),
-            "llm_usage": completion_data.get("llm_usage", {}),
-            "agents_done": completion_data.get("agents_done", []),
-            "processing_time": completion_data.get("processing_time"),
-            "execution_progress": completion_data.get("execution_progress", {}),
-        },
-        "metadata": {
-            "timestamp": completion_data.get("timestamp", datetime.now().isoformat()),
-            "agents_involved": completion_data.get("agents_done", []),
-            "total_agents": len(completion_data.get("agents_done", [])),
-        },
-    }
-
-
-def _create_error_response(
-    query_id: str, error_type: str, message: str
-) -> Dict[str, Any]:
-    return {
-        "query_id": query_id,
-        "status": error_type,
-        "error": {
-            "type": error_type,
-            "message": message,
-            "timestamp": datetime.now().isoformat(),
-        },
-    }
 
 
 @app.get("/query/{query_id}")

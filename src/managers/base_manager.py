@@ -13,7 +13,7 @@ from src.typing.redis import (
     TaskQueueItem,
     TaskUpdate,
 )
-from src.typing.redis.shared_data import TaskGraphUtils
+from src.utils import get_shared_data
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +69,7 @@ class BaseManager:
             return
 
         shared_data = SharedData(**shared_data_raw)
-        agent_tasks = TaskGraphUtils.get_tasks_for_agent(
-            shared_data.task_graph, self.agent_type
-        )
+        agent_tasks = shared_data.get_tasks_for_agent(self.agent_type)
         if not agent_tasks:
             logger.warning(f"No tasks found for {self.agent_type}")
             return
@@ -83,9 +81,7 @@ class BaseManager:
                 task_id=task_node.task_id,
             )
 
-            dependencies_satisfied = await self._check_dependencies(
-                task_node.task_id, shared_data, data.query_id
-            )
+            dependencies_satisfied = self._check_dependencies(task_node, shared_data)
             queue_key = (
                 RedisKeys.get_agent_queue(self.agent_type)
                 if dependencies_satisfied
@@ -108,6 +104,7 @@ class BaseManager:
 
         if task_update.agent_type == self.agent_type:
             await self._execute_next_available_task()
+            await self._update_pending_tasks(query_id)
         elif task_update.agent_type != "chat_agent":  # ChatAgent is final
             await self._update_pending_tasks(query_id)
 
@@ -140,9 +137,7 @@ class BaseManager:
 
                 task_id = getattr(task, "task_id", None)
                 if not task_id:
-                    agent_tasks = TaskGraphUtils.get_tasks_for_agent(
-                        shared_data.task_graph, self.agent_type
-                    )
+                    agent_tasks = shared_data.get_tasks_for_agent(self.agent_type)
                     for t in agent_tasks:
                         if t.sub_query == task.sub_query:
                             task_id = t.task_id
@@ -155,8 +150,16 @@ class BaseManager:
                     still_pending.append(task_raw)
                     continue
 
-                dependencies_satisfied = await self._check_dependencies(
-                    task_id, shared_data, query_id
+                task_node = next(
+                    (
+                        t
+                        for t in shared_data.get_tasks_for_agent(self.agent_type)
+                        if t.task_id == task_id
+                    ),
+                    None,
+                )
+                dependencies_satisfied = self._check_dependencies(
+                    task_node, shared_data
                 )
                 if dependencies_satisfied:
                     ready_tasks.append(task_raw)
@@ -182,34 +185,21 @@ class BaseManager:
         except Exception as e:
             logger.error(f"Failed to update pending tasks for {self.agent_type}: {e}")
 
-    async def _check_dependencies(
-        self, task_id: str, shared_data: SharedData, query_id: str
-    ) -> bool:
-        if not task_id or not isinstance(task_id, str):
-            logger.warning(f"Invalid task_id provided: {task_id}")
+    def _check_dependencies(self, task_node, shared_data: SharedData) -> bool:
+        """Check if all dependencies for a task are completed using new SharedData schema."""
+        if not task_node or not hasattr(task_node, "dependencies"):
+            logger.warning(f"Invalid task_node provided: {task_node}")
             return False
 
-        if not shared_data or not shared_data.task_graph:
-            return True
-
-        try:
-            completed_ids = set()
-            for agent_type, agent_results in shared_data.results.items():
-                if agent_type in shared_data.task_graph.nodes:
-                    for task in shared_data.task_graph.nodes[agent_type]:
-                        if task.sub_query in agent_results:
-                            completed_ids.add(task.task_id)
-
-            task_node = TaskGraphUtils.get_task_by_id(shared_data.task_graph, task_id)
-            if not task_node:
-                logger.warning(f"Task {task_id} not found in task graph")
-                return True
-
-            return all(dep_id in completed_ids for dep_id in task_node.dependencies)
-
-        except Exception as e:
-            logger.error(f"Dependency check failed for {task_id}: {e}")
-            return True
+        for dep_id in getattr(task_node, "dependencies", []):
+            dep_exec = shared_data.tasks.get(dep_id)
+            if (
+                not dep_exec
+                or dep_exec.status
+                != shared_data.tasks[dep_id].status.__class__.COMPLETED
+            ):
+                return False
+        return True
 
     async def _execute_next_available_task(self):
         try:
@@ -233,12 +223,18 @@ class BaseManager:
                 if task_data:
                     task = TaskQueueItem(**json.loads(task_data))
 
+                    shared_data = await get_shared_data(self.redis, task.query_id)
+                    conversation_id = (
+                        shared_data.conversation_id if shared_data else None
+                    )
+
                     channel = RedisChannels.get_command_channel(self.agent_type)
                     message = CommandMessage(
                         agent_type=self.agent_type,
                         command="execute",
                         query_id=task.query_id,
                         sub_query=task.sub_query,
+                        conversation_id=conversation_id,
                         timestamp=datetime.now().isoformat(),
                     )
                     await self.redis.publish(channel, json.dumps(message.model_dump()))

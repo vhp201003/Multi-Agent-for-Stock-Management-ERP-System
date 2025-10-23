@@ -1,8 +1,8 @@
 from .agent_status import AgentStatus
-from .completion import CompletionResponse
+from .completion import CompletionResponse, CompletionStatus
 from .constants import RedisChannels, RedisKeys, TaskStatus
 from .conversation import ConversationData, Message
-from .messages import CommandMessage, QueryTask, TaskUpdate
+from .messages import BaseMessage, CommandMessage, QueryTask, TaskUpdate
 from .queue import PendingQueue, Queue, TaskQueueItem
 from .shared_data import LLMUsage, SharedData
 
@@ -15,6 +15,7 @@ __all__ = [
     "AgentStatus",
     "ConversationData",
     "Message",
+    "BaseMessage",
     "RedisChannels",
     "TaskStatus",
     "RedisKeys",
@@ -22,4 +23,5 @@ __all__ = [
     "Queue",
     "PendingQueue",
     "CompletionResponse",
+    "CompletionStatus",
 ]

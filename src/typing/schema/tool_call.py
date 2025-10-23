@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from src.typing.llm_response import BaseAgentResponse
+from src.typing.schema.base_schema import BaseSchema
 
 
 class ToolCallPlan(BaseModel):
@@ -10,7 +10,7 @@ class ToolCallPlan(BaseModel):
     parameters: dict = Field(..., description="Parameters required for the tool call")
 
 
-class ToolCallSchema(BaseAgentResponse):
+class ToolCallSchema(BaseSchema):
     tool_calls: Optional[List[ToolCallPlan]] = Field(
         None,
         description="List of tool calls to execute in sequence (for ACTIONS)",

@@ -11,11 +11,9 @@ from src.typing.llm_response import OrchestratorResponse
 from src.typing.redis import (
     CommandMessage,
     CompletionResponse,
-    ConversationData,
     LLMUsage,
     QueryTask,
     RedisChannels,
-    RedisKeys,
     SharedData,
     TaskStatus,
     TaskUpdate,
@@ -23,6 +21,10 @@ from src.typing.redis import (
 from src.typing.request import ChatRequest, Request
 from src.typing.schema import OrchestratorSchema
 from src.utils import get_shared_data, save_shared_data
+from src.utils.converstation import (
+    load_or_create_conversation,
+    save_conversation_message,
+)
 
 from .base_agent import BaseAgent
 
@@ -42,46 +44,167 @@ class OrchestratorAgent(BaseAgent):
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.TASK_UPDATES]
 
-    async def process(self, request: Request) -> OrchestratorResponse:
+    async def process(self, request: Request) -> Dict[str, Any]:
         try:
-            if not request.query:
-                return OrchestratorResponse(
-                    error="Query cannot be empty",
+            validation_error = self._validate_request(request)
+            if validation_error:
+                return {"status": "error", "error": validation_error}
+
+            request = self._ensure_conversation_id(request)
+            history = await self._get_conversation_history(request)
+            messages = self._compose_llm_messages(request, history)
+            orchestration_result = await self._run_llm_orchestration(request, messages)
+            logger.info(f"Orchestration result: {orchestration_result}")
+            if request.conversation_id and orchestration_result:
+                await save_conversation_message(
+                    self.redis, request.conversation_id, "user", request.query
                 )
 
-            history = []
-            if request.conversation_id:
-                conversation = await self._load_or_create_conversation(
-                    request.conversation_id
-                )
-                history = conversation.get_recent_messages(limit=10)
+            error = self._validate_orchestration_result(orchestration_result)
+            if error:
+                return {"status": "error", "error": error}
 
-            messages = [
-                {"role": "system", "content": self.prompt},
-                *history,
-                {"role": "user", "content": request.query},
-            ]
+            await self._initialize_shared_state(request, orchestration_result)
+            sub_query_dict = self._build_sub_query_dict(orchestration_result)
+            if not sub_query_dict:
+                return {
+                    "status": "error",
+                    "error": "No valid sub-queries found for orchestration",
+                }
 
-            response_content: OrchestratorResponse = await self._call_llm(
-                query_id=request.query_id,
-                conversation_id=request.conversation_id,
-                messages=messages,
-                response_schema=OrchestratorSchema,
-                response_model=OrchestratorResponse,
-            )
-
-            if request.conversation_id and response_content:
-                await self._save_conversation_message(
-                    request.conversation_id, "user", request.query
-                )
-
-            return response_content
+            await self._publish_orchestration_task(request, sub_query_dict)
+            completion_data = await self._wait_for_completion(request.query_id)
+            return completion_data
 
         except Exception as e:
             logger.error(f"Orchestration failed: {e}")
-            return OrchestratorResponse(
-                error=f"Processing error: {str(e)[:100]}",
+            return {"status": "error", "error": f"Processing error: {str(e)[:100]}"}
+
+    def _validate_request(self, request: Request) -> Optional[str]:
+        if not request.query or not request.query.strip():
+            return "Query cannot be empty"
+        if not request.query_id or not request.query_id.strip():
+            return "Query ID cannot be empty"
+        return None
+
+    def _ensure_conversation_id(self, request: Request):
+        if not hasattr(request, "conversation_id") or not request.conversation_id:
+            request.conversation_id = request.query_id
+        return request
+
+    async def _get_conversation_history(self, request: Request) -> List[Any]:
+        if request.conversation_id:
+            conversation = await load_or_create_conversation(
+                self.redis, request.conversation_id
             )
+            return conversation.get_recent_messages(limit=10)
+        return []
+
+    def _compose_llm_messages(
+        self, request: Request, history: List[Any]
+    ) -> List[Dict[str, Any]]:
+        return [
+            {"role": "system", "content": self.prompt},
+            *history,
+            {"role": "user", "content": request.query},
+        ]
+
+    async def _run_llm_orchestration(
+        self, request: Request, messages: List[Dict[str, Any]]
+    ) -> OrchestratorResponse:
+        return await self._call_llm(
+            query_id=request.query_id,
+            conversation_id=request.conversation_id,
+            messages=messages,
+            response_schema=OrchestratorSchema,
+            response_model=OrchestratorResponse,
+        )
+
+    def _validate_orchestration_result(
+        self, orchestration_result: OrchestratorResponse
+    ) -> Optional[str]:
+        if orchestration_result.error:
+            return orchestration_result.error
+        if (
+            not orchestration_result.result
+            or not orchestration_result.result.agents_needed
+        ):
+            return "No agents identified for query processing"
+        return None
+
+    async def _initialize_shared_state(
+        self, request: Request, orchestration_result: OrchestratorResponse
+    ) -> SharedData:
+        shared_data = SharedData(
+            original_query=request.query,
+            query_id=request.query_id,
+            agents_needed=orchestration_result.result.agents_needed,
+            status="processing",
+            conversation_id=request.conversation_id,
+        )
+        for (
+            agent_type,
+            task_list,
+        ) in orchestration_result.result.task_dependency.items():
+            for task in task_list:
+                shared_data.add_task(task)
+        await save_shared_data(self.redis, request.query_id, shared_data)
+
+    def _build_sub_query_dict(
+        self, orchestration_result: OrchestratorResponse
+    ) -> Dict[str, List[str]]:
+        sub_query_dict = {}
+        for (
+            agent_type,
+            task_list,
+        ) in orchestration_result.result.task_dependency.items():
+            if task_list:
+                sub_query_list = [task.sub_query for task in task_list]
+                if sub_query_list:
+                    sub_query_dict[agent_type] = sub_query_list
+        return sub_query_dict
+
+    async def _publish_orchestration_task(
+        self, request: Request, sub_query_dict: Dict[str, List[str]]
+    ):
+        message = QueryTask(
+            query_id=request.query_id,
+            agents_needed=list(sub_query_dict.keys()),
+            sub_query=sub_query_dict,
+        )
+        await self.publish_channel(RedisChannels.QUERY_CHANNEL, message, QueryTask)
+
+    async def _wait_for_completion(self, query_id: str) -> Dict[str, Any]:
+        completion_channel = RedisChannels.get_query_completion_channel(query_id)
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(completion_channel)
+        try:
+            start_time = datetime.now().timestamp()
+            max_wait_time = 300.0  # 5 minutes
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message["type"] == "message":
+                    try:
+                        completion_data = json.loads(message["data"])
+                    except Exception:
+                        continue
+                    if completion_data.get("query_id") == query_id:
+                        await pubsub.unsubscribe(completion_channel)
+                        await pubsub.aclose()
+                        return completion_data
+                if (datetime.now().timestamp() - start_time) > max_wait_time:
+                    await pubsub.unsubscribe(completion_channel)
+                    await pubsub.aclose()
+                    return {"status": "error", "error": "Query completion timeout"}
+        except Exception as e:
+            await pubsub.unsubscribe(completion_channel)
+            await pubsub.aclose()
+            return {
+                "status": "error",
+                "error": f"Error waiting for completion: {str(e)[:100]}",
+            }
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
@@ -90,12 +213,14 @@ class OrchestratorAgent(BaseAgent):
 
         try:
             async for message in pubsub.listen():
-                if message["type"] == "message":
-                    if message["channel"] == RedisChannels.TASK_UPDATES:
-                        task_update_message = TaskUpdate.model_validate_json(
-                            message["data"]
-                        )
-                        await self._handle_task_update(task_update_message)
+                if (
+                    message["channel"] == RedisChannels.TASK_UPDATES
+                    and message["type"] == "message"
+                ):
+                    task_update_message = TaskUpdate.model_validate_json(
+                        message["data"]
+                    )
+                    await self._handle_task_update(task_update_message)
         except Exception as e:
             logger.error(f"Redis error in listen_channels: {e}")
         finally:
@@ -185,11 +310,12 @@ class OrchestratorAgent(BaseAgent):
             chat_message = ChatRequest(
                 query_id=shared_data.query_id,
                 conversation_id=shared_data.conversation_id,
+                query=shared_data.original_query,
                 context=filtered_context,
             )
 
             chat_channel = RedisChannels.get_command_channel(CHAT_AGENT_TYPE)
-            await self.redis.publish(chat_channel, chat_message.model_dump_json())
+            await self.publish_channel(chat_channel, chat_message, ChatRequest)
             logger.info(
                 f"Successfully triggered ChatAgent for query {shared_data.query_id}"
             )
@@ -207,8 +333,8 @@ class OrchestratorAgent(BaseAgent):
             completion_channel = RedisChannels.get_query_completion_channel(
                 shared_data.query_id
             )
-            await self.redis.publish(
-                completion_channel, error_response.model_dump_json()
+            await self.publish_channel(
+                completion_channel, error_response, CompletionResponse
             )
 
     async def _trigger_summary_agent(self, query_id: str, shared_data: SharedData):
@@ -225,7 +351,7 @@ class OrchestratorAgent(BaseAgent):
             )
 
             summary_channel = RedisChannels.get_command_channel(SUMMARY_AGENT_TYPE)
-            await self.redis.publish(summary_channel, json.dumps(summary_message))
+            await self.publish_channel(summary_channel, summary_message, CommandMessage)
 
         except Exception as e:
             logger.error(f"Failed to trigger SummaryAgent for {query_id}: {e}")
@@ -261,15 +387,15 @@ class OrchestratorAgent(BaseAgent):
                 query_id=task_update_message.query_id,
                 conversation_id=shared_data.conversation_id,
                 original_query=shared_data.original_query,
-                response=final_response_text,
+                response={"final_response": final_response_text},
             )
 
             completion_key = RedisChannels.get_query_completion_channel(
                 task_update_message.query_id
             )
 
-            await self.redis.publish(
-                completion_key, completion_response.model_dump_json()
+            await self.publish_channel(
+                completion_key, completion_response, CompletionResponse
             )
 
             await self._store_completion_metrics(
@@ -311,7 +437,9 @@ class OrchestratorAgent(BaseAgent):
                     "agents_involved": shared_data.agents_needed,
                     "total_tasks": len(shared_data.tasks),
                     "completion_timestamp": datetime.now().isoformat(),
-                    "response_length": len(completion_response.response or ""),
+                    "response_length": len(str(completion_response.response))
+                    if completion_response.response
+                    else 0,
                 },
             }
 
@@ -360,8 +488,9 @@ class OrchestratorAgent(BaseAgent):
                 task_update_message.query_id
             )
 
-            completion_json = error_response.model_dump_json(exclude_none=True)
-            await self.redis.publish(completion_channel, completion_json)
+            await self.publish_channel(
+                completion_channel, error_response, CompletionResponse
+            )
 
             logger.info(
                 f"Published fallback completion for {task_update_message.query_id}"
@@ -434,93 +563,6 @@ class OrchestratorAgent(BaseAgent):
             else:
                 filtered[key] = value
         return filtered
-
-    async def _load_or_create_conversation(
-        self, conversation_id: str
-    ) -> ConversationData:
-        conversation_key = RedisKeys.get_conversation_key(conversation_id)
-
-        try:
-            logger.info(
-                f"OrchestratorAgent: Loading conversation with key: {conversation_key}"
-            )
-            conversation_data = await self.redis.json().get(conversation_key)
-
-            if conversation_data:
-                logger.info(
-                    f"OrchestratorAgent: Found existing conversation {conversation_id} with {len(conversation_data.get('messages', []))} messages"
-                )
-                return ConversationData(**conversation_data)
-            else:
-                logger.info(
-                    f"OrchestratorAgent: Creating new conversation {conversation_id}"
-                )
-                new_conversation = ConversationData(
-                    conversation_id=conversation_id,
-                    messages=[],
-                    updated_at=datetime.now(),
-                    max_messages=50,  # Keep last 50 messages
-                )
-                await self.redis.json().set(
-                    conversation_key,
-                    "$",
-                    json.loads(json.dumps(new_conversation.model_dump())),
-                )
-                logger.info(
-                    f"OrchestratorAgent: Created new conversation: {conversation_id}"
-                )
-                return new_conversation
-
-        except Exception as e:
-            logger.warning(
-                f"OrchestratorAgent: Error loading conversation, creating new: {e}"
-            )
-            return ConversationData(
-                conversation_id=conversation_id, messages=[], updated_at=datetime.now()
-            )
-
-    async def _save_conversation_message(
-        self,
-        conversation_id: str,
-        role: str,
-        content: str,
-        metadata: Optional[dict] = None,
-    ):
-        try:
-            logger.info(
-                f"OrchestratorAgent: Loading/creating conversation {conversation_id} for saving message"
-            )
-            conversation = await self._load_or_create_conversation(conversation_id)
-
-            conversation.add_message(role=role, content=content, metadata=metadata)
-
-            conversation_key = RedisKeys.get_conversation_key(conversation_id)
-            await self.redis.json().set(
-                conversation_key,
-                "$",
-                json.loads(json.dumps(conversation.model_dump())),
-            )
-
-            logger.info(
-                f"OrchestratorAgent: Saved {role} message to conversation {conversation_id} "
-                f"(total: {len(conversation.messages)} messages)"
-            )
-
-        except Exception as e:
-            logger.error(f"OrchestratorAgent: Failed to save conversation message: {e}")
-
-    async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        if channel not in await self.get_pub_channels():
-            raise ValueError(f"OrchestratorAgent cannot publish to {channel}")
-
-        try:
-            if not isinstance(message, QueryTask):
-                message = QueryTask(**message)
-            await self.redis.publish(channel=channel, message=message.model_dump_json())
-            logger.info(f"{self.agent_type} published on {channel}: {message}")
-        except Exception as e:
-            logger.error(f"Message publish failed for {channel}: {e}")
-            raise
 
     async def start(self):
         logger.info("OrchestratorAgent: Starting workflow orchestration")

@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
-from src.typing import BaseSchema
+from src.typing.schema.base_schema import BaseSchema
 
 
 class BaseAgentResponse(BaseModel):

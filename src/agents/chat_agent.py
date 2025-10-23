@@ -7,13 +7,14 @@ from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prom
 
 from src.agents.base_agent import BaseAgent
 from src.typing.llm_response import ChatResponse
-from src.typing.redis import RedisChannels, TaskStatus, TaskUpdate
+from src.typing.redis import CompletionResponse, RedisChannels
 from src.typing.request import ChatRequest
 from src.typing.schema import (
     ChatAgentSchema,
     LLMMarkdownField,
     LLMSectionBreakField,
 )
+from src.utils.converstation import save_conversation_message
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class ChatAgent(BaseAgent):
         super().__init__(agent_type=AGENT_TYPE, **kwargs)
 
     async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.TASK_UPDATES]
+        return [RedisChannels.QUERY_COMPLETION]
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(AGENT_TYPE)]
@@ -71,18 +72,26 @@ class ChatAgent(BaseAgent):
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
-                    chat_request = ChatRequest.model_dump_json(message["data"])
-                    await self._handle_command_consolidated(chat_request)
+                    chat_request = ChatRequest.model_validate_json(message["data"])
+                    await self.handle_command_message(chat_request)
         except Exception as e:
             logger.error(f"Redis error in listen_channels: {e}")
         finally:
             await pubsub.unsubscribe(*channels)
 
-    async def _handle_command_consolidated(self, chat_request=ChatRequest):
+    async def handle_command_message(self, chat_request=ChatRequest):
         try:
             response: ChatResponse = await self.process(chat_request)
 
             await self.publish_completion(response)
+
+            # Store chat history
+            await save_conversation_message(
+                self.redis,
+                chat_request.conversation_id,
+                "assistant",
+                response.result.model_dump_json() if response.result else "No response",
+            )
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in command message: {e}")
@@ -91,22 +100,26 @@ class ChatAgent(BaseAgent):
 
     async def publish_completion(self, response: ChatResponse):
         try:
-            task_update = TaskUpdate(
-                agent_type=AGENT_TYPE,
-                query_id=response.query_id,
-                status=TaskStatus.DONE,
-                result={
-                    "final_response": response.result.model_dump(),
-                    "layout_response": response.model_dump(),
-                    "field_count": len(response.layout),
-                    "response_type": "structured_layout",
-                },
-                llm_usage=response.llm_usage,
-                llm_reasoning=response.llm_reasoning,
+            completion_channel = RedisChannels.get_query_completion_channel(
+                response.query_id
             )
 
-            await self.redis.publish(
-                RedisChannels.TASK_UPDATES, task_update.model_dump_json()
+            # Publish final completion response
+            completion_response = CompletionResponse.response_success(
+                query_id=response.query_id,
+                conversation_id=response.conversation_id,
+                response=response.result.model_dump()
+                if response.result
+                else {"error": "No response"},
+            )
+
+            completion_channel = RedisChannels.get_query_completion_channel(
+                response.query_id
+            )
+            await self.publish_channel(
+                completion_channel,
+                completion_response,
+                CompletionResponse,
             )
 
         except Exception as e:

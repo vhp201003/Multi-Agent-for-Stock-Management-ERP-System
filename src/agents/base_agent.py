@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from jsonschema import ValidationError
 
-from src.typing import BaseAgentResponse, BaseSchema
+from src.typing import BaseAgentResponse, BaseMessage, BaseSchema
 
 load_dotenv()
 
@@ -91,15 +91,21 @@ class BaseAgent(ABC):
             if response_schema:
                 try:
                     data = json.loads(content) if content else {}
+                    logger.info(f"Raw LLM data before validation: {data}")
                     llm_response_schema = response_schema.model_validate(data)
 
                 except (json.JSONDecodeError, ValidationError) as e:
                     logger.error(f"LLM parsing/validation error: {e}")
                     logger.error(f"Raw LLM content: {content}")
+                    logger.error(
+                        f"Parsed data: {data if 'data' in locals() else 'Failed to parse'}"
+                    )
+                    raise
 
                 except (json.JSONDecodeError, ValidationError) as e:
-                    logger.error(f"LLM parsing/validation error: {e}")
+                    logger.error(f"LLM parsing/validation error (duplicate): {e}")
                     logger.error(f"Raw LLM content: {content}")
+                    raise
 
             if response_model:
                 result = response_model(
@@ -152,19 +158,17 @@ class BaseAgent(ABC):
         """
         pass
 
-    @abstractmethod
-    async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        """Publish validated message to specified channel.
+    async def publish_channel(
+        self, channel: str, message: Any, message_type: Type[BaseMessage]
+    ):
+        try:
+            if not isinstance(message, message_type):
+                message = message_type.model_validate(message)
 
-        Each agent implements channel-specific publishing logic:
-        - OrchestratorAgent: Publishes query tasks to managers
-        - WorkerAgent: Publishes task completion updates
+            await self.redis.publish(channel, message.model_dump_json())
 
-        Args:
-            channel: Target Redis channel
-            message: Message data to publish (will be validated and serialized)
-        """
-        pass
+        except Exception as e:
+            logger.error(f"Message publish failed for {channel}: {e}")
 
     @abstractmethod
     async def start(self):

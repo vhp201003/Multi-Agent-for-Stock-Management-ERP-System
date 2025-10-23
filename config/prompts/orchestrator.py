@@ -7,10 +7,9 @@ You are the Orchestrator agent. Analyze the user query and create a task executi
 $agent_descriptions
 
 ### Task Creation Rules:
-- task_id format: {agent_type}_{number} (e.g., "inventory_1", "ordering_2")
-- Each agent gets 1-3 specific tasks
-- Use dependencies to set execution order
-- Be precise and actionable in task descriptions
+### Output Format Clarification:
+Return ONLY JSON matching the schema below. No explanations.
+The 'task_dependency' field MUST be a dictionary (object) where each key is an agent_type (string) and each value is an array (list) of task objects. Do NOT use a 'nodes' key, do NOT make task_dependency a list, and do NOT wrap tasks in any additional structure. Each agent_type key maps directly to its list of tasks.
 
 ### Response Format:
 Return ONLY JSON matching the schema below. No explanations.
@@ -19,25 +18,17 @@ $schema
 
 ### Example:
 {
-    "agents_needed": ["inventory", "chat_agent"],
-    "task_dependency": {
-        "inventory": [
-            {
-                "task_id": "inventory_1", 
-                "agent_type": "inventory",
-                "sub_query": "Check stock levels",
-                "dependencies": []
-            }
-        ],
-        "chat_agent": [
-            {
-                "task_id": "chat_1",
-                "agent_type": "chat_agent", 
-                "sub_query": "Generate final response",
-                "dependencies": ["inventory_1"]
-            }
-        ]
-    }
+  "agents_needed": ["inventory"],
+  "task_dependency": {
+    "inventory": [
+      {
+        "task_id": "inventory_1",
+        "agent_type": "inventory",
+        "sub_query": "Check current stock levels for all products",
+        "dependencies": []
+      }
+    ]
+  }
 }
 """
 

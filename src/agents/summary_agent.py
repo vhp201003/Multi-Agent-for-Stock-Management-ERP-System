@@ -7,7 +7,12 @@ from config.prompts.summary_agent import SUMMARY_AGENT_PROMPTS
 
 from src.agents.base_agent import BaseAgent
 from src.typing.llm_response import SummaryResponse
-from src.typing.redis import ConversationData, RedisChannels, RedisKeys
+from src.typing.redis import (
+    CommandMessage,
+    ConversationData,
+    RedisChannels,
+    RedisKeys,
+)
 from src.typing.schema import SummaryAgentSchema
 
 logger = logging.getLogger(__name__)
@@ -21,14 +26,14 @@ class SummaryAgent(BaseAgent):
         self.prompts = SUMMARY_AGENT_PROMPTS
 
     async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.TASK_UPDATES]
+        pass
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
 
-    async def process(self, request: Dict[str, Any]) -> SummaryResponse:
+    async def process(self, command_message: CommandMessage) -> SummaryResponse:
         try:
-            conversation_id = request.get("conversation_id")
+            conversation_id = command_message.conversation_id
             if not conversation_id:
                 raise ValueError("conversation_id is required")
 
@@ -45,10 +50,10 @@ class SummaryAgent(BaseAgent):
                     f"No messages to summarize for conversation {conversation_id}"
                 )
                 return SummaryResponse(
+                    query_id=command_message.query_id,
                     conversation_id=conversation_id,
-                    summary="No conversation history available",
-                    message_count=0,
-                    timestamp=datetime.now().isoformat(),
+                    result=None,
+                    error="No messages to summarize",
                 )
 
             messages_text = "\n".join(
@@ -64,35 +69,20 @@ class SummaryAgent(BaseAgent):
                 {"role": "user", "content": user_prompt},
             ]
 
-            summary_response = await self._call_llm(
+            summary_response: SummaryResponse = await self._call_llm(
+                query_id=command_message.query_id,
+                conversation_id=conversation_id,
                 messages=messages,
                 response_schema=SummaryAgentSchema,
                 response_model=SummaryResponse,
             )
 
-            summary_text = ""
-            if hasattr(summary_response, "summary"):
-                summary_text = summary_response.summary
-            elif isinstance(summary_response, str):
-                summary_text = summary_response
-            else:
-                summary_text = str(summary_response)
-
-            await self._update_conversation_summary(conversation_id, summary_text)
-
-            logger.info(f"Successfully summarized conversation {conversation_id}")
-
-            return SummaryResponse(
-                conversation_id=conversation_id,
-                summary=summary_text,
-                message_count=len(recent_messages),
-                timestamp=datetime.now().isoformat(),
-            )
+            return summary_response
 
         except Exception as e:
             logger.error(f"Summary processing failed: {e}")
             return SummaryResponse(
-                conversation_id=request.get("conversation_id", "unknown"),
+                conversation_id=command_message.conversation_id,
                 summary="",
                 message_count=0,
                 timestamp=datetime.now().isoformat(),
@@ -150,7 +140,7 @@ class SummaryAgent(BaseAgent):
             await self.redis.json().set(
                 conversation_key,
                 "$",
-                json.loads(json.dumps(conversation.model_dump())),
+                conversation.model_dump_json(),
             )
 
             logger.info(f"Updated summary for conversation {conversation_id}")
@@ -161,14 +151,7 @@ class SummaryAgent(BaseAgent):
             )
 
     async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        if channel not in await self.get_pub_channels():
-            raise ValueError(f"SummaryAgent cannot publish to {channel}")
-
-        try:
-            await self.redis.publish(channel=channel, message=json.dumps(message))
-        except Exception as e:
-            logger.error(f"Message publish failed for {channel}: {e}")
-            raise
+        pass
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
@@ -177,33 +160,22 @@ class SummaryAgent(BaseAgent):
 
         try:
             async for message in pubsub.listen():
-                if message["type"] == "message":
+                if (
+                    message["channel"] == RedisChannels.get_command_channel(AGENT_TYPE)
+                    and message["type"] == "message"
+                ):
                     try:
-                        data = json.loads(message["data"])
-                        logger.info(
-                            f"SummaryAgent received command: {data.get('command')}"
+                        command_message = CommandMessage.model_validate_json(
+                            message["data"]
                         )
-
-                        if data.get("command") == "summarize":
-                            result = await self.process(data)
-
-                            task_update = {
-                                "agent_type": AGENT_TYPE,
-                                "query_id": data.get("query_id", "unknown"),
-                                "sub_query": f"Summarize conversation {data.get('conversation_id')}",
-                                "status": "done",
-                                "results": result.model_dump(),
-                                "context": {},
-                                "llm_usage": {},
-                                "timestamp": datetime.now().isoformat(),
-                            }
-
-                            await self.redis.publish(
-                                RedisChannels.TASK_UPDATES, json.dumps(task_update)
+                        if command_message.command == "summarize":
+                            summary_response: SummaryResponse = await self.process(
+                                command_message
                             )
 
-                            logger.info(
-                                f"SummaryAgent completed task for conversation {data.get('conversation_id')}"
+                            await self._update_conversation_summary(
+                                command_message.conversation_id,
+                                summary_response.result.summary,
                             )
 
                     except json.JSONDecodeError as e:

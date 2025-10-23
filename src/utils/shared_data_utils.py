@@ -19,7 +19,9 @@ async def get_shared_data(
 
         shared_data_key = RedisKeys.get_shared_data_key(query_id)
         data = await redis_client.json().get(shared_data_key)
-        return SharedData.model_validate_json(data)
+        if data is None:
+            return None
+        return SharedData(**data)
     except (TypeError, ValueError) as e:
         logger.error(f"Error parsing shared data for {query_id}: {e}")
         return None

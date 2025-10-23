@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -58,11 +57,22 @@ class WorkerAgent(BaseAgent):
     ) -> WorkerAgentProcessResponse:
         ### Phase 1: Load conversation and prepare messages
         sub_query = command_message.sub_query
-        conversation = ConversationData.model_validate_json(
-            await self.redis.json().get(
-                RedisKeys.get_conversation_key(command_message.conversation_id)
-            )
+        conversation_key = RedisKeys.get_conversation_key(
+            command_message.conversation_id
         )
+        conversation_data = await self.redis.json().get(conversation_key)
+        if conversation_data is None:
+            logger.error(
+                f"No conversation data found for {command_message.conversation_id}"
+            )
+            # Create a minimal conversation for processing
+            conversation = ConversationData(
+                conversation_id=command_message.conversation_id,
+                messages=[],
+                summary=None,
+            )
+        else:
+            conversation = ConversationData(**conversation_data)
         # Summary conversation context
         summary = conversation.summary
         messages = [
@@ -94,42 +104,48 @@ class WorkerAgent(BaseAgent):
 
         mcp_result = WorkerAgentProcessResponse()
         mcp_result.result = llm_response.result
+        mcp_result.llm_usage = llm_response.llm_usage
+        mcp_result.llm_reasoning = llm_response.llm_reasoning
 
         tool_calls = mcp_result.result.tool_calls
         read_resources = mcp_result.result.read_resources
 
-        for tool_call in tool_calls:
-            tool_name = tool_call.tool_name
-            parameters = tool_call.parameters
-            try:
-                tool_result = await self.call_mcp_tool(tool_name, parameters)
-                mcp_result.tools_result.append(
-                    ToolCallResultResponse(tool_name=tool_name, tool_result=tool_result)
-                )
-            except Exception as e:
-                mcp_result.tools_result.append(
-                    ToolCallResultResponse(
-                        tool_name=tool_name,
-                        tool_result={"error": f"Tool call failed: {str(e)}"},
+        if tool_calls:
+            for tool_call in tool_calls:
+                tool_name = tool_call.tool_name
+                parameters = tool_call.parameters
+                try:
+                    tool_result = await self.call_mcp_tool(tool_name, parameters)
+                    mcp_result.tools_result.append(
+                        ToolCallResultResponse(
+                            tool_name=tool_name, tool_result=tool_result
+                        )
                     )
-                )
+                except Exception as e:
+                    mcp_result.tools_result.append(
+                        ToolCallResultResponse(
+                            tool_name=tool_name,
+                            tool_result={"error": f"Tool call failed: {str(e)}"},
+                        )
+                    )
 
         ### 3.1 Extract resource reads and read resources
-        for resource in read_resources:
-            try:
-                resource_result = await self.read_mcp_resource(resource)
-                mcp_result.data_resources.append(
-                    ResourceCallResponse(
-                        resource_name=resource, resource_data=resource_result
+        if read_resources:
+            for resource in read_resources:
+                try:
+                    resource_result = await self.read_mcp_resource(resource)
+                    mcp_result.data_resources.append(
+                        ResourceCallResponse(
+                            resource_name=resource, resource_data=resource_result
+                        )
                     )
-                )
-            except Exception as e:
-                mcp_result.data_resources.append(
-                    ResourceCallResponse(
-                        resource_name=resource,
-                        resource_data={"error": f"Resource read failed: {str(e)}"},
+                except Exception as e:
+                    mcp_result.data_resources.append(
+                        ResourceCallResponse(
+                            resource_name=resource,
+                            resource_data={"error": f"Resource read failed: {str(e)}"},
+                        )
                     )
-                )
 
         return mcp_result
 
@@ -219,15 +235,15 @@ class WorkerAgent(BaseAgent):
                 query_id=command_message.query_id,
                 sub_query=command_message.sub_query,
                 status=TaskStatus.DONE,
-                results={command_message.sub_query: response.result},
+                result={command_message.sub_query: response.result},
                 context={command_message.sub_query: response.result},
-                llm_usage=response.llm_usage,
+                llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
             )
 
             await self.publish_channel(
-                RedisChannels.TASK_UPDATES, task_update.model_dump_json()
+                RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
 
         except Exception as e:
@@ -236,16 +252,16 @@ class WorkerAgent(BaseAgent):
                 task_id=task_id,
                 query_id=command_message.query_id,
                 sub_query=command_message.sub_query,
-                status=TaskStatus.ERROR.value,
-                results={command_message.sub_query: {"error": str(e)}},
+                status=TaskStatus.ERROR,
+                result={command_message.sub_query: {"error": str(e)}},
                 context={command_message.sub_query: {"error": str(e)}},
-                llm_usage=response.llm_usage,
+                llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
             )
 
             await self.publish_channel(
-                RedisChannels.TASK_UPDATES, task_update.model_dump_json()
+                RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
             raise
 
@@ -258,34 +274,11 @@ class WorkerAgent(BaseAgent):
 
             if shared_data_raw:
                 shared_data = SharedData(**shared_data_raw)
-                if self.agent_type in shared_data.task_graph.nodes:
-                    for task in shared_data.task_graph.nodes[self.agent_type]:
-                        if task.sub_query == sub_query:
-                            return task.task_id
+                return shared_data.get_task_id_by_sub_query(self.agent_type, sub_query)
             return None
         except Exception as e:
             logger.error(f"Task ID resolution failed: {e}")
             return None
-
-    async def publish_channel(self, channel: str, message: Dict[str, Any]):
-        if channel not in await self.get_pub_channels():
-            raise ValueError(f"WorkerAgent cannot publish to {channel}")
-
-        try:
-            validated = (
-                TaskUpdate(**message)
-                if channel == RedisChannels.TASK_UPDATES
-                else message
-            )
-            message_json = (
-                validated.model_dump_json()
-                if hasattr(validated, "model_dump_json")
-                else json.dumps(validated)
-            )
-            await self.redis.publish(channel=channel, message=message_json)
-        except Exception as e:
-            logger.error(f"Message publish failed for {channel}: {e}")
-            raise
 
     async def get_mcp_client(self) -> MCPClient:
         if not self.mcp_server_url:
