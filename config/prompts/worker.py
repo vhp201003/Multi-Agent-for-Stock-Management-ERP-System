@@ -14,9 +14,14 @@ $resources_description
 Parse sub-query and return JSON with tool calls/resource URIs.
 
 ## Response Format:
-1. Tool: {"tool_calls": [{"tool_name": "exact_name", "parameters": {...}}]}
-2. Resource: {"read_resource": ["exact_uri"]}
-3. Combined: {"tool_calls": [...], "read_resource": [...]}
+Return JSON with "tool_calls" as a list containing:
+- Tool calls: {"tool_name": "exact_name", "parameters": {...}}
+- Resource URIs: "exact_uri" (string)
+
+## Examples:
+1. Tool only: {"tool_calls": [{"tool_name": "check_stock", "parameters": {"product_id": "LAPTOP-001"}}]}
+2. Resource only: {"tool_calls": ["stock://levels"]}
+3. Combined: {"tool_calls": [{"tool_name": "check_stock", "parameters": {"product_id": "LAPTOP-001"}}, "stock://levels"]}
 4. Error: {"error": "reason"}
 
 ## Rules:
@@ -28,6 +33,7 @@ Parse sub-query and return JSON with tool calls/resource URIs.
 ## Example for tools/resource usage: 
 $examples
 """
+
 
 def build_worker_agent_prompt(
     agent_type: str,

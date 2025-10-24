@@ -37,26 +37,17 @@ class BaseManager:
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
+                    channel = message["channel"]
+                    if channel == RedisChannels.QUERY_CHANNEL:
+                        await self._process_query_message(QueryTask.model_validate_json(message["data"]))
+                    elif channel == RedisChannels.TASK_UPDATES:
+                        await self._process_task_update(TaskUpdate.model_validate_json(message["data"]))
                     await self._handle_message(message["channel"], message["data"])
         except redis.RedisError as e:
             logger.error(f"Redis connection error: {e}")
             raise
         finally:
             await pubsub.unsubscribe(*channels)
-
-    async def _handle_message(self, channel: str, raw_data: str):
-        try:
-            data = json.loads(raw_data)
-
-            if channel == RedisChannels.QUERY_CHANNEL:
-                await self._process_query_message(QueryTask(**data))
-            elif channel == RedisChannels.TASK_UPDATES:
-                await self._process_task_update(TaskUpdate(**data))
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in channel {channel}: {e}")
-        except Exception as e:
-            logger.error(f"Message processing error in {self.agent_type}: {e}")
 
     async def _process_query_message(self, data: QueryTask):
         if self.agent_type not in data.agents_needed:
@@ -214,33 +205,28 @@ class BaseManager:
                 await self.redis.hset(
                     RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
                 )
-                agent_status = AgentStatus.IDLE
 
-            if agent_status == AgentStatus.IDLE:
-                task_data = await self.redis.lpop(
-                    RedisKeys.get_agent_queue(self.agent_type)
+            task_data = await self.redis.lpop(
+                RedisKeys.get_agent_queue(self.agent_type)
+            )
+            if task_data:
+                task = TaskQueueItem.model_validate_json(task_data)
+
+                shared_data: SharedData = await get_shared_data(self.redis, task.query_id)
+                conversation_id = shared_data.conversation_id
+
+                channel = RedisChannels.get_command_channel(self.agent_type)
+                message = CommandMessage(
+                    agent_type=self.agent_type,
+                    command="execute",
+                    query_id=task.query_id,
+                    conversation_id=conversation_id,
+                    sub_query=task.sub_query,
                 )
-                if task_data:
-                    task = TaskQueueItem(**json.loads(task_data))
-
-                    shared_data = await get_shared_data(self.redis, task.query_id)
-                    conversation_id = (
-                        shared_data.conversation_id if shared_data else None
-                    )
-
-                    channel = RedisChannels.get_command_channel(self.agent_type)
-                    message = CommandMessage(
-                        agent_type=self.agent_type,
-                        command="execute",
-                        query_id=task.query_id,
-                        sub_query=task.sub_query,
-                        conversation_id=conversation_id,
-                        timestamp=datetime.now().isoformat(),
-                    )
-                    await self.redis.publish(channel, json.dumps(message.model_dump()))
-                    logger.info(
-                        f"Executing task on {self.agent_type}: {task.sub_query}"
-                    )
+                await self.redis.publish(channel, json.dumps(message.model_dump()))
+                logger.info(
+                    f"Executing task on {self.agent_type}: {task.sub_query}"
+                )
 
         except Exception as e:
             logger.error(f"Failed to execute next task for {self.agent_type}: {e}")

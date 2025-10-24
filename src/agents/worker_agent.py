@@ -23,6 +23,7 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
+from src.typing.schema.tool_call import ToolCallPlan
 
 from .base_agent import BaseAgent
 
@@ -103,32 +104,39 @@ class WorkerAgent(BaseAgent):
         ### Phase 3: execute tool calls and resource reads
         ### 3.1 Extract tool calls and execute tools
 
-        mcp_result = WorkerAgentProcessResponse()
-        mcp_result.result = llm_response.result
-        mcp_result.llm_usage = llm_response.llm_usage
-        mcp_result.llm_reasoning = llm_response.llm_reasoning
+        worker_process_result = WorkerAgentProcessResponse()
+        worker_process_result.query_id = command_message.query_id
+        worker_process_result.conversation_id = command_message.conversation_id
+        worker_process_result.result = llm_response.result
+        worker_process_result.llm_reasoning = llm_response.llm_reasoning
 
-        tool_calls = mcp_result.result.tool_calls
-        read_resources = mcp_result.result.read_resources
+        mixed_calls = llm_response.result.tool_calls or []
+        tool_calls = [item for item in mixed_calls if isinstance(item, ToolCallPlan)]
+        read_resources = [item for item in mixed_calls if isinstance(item, str)]
 
         if tool_calls:
             for tool_call in tool_calls:
                 tool_name = tool_call.tool_name
                 parameters = tool_call.parameters
                 try:
-                    tool_result = await self.call_mcp_tool(tool_name, parameters)
+                    tool_result: Dict[str, Any] = await self.call_mcp_tool(
+                        tool_name, parameters
+                    )
                     # Parse JSON string to dict if needed
                     if isinstance(tool_result, str):
                         tool_result = json.loads(tool_result)
-                    mcp_result.tools_result.append(
+                    worker_process_result.tools_result.append(
                         ToolCallResultResponse(
-                            tool_name=tool_name, tool_result=tool_result
+                            tool_name=tool_name,
+                            parameters=parameters,
+                            tool_result=tool_result,
                         )
                     )
                 except Exception as e:
-                    mcp_result.tools_result.append(
+                    worker_process_result.tools_result.append(
                         ToolCallResultResponse(
                             tool_name=tool_name,
+                            parameters=parameters,
                             tool_result={"error": f"Tool call failed: {str(e)}"},
                         )
                     )
@@ -138,20 +146,22 @@ class WorkerAgent(BaseAgent):
             for resource in read_resources:
                 try:
                     resource_result = await self.read_mcp_resource(resource)
-                    mcp_result.data_resources.append(
+                    worker_process_result.data_resources.append(
                         ResourceCallResponse(
-                            resource_name=resource, resource_data=resource_result
+                            resource_name=resource, resource_result=resource_result
                         )
                     )
                 except Exception as e:
-                    mcp_result.data_resources.append(
+                    worker_process_result.data_resources.append(
                         ResourceCallResponse(
                             resource_name=resource,
-                            resource_data={"error": f"Resource read failed: {str(e)}"},
+                            resource_result={
+                                "error": f"Resource read failed: {str(e)}"
+                            },
                         )
                     )
 
-        return mcp_result
+        return worker_process_result
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
@@ -208,13 +218,12 @@ class WorkerAgent(BaseAgent):
                     command_message
                 )
 
-            await self.publish_task_completion(command_message, response)
+                await self.publish_task_completion(command_message, response)
 
-            # Mark agent as idle
-            await self.redis.hset(
-                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-            )
-
+                # Mark agent as idle before publishing, so manager can execute next task
+                await self.redis.hset(
+                    RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+                )
         except asyncio.TimeoutError:
             logger.error(f"{self.agent_type}: Task processing timeout")
             await self.redis.hset(
@@ -240,26 +249,12 @@ class WorkerAgent(BaseAgent):
                 sub_query=command_message.sub_query,
                 status=TaskStatus.DONE,
                 result={
-                    command_message.sub_query: {
-                        "llm_output": response.result,
-                        "tool_results": response.tools_result,
-                        "resource_results": response.data_resources,
-                    }
-                },
-                context={
-                    command_message.sub_query: {
-                        "llm_output": response.result,
-                        "tool_results": response.tools_result,
-                        "resource_results": response.data_resources,
-                    }
+                    "tool_results": response.tools_result,
+                    "resource_results": response.data_resources,
                 },
                 llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
-            )
-
-            await self.publish_channel(
-                RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
 
         except Exception as e:
@@ -270,30 +265,19 @@ class WorkerAgent(BaseAgent):
                 sub_query=command_message.sub_query,
                 status=TaskStatus.ERROR,
                 result={
-                    command_message.sub_query: {
-                        "llm_output": response.result,
-                        "tool_results": response.tools_result,
-                        "resource_results": response.data_resources,
-                        "error": str(e),
-                    }
-                },
-                context={
-                    command_message.sub_query: {
-                        "llm_output": response.result,
-                        "tool_results": response.tools_result,
-                        "resource_results": response.data_resources,
-                        "error": str(e),
-                    }
+                    "tool_results": response.tools_result,
+                    "resource_results": response.data_resources,
+                    "error": str(e),
                 },
                 llm_usage=response.llm_usage or {},
                 llm_reasoning=response.llm_reasoning,
                 agent_type=self.agent_type,
             )
-
+            raise
+        finally:
             await self.publish_channel(
                 RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
-            raise
 
     async def find_task_id_by_query(
         self, query_id: str, sub_query: str
@@ -321,7 +305,7 @@ class WorkerAgent(BaseAgent):
 
     async def call_mcp_tool(
         self, tool_name: str, parameters: Dict[str, Any]
-    ) -> Optional[str]:
+    ) -> Dict[str, Any]:
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError("tool_name must be non-empty string")
         if not isinstance(parameters, dict):

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -11,11 +11,7 @@ class ToolCallPlan(BaseModel):
 
 
 class ToolCallSchema(BaseSchema):
-    tool_calls: Optional[List[ToolCallPlan]] = Field(
+    tool_calls: Optional[List[Union[ToolCallPlan, str]]] = Field(
         None,
-        description="List of tool calls to execute in sequence (for ACTIONS)",
-    )
-    read_resources: Optional[List[str]] = Field(
-        None,
-        description="List of resource URIs to read (for DATA FETCHING, e.g., ['stock://levels'])",
+        description="List of tool calls or resource URIs to execute/read in sequence. Tool calls are dicts with tool_name and parameters, resources are strings (URIs).",
     )

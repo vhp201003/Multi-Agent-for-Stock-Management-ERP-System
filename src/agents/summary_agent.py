@@ -136,14 +136,15 @@ class SummaryAgent(BaseAgent):
 
             conversation.update_summary(summary)
 
-            # Save back to Redis
             await self.redis.json().set(
                 conversation_key,
                 "$",
-                conversation.model_dump_json(),
+                conversation.model_dump(mode="json"),
             )
 
-            logger.info(f"Updated summary for conversation {conversation_id}")
+            logger.info(
+                f"SummaryAgent: Successfully saved summary for conversation {conversation_id}: {summary}"
+            )
 
         except Exception as e:
             logger.error(

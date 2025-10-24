@@ -1,38 +1,26 @@
 import json
+from string import Template
 
 ORCHESTRATOR_PROMPT = """
-You are the Orchestrator agent. Analyze the user query and create a task execution plan.
+You are the Orchestrator. Your ONLY job is to analyze user queries and create task execution plans. NEVER answer queries directly.
 
-IMPORTANT: Do not answer the user's query directly. Your job is ONLY to create a task execution plan by identifying which agents are needed and what tasks they should perform. You are not an answering agent.
-
-### Available Agents:
+Available Agents:
 $agent_descriptions
 
-### Task Creation Rules:
-### Output Format Clarification:
-IMPORTANT: Your response MUST be valid JSON only. Do not include any explanations, text, or markdown. Start your response with { and end with }. No additional content.
+Task Creation Rules:
+- Identify required agents based on query.
+- Break down into specific tasks with dependencies.
+- Use agent_type as keys in task_dependency dict.
 
-The 'task_dependency' field MUST be a dictionary (object) where each key is an agent_type (string) and each value is an array (list) of task objects. Do NOT use a 'nodes' key, do NOT make task_dependency a list, and do NOT wrap tasks in any additional structure. Each agent_type key maps directly to its list of tasks.
+Output Requirements:
+- Return ONLY a valid JSON object (no text, no markdown, no explanations).
+- The JSON must match this exact schema: $schema
+- Do not include any text before or after the JSON.
+- If no tasks needed, return {"agents_needed": [], "task_dependency": {}}
+- If error, return {"error": "description"}
 
-### Response Format:
-Return ONLY JSON matching the schema below. No explanations.
-
-$schema
-
-### Example:
-{
-  "agents_needed": ["inventory"],
-  "task_dependency": {
-    "inventory": [
-      {
-        "task_id": "inventory_1",
-        "agent_type": "inventory",
-        "sub_query": "Check current stock levels for all products",
-        "dependencies": []
-      }
-    ]
-  }
-}
+Example:
+{"agents_needed": ["inventory"], "task_dependency": {"inventory": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Check stock for LAPTOP-001", "dependencies": []}]}}
 """
 
 
@@ -75,8 +63,6 @@ def build_orchestrator_prompt(schema_model) -> str:
         schema, indent=1, separators=(",", ":")
     )  # Compact formatting
 
-    from string import Template
-
     prompt_template = Template(ORCHESTRATOR_PROMPT)
 
     return prompt_template.safe_substitute(
@@ -85,40 +71,22 @@ def build_orchestrator_prompt(schema_model) -> str:
 
 
 def _minimize_schema_for_prompt(schema: dict) -> dict:
-    def clean_properties(props: dict) -> dict:
-        cleaned = {}
-        for key, value in props.items():
-            if isinstance(value, dict):
-                essential = {
-                    k: v
-                    for k, v in value.items()
-                    if k in ["type", "items", "properties", "required", "$ref"]
-                }
+    essential_keys = ["type", "items", "properties", "required", "$ref"]
 
-                if key == "task_id" and "pattern" in value:
-                    essential["pattern"] = value["pattern"]
+    def clean_dict(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k in essential_keys}
 
-                if "properties" in essential:
-                    essential["properties"] = clean_properties(essential["properties"])
+    minimal = clean_dict(schema)
 
-                cleaned[key] = essential
-            else:
-                cleaned[key] = value
-        return cleaned
-
-    minimal_schema = {
-        "type": schema.get("type", "object"),
-        "properties": clean_properties(schema.get("properties", {})),
-        "required": schema.get("required", []),
-    }
+    if "properties" in minimal:
+        minimal["properties"] = {
+            k: clean_dict(v) if isinstance(v, dict) else v
+            for k, v in minimal["properties"].items()
+        }
 
     if "$defs" in schema:
-        minimal_schema["$defs"] = {}
-        for def_name, def_schema in schema["$defs"].items():
-            minimal_schema["$defs"][def_name] = {
-                "type": def_schema.get("type", "object"),
-                "properties": clean_properties(def_schema.get("properties", {})),
-                "required": def_schema.get("required", []),
-            }
+        minimal["$defs"] = {
+            name: clean_dict(def_schema) for name, def_schema in schema["$defs"].items()
+        }
 
-    return minimal_schema
+    return minimal

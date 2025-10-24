@@ -13,14 +13,15 @@ class ToolCallResponse(BaseAgentResponse):
 
 class ToolCallResultResponse(BaseModel):
     tool_name: str
+    parameters: dict
     tool_result: dict
 
 
 class ResourceCallResponse(BaseModel):
     resource_name: str
-    resource_data: dict
+    resource_result: dict
 
 
-class WorkerAgentProcessResponse(ToolCallResponse):
+class WorkerAgentProcessResponse(BaseAgentResponse):
     tools_result: list[ToolCallResultResponse] = []
     data_resources: list[ResourceCallResponse] = []
