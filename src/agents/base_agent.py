@@ -123,10 +123,6 @@ class BaseAgent(ABC):
             raise
 
     @abstractmethod
-    async def get_pub_channels(self) -> List[str]:
-        pass
-
-    @abstractmethod
     async def get_sub_channels(self) -> List[str]:
         pass
 

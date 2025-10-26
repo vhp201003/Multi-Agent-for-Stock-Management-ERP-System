@@ -44,11 +44,23 @@ class OrchestratorAgent(BaseAgent):
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.TASK_UPDATES]
 
-    async def process(self, request: Request) -> Dict[str, Any]:
+    async def process_query(self, request: Request) -> Dict[str, Any]:
+        try:
+            await self.process(request)
+            completion_data: CompletionResponse = await self._wait_for_completion(
+                request.query_id
+            )
+            return completion_data.model_dump()
+
+        except Exception as e:
+            logger.error(f"Orchestration failed: {e}")
+            return {"status": "error", "error": f"Processing error: {str(e)}"}
+
+    async def process(self, request: Request) -> None:
         try:
             validation_error = self._validate_request(request)
             if validation_error:
-                return {"status": "error", "error": validation_error}
+                raise ValueError(validation_error)
 
             request = self._ensure_conversation_id(request)
             history = await self._get_conversation_history(request)
@@ -62,23 +74,18 @@ class OrchestratorAgent(BaseAgent):
 
             error = self._validate_orchestration_result(orchestration_result)
             if error:
-                return {"status": "error", "error": error}
+                raise ValueError(error)
 
             await self._initialize_shared_state(request, orchestration_result)
             sub_query_dict = self._build_sub_query_dict(orchestration_result)
             if not sub_query_dict:
-                return {
-                    "status": "error",
-                    "error": "No valid sub-queries found for orchestration",
-                }
+                raise ValueError("No valid sub-queries found for orchestration")
 
             await self._publish_orchestration_task(request, sub_query_dict)
-            completion_data = await self._wait_for_completion(request.query_id)
-            return completion_data
 
         except Exception as e:
-            logger.error(f"Orchestration failed: {e}")
-            return {"status": "error", "error": f"Processing error: {str(e)[:100]}"}
+            logger.error(f"LLM orchestration failed: {e}")
+            raise
 
     def _validate_request(self, request: Request) -> Optional[str]:
         if not request.query or not request.query.strip():
@@ -181,16 +188,12 @@ class OrchestratorAgent(BaseAgent):
         try:
             start_time = datetime.now().timestamp()
             max_wait_time = 300.0  # 5 minutes
-            while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
-                if message and message["type"] == "message":
-                    try:
-                        completion_data = json.loads(message["data"])
-                    except Exception:
-                        continue
-                    if completion_data.get("query_id") == query_id:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    completion_data: CompletionResponse = (
+                        CompletionResponse.model_validate_json(message["data"])
+                    )
+                    if completion_data.query_id == query_id:
                         await pubsub.unsubscribe(completion_channel)
                         await pubsub.aclose()
                         return completion_data
@@ -326,7 +329,6 @@ class OrchestratorAgent(BaseAgent):
             error_response = CompletionResponse.response_error(
                 query_id=shared_data.query_id,
                 error="ChatAgent trigger failed - using fallback response",
-                original_query=shared_data.original_query,
                 conversation_id=shared_data.conversation_id,
             )
 
@@ -386,7 +388,6 @@ class OrchestratorAgent(BaseAgent):
             completion_response = CompletionResponse.response_success(
                 query_id=task_update_message.query_id,
                 conversation_id=shared_data.conversation_id,
-                original_query=shared_data.original_query,
                 response={"final_response": final_response_text},
             )
 
@@ -472,15 +473,11 @@ class OrchestratorAgent(BaseAgent):
             shared_data = await get_shared_data(
                 self.redis, task_update_message.query_id
             )
-            original_query = (
-                shared_data.original_query if shared_data else "Unknown query"
-            )
 
             # Create structured error response
             error_response = CompletionResponse.response_error(
                 query_id=task_update_message.query_id,
                 error="Processing completed but response generation failed",
-                original_query=original_query,
                 conversation_id=shared_data.conversation_id if shared_data else None,
             )
 

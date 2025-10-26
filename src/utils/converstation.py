@@ -8,12 +8,12 @@ from src.typing.redis import ConversationData, RedisKeys
 logger = logging.getLogger(__name__)
 
 
-async def load_or_create_conversation(redis, conversation_id: str) -> ConversationData:
+async def load_or_create_conversation(redis_client, conversation_id: str) -> ConversationData:
     conversation_key = RedisKeys.get_conversation_key(conversation_id)
 
     try:
         logger.info(f"Loading conversation with key: {conversation_key}")
-        conversation_data = await redis.json().get(conversation_key)
+        conversation_data = await redis_client.json().get(conversation_key)
 
         if conversation_data:
             logger.info(
@@ -28,7 +28,7 @@ async def load_or_create_conversation(redis, conversation_id: str) -> Conversati
                 updated_at=datetime.now(),
                 max_messages=50,  # Keep last 50 messages
             )
-            await redis.json().set(
+            await redis_client.json().set(
                 conversation_key,
                 "$",
                 json.loads(new_conversation.model_dump_json()),
@@ -44,7 +44,7 @@ async def load_or_create_conversation(redis, conversation_id: str) -> Conversati
 
 
 async def save_conversation_message(
-    redis,
+    redis_client,
     conversation_id: str,
     role: str,
     content: str,
@@ -54,12 +54,12 @@ async def save_conversation_message(
         logger.info(
             f"Loading/creating conversation {conversation_id} for saving message"
         )
-        conversation = await load_or_create_conversation(redis, conversation_id)
+        conversation = await load_or_create_conversation(redis_client, conversation_id)
 
         conversation.add_message(role=role, content=content, metadata=metadata)
 
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
-        await redis.json().set(
+        await redis_client.json().set(
             conversation_key,
             "$",
             json.loads(conversation.model_dump_json()),

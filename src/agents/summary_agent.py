@@ -25,9 +25,6 @@ class SummaryAgent(BaseAgent):
         super().__init__(agent_type=AGENT_TYPE, **kwargs)
         self.prompts = SUMMARY_AGENT_PROMPTS
 
-    async def get_pub_channels(self) -> List[str]:
-        pass
-
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
 

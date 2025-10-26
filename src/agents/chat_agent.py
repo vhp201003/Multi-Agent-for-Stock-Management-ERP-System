@@ -6,7 +6,7 @@ from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prom
 
 from src.agents.base_agent import BaseAgent
 from src.typing.llm_response import ChatResponse
-from src.typing.redis import CompletionResponse, RedisChannels, TaskStatus, TaskUpdate
+from src.typing.redis import RedisChannels, TaskStatus, TaskUpdate
 from src.typing.request import ChatRequest
 from src.typing.schema import (
     ChatAgentSchema,
@@ -26,9 +26,6 @@ AGENT_TYPE = "chat_agent"
 class ChatAgent(BaseAgent):
     def __init__(self, **kwargs):
         super().__init__(agent_type=AGENT_TYPE, **kwargs)
-
-    async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.QUERY_COMPLETION]
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(AGENT_TYPE)]
@@ -105,7 +102,7 @@ class ChatAgent(BaseAgent):
         try:
             response: ChatResponse = await self.process(chat_request)
 
-            await self.publish_completion(response)
+            await self.publish_completion(response, chat_request.query)
 
             # Store chat history
             await save_conversation_message(
@@ -120,45 +117,24 @@ class ChatAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error executing chat request: {e}")
 
-    async def publish_completion(self, response: ChatResponse):
+    async def publish_completion(self, response: ChatResponse, sub_query: str):
         try:
-            completion_channel = RedisChannels.get_query_completion_channel(
-                response.query_id
-            )
-
-            # Publish final completion response
-            completion_response = CompletionResponse.response_success(
-                query_id=response.query_id,
-                conversation_id=response.conversation_id,
-                response=response.result.model_dump()
-                if response.result
-                else {"error": "No response"},
-            )
-
-            completion_channel = RedisChannels.get_query_completion_channel(
-                response.query_id
-            )
-            await self.publish_channel(
-                completion_channel,
-                completion_response,
-                CompletionResponse,
-            )
-
-            # Publish task update for orchestrator to trigger summary
             task_update = TaskUpdate(
                 query_id=response.query_id,
-                agent_type=self.agent_type,
                 task_id=f"{self.agent_type}_{response.query_id}",
+                agent_type=self.agent_type,
+                sub_query=sub_query,
                 status=TaskStatus.DONE,
-                result=response.result.model_dump()
-                if response.result
-                else {"error": "No response"},
+                result={
+                    "final_response": response.result.model_dump()
+                    if response.result
+                    else {"error": "No response"}
+                },
                 llm_usage=response.llm_usage,
             )
             await self.publish_channel(
                 RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
-
         except Exception as e:
             logger.error(f"Failed to publish completion for {response.query_id}: {e}")
 

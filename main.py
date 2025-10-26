@@ -45,8 +45,8 @@ async def lifespan(app: FastAPI):
     try:
         orchestrator = OrchestratorAgent()
         inventory_agent = InventoryAgent()
-        chat_agent = ChatAgent(redis_host="localhost", redis_port=6379)
-        summary_agent = SummaryAgent(redis_host="localhost", redis_port=6379)
+        chat_agent = ChatAgent()
+        summary_agent = SummaryAgent()
         inventory_manager = InventoryManager()
         redis_client = orchestrator.redis
 
@@ -95,7 +95,7 @@ async def handle_query(request: Request):
         raise HTTPException(status_code=400, detail=validation_error)
 
     try:
-        result = await orchestrator.process(request)
+        result = await orchestrator.process_query(request)
         return result
     except Exception as e:
         logger.exception(f"Critical error processing query {request.query_id}: {e}")

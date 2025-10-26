@@ -48,9 +48,6 @@ class WorkerAgent(BaseAgent):
         self.mcp_client: Optional[MCPClient] = None
         self.examples = examples
 
-    async def get_pub_channels(self) -> List[str]:
-        return [RedisChannels.TASK_UPDATES]
-
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
 
