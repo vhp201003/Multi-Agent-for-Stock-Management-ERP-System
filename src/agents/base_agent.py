@@ -1,11 +1,10 @@
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Type
 
 import redis.asyncio as redis
-from config.settings import DEFAULT_CONFIGS, AgentConfig
+from config.settings import get_agent_config, get_redis_host, get_redis_port
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from jsonschema import ValidationError
@@ -21,19 +20,13 @@ class BaseAgent(ABC):
     def __init__(
         self,
         agent_type: str,
-        redis_host: str = "localhost",
-        redis_port: int = 6379,
-        llm_api_key: str = None,
-        llm_model: str = "llama-3.3-70b-versatile",
     ):
         self.agent_type = agent_type
         self.redis = redis.Redis(
-            host=redis_host, port=redis_port, decode_responses=True
+            host=get_redis_host(), port=get_redis_port(), decode_responses=True
         )
-        self.llm_api_key = llm_api_key or os.environ.get("GROQ_API_KEY")
-        self.llm_model = llm_model
-        self.config = DEFAULT_CONFIGS.get(self.agent_type, AgentConfig())
-        self.llm = AsyncGroq(api_key=self.llm_api_key) if self.llm_api_key else None
+        self.config = get_agent_config(self.agent_type)
+        self.llm = AsyncGroq(api_key=self.config.api_key)
 
     async def _call_llm(
         self,
@@ -91,7 +84,6 @@ class BaseAgent(ABC):
             if response_schema:
                 try:
                     data = json.loads(content) if content else {}
-                    logger.info(f"Raw LLM data before validation: {data}")
                     llm_response_schema = response_schema.model_validate(data)
 
                 except (json.JSONDecodeError, ValidationError) as e:
