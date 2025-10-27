@@ -432,7 +432,6 @@ class OrchestratorAgent(BaseAgent):
                 "query_id": task_update_message.query_id,
                 "completion_response_id": f"comp_{task_update_message.query_id}",
                 "agent_results": agent_results,
-                "execution_summary": shared_data.execution_summary,
                 "llm_usage": {},
                 "processing_metadata": {
                     "agents_involved": shared_data.agents_needed,

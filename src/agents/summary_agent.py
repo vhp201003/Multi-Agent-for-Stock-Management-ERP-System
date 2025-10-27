@@ -91,23 +91,14 @@ class SummaryAgent(BaseAgent):
     ) -> Optional[ConversationData]:
         try:
             conversation_key = RedisKeys.get_conversation_key(conversation_id)
-            logger.info(
-                f"SummaryAgent: Looking for conversation with key: {conversation_key}"
-            )
-
             conversation_data = await self.redis.json().get(conversation_key)
 
             if conversation_data:
-                logger.info(
-                    f"SummaryAgent: Found conversation {conversation_id} with {len(conversation_data.get('messages', []))} messages"
-                )
                 return ConversationData(**conversation_data)
             else:
                 logger.warning(
                     f"SummaryAgent: Conversation {conversation_id} not found in Redis"
                 )
-                all_keys = await self.redis.keys("conversation:*")
-                logger.info(f"SummaryAgent: Existing conversation keys: {all_keys}")
                 return None
 
         except Exception as e:
@@ -137,10 +128,6 @@ class SummaryAgent(BaseAgent):
                 conversation_key,
                 "$",
                 conversation.model_dump(mode="json"),
-            )
-
-            logger.info(
-                f"SummaryAgent: Successfully saved summary for conversation {conversation_id}: {summary}"
             )
 
         except Exception as e:

@@ -9,16 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 async def load_or_create_conversation(redis_client, conversation_id: str) -> ConversationData:
-    conversation_key = RedisKeys.get_conversation_key(conversation_id)
-
     try:
-        logger.info(f"Loading conversation with key: {conversation_key}")
+        conversation_key = RedisKeys.get_conversation_key(conversation_id)
         conversation_data = await redis_client.json().get(conversation_key)
 
         if conversation_data:
-            logger.info(
-                f"Found existing conversation {conversation_id} with {len(conversation_data.get('messages', []))} messages"
-            )
             return ConversationData(**conversation_data)
         else:
             logger.info(f"Creating new conversation {conversation_id}")
