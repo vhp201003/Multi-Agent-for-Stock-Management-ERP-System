@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from config.prompts.worker import build_worker_agent_prompt
+from config.settings import get_agent_config
 
 from src.mcp.client import MCPClient
 from src.typing import (
@@ -35,14 +36,13 @@ class WorkerAgent(BaseAgent):
         self,
         agent_type: str,
         agent_description: str,
-        mcp_server_url: Optional[str] = None,
         mcp_timeout: float = 30.0,
         examples: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(agent_type, **kwargs)
         self.agent_description = agent_description
-        self.mcp_server_url = mcp_server_url
+        self.mcp_server_url = get_agent_config(agent_type).mcp_server_url
         self.mcp_timeout = mcp_timeout
         self.prompt: Optional[str] = None
         self.mcp_client: Optional[MCPClient] = None

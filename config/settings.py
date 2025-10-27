@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class AgentConfig(BaseModel):
     model: str
     api_key: str
+    mcp_server_url: Optional[str] = None
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None

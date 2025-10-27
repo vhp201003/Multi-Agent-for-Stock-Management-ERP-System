@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 
 AGENT_TYPE = "inventory"
 AGENT_DESCRIPTION = "Manages inventory operations including stock checks and updates"
-MCP_SERVER_URL = "http://localhost:8001/mcp"
 TOOLS_EXAMPLE = """
 ## Example for tools/resource usage: 
 
@@ -21,7 +20,6 @@ class InventoryAgent(WorkerAgent):
         super().__init__(
             agent_type=AGENT_TYPE,
             agent_description=AGENT_DESCRIPTION,
-            mcp_server_url=MCP_SERVER_URL,
             examples=TOOLS_EXAMPLE,
             **kwargs,
         )
