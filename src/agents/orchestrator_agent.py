@@ -30,12 +30,12 @@ from .base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
-AGENT_TYPE = "OrchestratorAgent"
+AGENT_TYPE = "orchestrator"
 
 
 class OrchestratorAgent(BaseAgent):
     def __init__(self):
-        super().__init__(agent_type=CHAT_AGENT_TYPE)
+        super().__init__(agent_type=AGENT_TYPE)
         self.prompt = build_orchestrator_prompt(OrchestratorSchema)
 
     async def get_pub_channels(self) -> List[str]:

@@ -2,6 +2,7 @@ import json
 import logging
 
 import redis.asyncio as redis
+from config.settings import get_redis_host, get_redis_port
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
 from src.typing.redis import (
     AgentStatus,
@@ -19,9 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class BaseManager:
-    def __init__(self, agent_type: str, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, agent_type: str):
         self.agent_type = agent_type
-        self.redis = redis.from_url(redis_url, decode_responses=True)
+        self.redis = redis.Redis(
+            host=get_redis_host(), port=get_redis_port(), decode_responses=True
+        )
 
     async def get_sub_channels(self) -> list[str]:
         return [RedisChannels.QUERY_CHANNEL, RedisChannels.TASK_UPDATES]
@@ -44,7 +47,6 @@ class BaseManager:
                             await self._process_task_update(
                                 TaskUpdate.model_validate_json(message["data"])
                             )
-                        await self._handle_message(message["channel"], message["data"])
             except Exception as e:
                 logger.error(
                     f"Manager {self.agent_type}: Error in listen_channels: {e}"
