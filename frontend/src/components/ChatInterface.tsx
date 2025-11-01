@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { apiService, generateId, type TaskUpdate } from '../services/api';
 import { wsService } from '../services/websocket';
+import Toast, { type ToastMessage } from './Toast';
 import './ChatInterface.css';
 
 // Extend Window interface for saveConversation
@@ -47,8 +48,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+  // Toast notification helper
+  const addToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', duration = 4000) => {
+    const id = generateId();
+    const newToast: ToastMessage = { id, message, type, duration };
+    setToasts((prev) => [...prev, newToast]);
+
+    if (duration) {
+      setTimeout(() => removeToast(id), duration);
+    }
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = () => {
@@ -258,6 +275,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
+      addToast('Failed to send message. Please try again.', 'error');
     }
   };
 
@@ -617,10 +635,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
             onClick={handleSendMessage}
             disabled={loading || !input.trim()}
           >
-            <span>➤</span>
+            {loading ? <span className="button-spinner">⟳</span> : <span>➤</span>}
           </button>
         </div>
       </div>
+
+      <Toast toasts={toasts} onRemove={removeToast} />
     </div>
   );
 };
