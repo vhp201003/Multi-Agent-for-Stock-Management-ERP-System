@@ -83,6 +83,20 @@ class OrchestratorAgent(BaseAgent):
 
             await self._publish_orchestration_task(request, sub_query_dict)
 
+            initial_update = TaskUpdate(
+                query_id=request.query_id,
+                sub_query="Query orchestration started",
+                status=TaskStatus.PROCESSING,
+                result={"agents_needed": list(sub_query_dict.keys())},
+                llm_usage={},
+                agent_type="orchestrator",
+            )
+            await self.publish_channel(
+                RedisChannels.get_query_updates_channel(request.query_id),
+                initial_update,
+                TaskUpdate,
+            )
+
         except Exception as e:
             logger.error(f"LLM orchestration failed: {e}")
             raise

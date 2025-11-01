@@ -12,6 +12,9 @@ class RedisChannels:
     # Notify when a query is completed
     QUERY_COMPLETION = "query:completion:{}"
 
+    # Real-time updates for specific query_id
+    QUERY_UPDATES = "query:updates:{}"
+
     @classmethod
     def get_command_channel(cls, agent_type: str) -> str:
         return cls.COMMAND_CHANNEL.format(agent_type)
@@ -19,6 +22,10 @@ class RedisChannels:
     @classmethod
     def get_query_completion_channel(cls, query_id: str) -> str:
         return cls.QUERY_COMPLETION.format(query_id)
+
+    @classmethod
+    def get_query_updates_channel(cls, query_id: str) -> str:
+        return cls.QUERY_UPDATES.format(query_id)
 
 
 class RedisKeys:

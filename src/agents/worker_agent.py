@@ -275,6 +275,12 @@ class WorkerAgent(BaseAgent):
             await self.publish_channel(
                 RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
+            # Also publish to the query-specific updates channel
+            await self.publish_channel(
+                RedisChannels.get_query_updates_channel(command_message.query_id),
+                task_update,
+                TaskUpdate,
+            )
 
     async def find_task_id_by_query(
         self, query_id: str, sub_query: str
