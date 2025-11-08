@@ -37,6 +37,7 @@ interface Message {
   timestamp: Date;
   updates?: TaskUpdate[];
   layout?: LayoutField[]; // Thêm layout cho structured response
+  isThinkingExpanded?: boolean; // Track thinking process expanded state
 }
 
 interface ChatInterfaceProps {
@@ -156,6 +157,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
               content: '',
               timestamp: new Date(),
               updates: [update],
+              isThinkingExpanded: true, // Start expanded during streaming
             };
             return [...prev, thinkingMsg];
           }
@@ -163,7 +165,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
           // Add updates to thinking message
           return prev.map(msg => 
             msg.id === `${queryId}-thinking`
-              ? { ...msg, updates: [...(msg.updates || []), update] }
+              ? { 
+                  ...msg, 
+                  updates: [...(msg.updates || []), update],
+                  isThinkingExpanded: true, // Keep expanded while streaming
+                }
               : msg
           );
         });
@@ -228,6 +234,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
             content: '',
             timestamp: new Date(),
             updates: allUpdates,
+            isThinkingExpanded: false, // Collapse after response complete
           };
           messagesToAdd.push(displayThinkingMsg);
         }
@@ -467,6 +474,92 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     }
   };
 
+  // Generic helper function to extract tool result summary
+  const extractToolResultSummary = (toolResult: any, toolName: string): string => {
+    // Handle string results
+    if (typeof toolResult === 'string') {
+      return toolResult;
+    }
+
+    // Handle object results - check for common summary patterns
+    if (typeof toolResult === 'object' && toolResult !== null) {
+      // Pattern 1: Check for 'summary' field (most tools follow this)
+      if (toolResult.summary) {
+        const summary = toolResult.summary;
+        
+        // Generic: count common fields
+        const commonCountFields = [
+          'total_items',
+          'total_movements',
+          'total_alerts',
+          'total_value',
+          'total_results',
+          'count',
+          'total'
+        ];
+        
+        for (const field of commonCountFields) {
+          if (field in summary && typeof summary[field] === 'number') {
+            // Format the field name nicely
+            const fieldLabel = field
+              .replace(/total_/g, '')
+              .replace(/_/g, ' ')
+              .replace(/\b\w/g, l => l.toUpperCase());
+            return `Found ${summary[field]} ${fieldLabel}`;
+          }
+        }
+
+        // Pattern 2: Check for status-based summaries
+        if (summary.out_of_stock !== undefined || summary.critical_stock !== undefined) {
+          const alerts = [
+            summary.out_of_stock && `${summary.out_of_stock} out of stock`,
+            summary.critical_stock && `${summary.critical_stock} critical`,
+            summary.low_stock && `${summary.low_stock} low stock`,
+          ].filter(Boolean);
+          if (alerts.length > 0) {
+            return `Alerts: ${alerts.join(', ')}`;
+          }
+        }
+
+        // Pattern 3: Generic summary fallback
+        const summaryStr = JSON.stringify(summary).substring(0, 100);
+        return summaryStr.length > 0 ? summaryStr : 'Operation successful';
+      }
+
+      // Pattern 4: Direct fields (no summary wrapper)
+      const directCountFields = [
+        'stock_level',
+        'available_qty',
+        'current_stock',
+        'total_value',
+        'items',
+      ];
+      
+      for (const field of directCountFields) {
+        if (field in toolResult) {
+          const value = toolResult[field];
+          if (typeof value === 'number') {
+            const fieldLabel = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            return `${fieldLabel}: ${value}`;
+          }
+        }
+      }
+
+      // Pattern 5: Check for message field
+      if (toolResult.message) {
+        return toolResult.message;
+      }
+
+      // Pattern 6: Check for status field
+      if (toolResult.status) {
+        return `Status: ${toolResult.status}`;
+      }
+    }
+
+    // Fallback
+    return 'Success';
+  };
+
   return (
     <div className="chat-container">
       <div className="chat-header">
@@ -497,7 +590,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
 
             {/* Hiển thị thinking process (task updates) - Collapsible */}
             {message.updates && message.updates.length > 0 && (
-              <details className="thinking-process">
+              <details className="thinking-process" open={message.isThinkingExpanded}>
                 <summary className="thinking-header">
                   <span className="thinking-title">Thinking Process</span>
                   <span className="thinking-count">{message.updates.length} steps</span>
@@ -555,13 +648,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                                   {tool.tool_result && (
                                     <details className="tool-result-details">
                                       <summary className="tool-result-summary">
-                                        <strong>Result:</strong> {
-                                          typeof tool.tool_result === 'string' 
-                                            ? tool.tool_result
-                                            : tool.tool_result.summary?.total_movements 
-                                              ? `Found ${tool.tool_result.summary.total_movements} movements`
-                                              : tool.tool_result.message || 'Success'
-                                        }
+                                        <strong>Result:</strong> {extractToolResultSummary(tool.tool_result, tool.tool_name)}
                                         <span className="result-toggle">▼</span>
                                       </summary>
                                       <div className="tool-result-full">
