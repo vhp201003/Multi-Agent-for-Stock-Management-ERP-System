@@ -21,11 +21,14 @@ def validate_query_request(request: Request) -> Optional[str]:
     if len(request.query) > 10000:
         return "Query too long (max 10,000 characters)"
 
-    if not request.query_id or not request.query_id.strip():
-        return "Query ID cannot be empty"
-
-    if not re.match(r"^[a-zA-Z0-9_-]+$", request.query_id):
+    # query_id và conversation_id sẽ được frontend quản lý, backend chỉ validate
+    if request.query_id and not re.match(r"^[a-zA-Z0-9_-]+$", request.query_id):
         return "Invalid query ID format (alphanumeric, underscore, hyphen only)"
+
+    if request.conversation_id and not re.match(
+        r"^[a-zA-Z0-9_-]+$", request.conversation_id
+    ):
+        return "Invalid conversation ID format (alphanumeric, underscore, hyphen only)"
 
     return None
 
@@ -36,6 +39,7 @@ async def handle_query(request: Request):
         raise HTTPException(status_code=400, detail=validation_error)
 
     try:
+        # Backend chỉ xử lý query, không tạo query_id hay conversation_id
         orchestrator = agent_manager.orchestrator
         result = await orchestrator.process_query(request)
         return result

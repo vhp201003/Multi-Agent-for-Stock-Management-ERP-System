@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI, Query, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from src.api import endpoints
 from src.api.lifespan import lifespan
 from src.typing import Request
@@ -14,6 +15,15 @@ logging.basicConfig(
 
 # Create FastAPI app with lifespan management
 app = FastAPI(title="Multi Agent Stock Management System", lifespan=lifespan)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],  # Vite dev server
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
 
 
 @app.post("/query")
