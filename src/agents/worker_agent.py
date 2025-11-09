@@ -25,6 +25,7 @@ from src.typing.redis import (
 )
 from src.typing.schema.tool_call import ResourceURI, ToolCallPlan
 from src.utils.converstation import get_summary_conversation
+from src.utils.shared_data_utils import get_shared_data, update_shared_data
 
 from .base_agent import BaseAgent
 
@@ -229,6 +230,10 @@ class WorkerAgent(BaseAgent):
                 command_message.query_id, command_message.sub_query
             )
 
+            await self._store_result_references(
+                command_message.query_id, response.tools_result, response.data_resources
+            )
+
             task_update: TaskUpdate = TaskUpdate(
                 task_id=task_id,
                 query_id=command_message.query_id,
@@ -370,3 +375,40 @@ class WorkerAgent(BaseAgent):
 
         if hasattr(super(), "stop"):
             await super().stop()
+
+    async def _store_result_references(
+        self,
+        query_id: str,
+        tool_results: List[ToolCallResultResponse],
+        resource_results: List[ResourceCallResponse],
+    ) -> None:
+        """Store result_id → full result mapping in SharedData for tracing"""
+        try:
+            shared = await get_shared_data(self.redis, query_id)
+            if not shared:
+                logger.warning(f"No shared data found for {query_id}")
+                return
+
+            for tool_result in tool_results:
+                shared.store_result_reference(
+                    result_id=tool_result.result_id,
+                    tool_name=tool_result.tool_name,
+                    tool_result=tool_result.tool_result,
+                    agent_type=self.agent_type,
+                )
+
+            for resource_result in resource_results:
+                shared.store_result_reference(
+                    result_id=resource_result.result_id,
+                    tool_name=f"resource:{resource_result.resource_name}",
+                    tool_result=resource_result.resource_result,
+                    agent_type=self.agent_type,
+                )
+
+            await update_shared_data(self.redis, query_id, shared)
+            logger.debug(
+                f"Stored {len(tool_results)} tool + {len(resource_results)} resource references"
+            )
+
+        except Exception as e:
+            logger.error(f"Error storing result references: {e}", exc_info=True)
