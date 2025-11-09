@@ -6,7 +6,7 @@ from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prom
 
 from src.agents.base_agent import BaseAgent
 from src.typing.llm_response import ChatResponse
-from src.typing.redis import RedisChannels, TaskStatus, TaskUpdate
+from src.typing.redis import RedisChannels, SharedData, TaskStatus, TaskUpdate
 from src.typing.request import ChatRequest
 from src.typing.schema import (
     ChatAgentSchema,
@@ -41,19 +41,18 @@ class ChatAgent(BaseAgent):
                     request.query_id, request.conversation_id, None
                 )
 
-            all_results = {}
-            for agent_type in shared_data.agents_needed:
-                agent_results = shared_data.get_agent_results(agent_type)
-                if agent_results:
-                    all_results[agent_type] = agent_results
-            full_data = all_results
+            filtered_context = request.context or {}
+
+            full_data = self._reconstruct_full_data_from_references(
+                shared_data, filtered_context
+            )
 
             messages = [
                 {"role": "system", "content": build_system_prompt()},
                 {
                     "role": "user",
                     "content": build_chat_agent_prompt(
-                        query=request.query, context=request.context
+                        query=request.query, context=filtered_context
                     ),
                 },
             ]
@@ -67,9 +66,7 @@ class ChatAgent(BaseAgent):
             )
 
             if isinstance(response, ChatResponse) and response.result:
-                # Add full_data to the schema
                 response.result.full_data = full_data
-                # Fill actual data into graph fields
                 self._fill_data_from_full_data(response.result, full_data)
                 return response
             else:
@@ -190,18 +187,26 @@ class ChatAgent(BaseAgent):
     def _fill_data_from_full_data(
         self, schema: ChatAgentSchema, full_data: Optional[Dict[str, Any]]
     ):
-        """Fill actual data from full_data into graph and table fields in layout."""
+        """
+        Fill actual data from full_data into graph and table fields in layout.
+
+        full_data structure (from result_references):
+        {
+            "inventory": {
+                "check_stock": {"tool_name": "check_stock", "data": {...}, "agent_type": "inventory"},
+                "get_history": {"tool_name": "get_history", "data": {...}, "agent_type": "inventory"}
+            }
+        }
+        """
         if not full_data or not schema.layout:
             return
 
         for field in schema.layout:
             if isinstance(field, LLMGraphField):
-                # Try to fill graph data based on available data
                 graph_data = self._extract_graph_data(full_data, field.title)
                 if graph_data:
                     field.data = graph_data
             elif isinstance(field, LLMTableField):
-                # Try to fill table data based on available data
                 table_data = self._extract_table_data(full_data, field.title)
                 if table_data:
                     field.data = table_data
@@ -209,12 +214,9 @@ class ChatAgent(BaseAgent):
     def _extract_graph_data(
         self, full_data: Dict[str, Any], title: Optional[str]
     ) -> Optional[Dict[str, Any]]:
-        """Extract data for graph from full_data based on available tools."""
+        """Extract data for graph from full_data using generic detection."""
         try:
-            # Check for inventory stock data
-            if "inventory" in full_data:
-                return self._extract_stock_graph_data(full_data)
-            # Add more data types as needed
+            return self._extract_generic_graph_data(full_data)
         except Exception as e:
             logger.warning(f"Failed to extract graph data: {e}")
         return None
@@ -222,128 +224,156 @@ class ChatAgent(BaseAgent):
     def _extract_table_data(
         self, full_data: Dict[str, Any], title: Optional[str]
     ) -> Optional[Dict[str, Any]]:
-        """Extract data for table from full_data based on available tools."""
+        """Extract data for table from full_data using generic detection."""
         try:
-            # Check for inventory stock data
-            if "inventory" in full_data:
-                return self._extract_stock_table_data(full_data)
-            # Add more data types as needed
+            return self._extract_generic_table_data(full_data)
         except Exception as e:
             logger.warning(f"Failed to extract table data: {e}")
         return None
 
-    def _extract_stock_graph_data(
+    def _reconstruct_full_data_from_references(
+        self, shared_data: "SharedData", filtered_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        full_data = {}
+
+        try:
+            if not filtered_context or "results" not in filtered_context:
+                return full_data
+
+            results = filtered_context.get("results", {})
+
+            for agent_type, agent_results in results.items():
+                if not isinstance(agent_results, dict):
+                    continue
+
+                agent_full_data = {}
+
+                for tool_name, tool_info in agent_results.items():
+                    if isinstance(tool_info, dict) and "result_id" in tool_info:
+                        result_id = tool_info["result_id"]
+                        full_result = shared_data.get_result_by_id(result_id)
+                        if full_result:
+                            agent_full_data[tool_name] = full_result
+                    else:
+                        agent_full_data[tool_name] = tool_info
+
+                if agent_full_data:
+                    full_data[agent_type] = agent_full_data
+
+            logger.debug(f"Reconstructed full_data for {len(full_data)} agents")
+            return full_data
+
+        except Exception as e:
+            logger.warning(f"Failed to reconstruct full_data from references: {e}")
+            return full_data
+
+    def _extract_generic_graph_data(
         self, full_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Extract stock level data for graph from full_data."""
         try:
-            if "inventory" in full_data:
-                history_data = []
-                for task_key, task_data in full_data["inventory"].items():
-                    if "tool_results" in task_data:
-                        for tool_result in task_data["tool_results"]:
-                            if tool_result.get("tool_name") == "retrieve_stock_history":
-                                # This is stock history data
-                                result_data = tool_result.get("tool_result", {})
-                                if isinstance(result_data, list) and result_data:
-                                    # List of stock history entries
-                                    for entry in result_data:
-                                        if isinstance(entry, dict):
-                                            date = entry.get("date") or entry.get(
-                                                "timestamp"
-                                            )
-                                            quantity = (
-                                                entry.get("quantity")
-                                                or entry.get("balance")
-                                                or entry.get("stock_level")
-                                            )
-                                            if date and quantity is not None:
-                                                history_data.append(
-                                                    {
-                                                        "date": str(date),
-                                                        "quantity": int(quantity),
-                                                    }
-                                                )
-                                elif isinstance(result_data, dict):
-                                    # Single entry or different format
-                                    # Try to extract if it has multiple entries
-                                    pass
+            for _, agent_tools in full_data.items():
+                if not isinstance(agent_tools, dict):
+                    continue
 
-                if history_data:
-                    # Sort by date and create chart data
-                    history_data.sort(key=lambda x: x["date"])
-                    labels = [entry["date"] for entry in history_data]
-                    data = [entry["quantity"] for entry in history_data]
-                    return {
-                        "labels": labels,
-                        "datasets": [
-                            {
-                                "label": "Stock Level",
-                                "data": data,
-                                "borderColor": "blue",
-                                "fill": False,
-                            }
-                        ],
-                    }
-                else:
-                    # Fallback to current stock level
-                    for task_key, task_data in full_data["inventory"].items():
-                        if "tool_results" in task_data:
-                            for tool_result in task_data["tool_results"]:
-                                if tool_result.get("tool_name") == "check_stock":
-                                    stock_info = tool_result.get("tool_result", {})
-                                    stock_level = stock_info.get("stock_level")
-                                    if stock_level is not None:
-                                        return {
-                                            "labels": ["Current Stock"],
-                                            "datasets": [
-                                                {
-                                                    "label": "Stock Level",
-                                                    "data": [int(stock_level)],
-                                                }
-                                            ],
-                                        }
+                for tool_name, tool_result in agent_tools.items():
+                    if not isinstance(tool_result, dict):
+                        continue
+
+                    raw_data = tool_result.get("data", tool_result)
+
+                    if isinstance(raw_data, list) and len(raw_data) > 0:
+                        first_entry = raw_data[0]
+                        if isinstance(first_entry, dict):
+                            date_keys = [
+                                k
+                                for k in first_entry.keys()
+                                if "date" in k.lower() or "time" in k.lower()
+                            ]
+                            value_keys = [
+                                k
+                                for k in first_entry.keys()
+                                if "quantity" in k.lower()
+                                or "amount" in k.lower()
+                                or "value" in k.lower()
+                                or "level" in k.lower()
+                                or "stock" in k.lower()
+                            ]
+
+                            if date_keys and value_keys:
+                                labels = []
+                                values = []
+                                for entry in raw_data:
+                                    date_val = entry.get(date_keys[0])
+                                    val = entry.get(value_keys[0])
+                                    if date_val is not None and val is not None:
+                                        labels.append(str(date_val))
+                                        values.append(
+                                            int(val)
+                                            if isinstance(val, (int, float))
+                                            else 0
+                                        )
+
+                                if labels and values:
+                                    return {
+                                        "labels": labels,
+                                        "datasets": [
+                                            {
+                                                "label": tool_name,
+                                                "data": values,
+                                                "borderColor": "blue",
+                                                "fill": False,
+                                            }
+                                        ],
+                                    }
+            return None
         except Exception as e:
-            logger.warning(f"Failed to extract stock graph data: {e}")
-        return None
+            logger.debug(f"Generic graph extraction failed: {e}")
+            return None
 
-    def _extract_stock_table_data(
+    def _extract_generic_table_data(
         self, full_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Extract stock level data for table from full_data."""
+        """Generic table data extraction: find first list of objects in tools."""
         try:
-            if "inventory" in full_data:
-                # Try stock history first for table
-                for task_key, task_data in full_data["inventory"].items():
-                    if "tool_results" in task_data:
-                        for tool_result in task_data["tool_results"]:
-                            if tool_result.get("tool_name") == "retrieve_stock_history":
-                                result_data = tool_result.get("tool_result", [])
-                                if isinstance(result_data, list) and result_data:
-                                    headers = ["Date", "Quantity"]
-                                    rows = [
-                                        [
-                                            entry.get("date", ""),
-                                            entry.get("quantity", 0),
-                                        ]
-                                        for entry in result_data
-                                    ]
-                                    return {"headers": headers, "rows": rows}
+            for agent_type, agent_tools in full_data.items():
+                if not isinstance(agent_tools, dict):
+                    continue
 
-                # Fallback to current stock level
-                for task_key, task_data in full_data["inventory"].items():
-                    if "tool_results" in task_data:
-                        for tool_result in task_data["tool_results"]:
-                            if tool_result.get("tool_name") == "check_stock":
-                                stock_info = tool_result.get("tool_result", {})
-                                stock_level = stock_info.get("stock_level")
-                                if stock_level is not None:
-                                    headers = ["Item", "Stock Level"]
-                                    rows = [["Current Stock", stock_level]]
-                                    return {"headers": headers, "rows": rows}
+                for tool_name, tool_result in agent_tools.items():
+                    if not isinstance(tool_result, dict):
+                        continue
+
+                    raw_data = tool_result.get("data", tool_result)
+
+                    if isinstance(raw_data, list) and len(raw_data) > 0:
+                        first_entry = raw_data[0]
+                        if isinstance(first_entry, dict):
+                            columns = list(first_entry.keys())
+                            rows = []
+                            for entry in raw_data:
+                                row = {}
+                                for col in columns:
+                                    row[col] = entry.get(col, "")
+                                rows.append(row)
+
+                            if rows:
+                                return {
+                                    "columns": columns,
+                                    "rows": rows,
+                                }
+
+                    elif isinstance(raw_data, dict):
+                        columns = list(raw_data.keys())
+                        rows = [{col: raw_data.get(col, "") for col in columns}]
+                        return {
+                            "columns": columns,
+                            "rows": rows,
+                        }
+
+            return None
         except Exception as e:
-            logger.warning(f"Failed to extract stock table data: {e}")
-        return None
+            logger.debug(f"Generic table extraction failed: {e}")
+            return None
 
     async def start(self):
         await self.listen_channels()

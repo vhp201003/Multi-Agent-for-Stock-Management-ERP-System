@@ -17,14 +17,15 @@ from src.typing import (
 from src.typing.redis import (
     AgentStatus,
     CommandMessage,
-    ConversationData,
     RedisChannels,
     RedisKeys,
     SharedData,
     TaskStatus,
     TaskUpdate,
 )
-from src.typing.schema.tool_call import ToolCallPlan
+from src.typing.schema.tool_call import ResourceURI, ToolCallPlan
+from src.utils.converstation import get_summary_conversation
+from src.utils.shared_data_utils import get_shared_data, update_shared_data
 
 from .base_agent import BaseAgent
 
@@ -56,24 +57,11 @@ class WorkerAgent(BaseAgent):
     ) -> WorkerAgentProcessResponse:
         ### Phase 1: Load conversation and prepare messages
         sub_query = command_message.sub_query
-        conversation_key = RedisKeys.get_conversation_key(
-            command_message.conversation_id
-        )
-        conversation_data = await self.redis.json().get(conversation_key)
-        if conversation_data is None:
-            logger.error(
-                f"No conversation data found for {command_message.conversation_id}"
-            )
-            # Create a minimal conversation for processing
-            conversation = ConversationData(
-                conversation_id=command_message.conversation_id,
-                messages=[],
-                summary=None,
-            )
-        else:
-            conversation = ConversationData(**conversation_data)
-        # Summary conversation context
-        summary = conversation.summary
+        conversation_id = command_message.conversation_id
+
+        # Get conversation summary
+        summary = await get_summary_conversation(self.redis, conversation_id)
+
         messages = [
             {
                 "role": "system",
@@ -81,7 +69,9 @@ class WorkerAgent(BaseAgent):
             },
             {
                 "role": "assistant",
-                "content": f"Conversation Summary: {summary}",
+                "content": f"Conversation Summary: {summary}"
+                if summary
+                else "Conversation Summary: No prior context",
             },
             {
                 "role": "user",
@@ -109,7 +99,7 @@ class WorkerAgent(BaseAgent):
 
         mixed_calls = llm_response.result.tool_calls or []
         tool_calls = [item for item in mixed_calls if isinstance(item, ToolCallPlan)]
-        read_resources = [item for item in mixed_calls if isinstance(item, str)]
+        read_resources = [item for item in mixed_calls if isinstance(item, ResourceURI)]
 
         if tool_calls:
             for tool_call in tool_calls:
@@ -142,16 +132,16 @@ class WorkerAgent(BaseAgent):
         if read_resources:
             for resource in read_resources:
                 try:
-                    resource_result = await self.read_mcp_resource(resource)
+                    resource_result = await self.read_mcp_resource(resource.uri)
                     worker_process_result.data_resources.append(
                         ResourceCallResponse(
-                            resource_name=resource, resource_result=resource_result
+                            resource_name=resource.uri, resource_result=resource_result
                         )
                     )
                 except Exception as e:
                     worker_process_result.data_resources.append(
                         ResourceCallResponse(
-                            resource_name=resource,
+                            resource_name=resource.uri,
                             resource_result={
                                 "error": f"Resource read failed: {str(e)}"
                             },
@@ -238,6 +228,10 @@ class WorkerAgent(BaseAgent):
         try:
             task_id = await self.find_task_id_by_query(
                 command_message.query_id, command_message.sub_query
+            )
+
+            await self._store_result_references(
+                command_message.query_id, response.tools_result, response.data_resources
             )
 
             task_update: TaskUpdate = TaskUpdate(
@@ -381,3 +375,40 @@ class WorkerAgent(BaseAgent):
 
         if hasattr(super(), "stop"):
             await super().stop()
+
+    async def _store_result_references(
+        self,
+        query_id: str,
+        tool_results: List[ToolCallResultResponse],
+        resource_results: List[ResourceCallResponse],
+    ) -> None:
+        """Store result_id → full result mapping in SharedData for tracing"""
+        try:
+            shared = await get_shared_data(self.redis, query_id)
+            if not shared:
+                logger.warning(f"No shared data found for {query_id}")
+                return
+
+            for tool_result in tool_results:
+                shared.store_result_reference(
+                    result_id=tool_result.result_id,
+                    tool_name=tool_result.tool_name,
+                    tool_result=tool_result.tool_result,
+                    agent_type=self.agent_type,
+                )
+
+            for resource_result in resource_results:
+                shared.store_result_reference(
+                    result_id=resource_result.result_id,
+                    tool_name=f"resource:{resource_result.resource_name}",
+                    tool_result=resource_result.resource_result,
+                    agent_type=self.agent_type,
+                )
+
+            await update_shared_data(self.redis, query_id, shared)
+            logger.debug(
+                f"Stored {len(tool_results)} tool + {len(resource_results)} resource references"
+            )
+
+        except Exception as e:
+            logger.error(f"Error storing result references: {e}", exc_info=True)

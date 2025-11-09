@@ -39,6 +39,7 @@ class SharedData(BaseModel):
     status: str = "pending"
     llm_usage: Dict[str, LLMUsage] = Field(default_factory=dict)
     conversation_id: Optional[str] = None
+    result_references: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     def add_task(self, task: TaskNode) -> bool:
         if not task.task_id or task.task_id in self.tasks:
@@ -127,3 +128,17 @@ class SharedData(BaseModel):
             execution.status == TaskStatus.COMPLETED
             for execution in self.tasks.values()
         )
+
+    def store_result_reference(
+        self, result_id: str, tool_name: str, tool_result: dict, agent_type: str
+    ) -> None:
+        """Store mapping from result_id → full tool result for tracing"""
+        self.result_references[result_id] = {
+            "tool_name": tool_name,
+            "data": tool_result,
+            "agent_type": agent_type,
+        }
+
+    def get_result_by_id(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve full tool result by its ID"""
+        return self.result_references.get(result_id)

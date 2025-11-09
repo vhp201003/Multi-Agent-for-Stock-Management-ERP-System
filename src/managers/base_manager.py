@@ -119,12 +119,6 @@ class BaseManager:
         elif task_update.agent_type != CHAT_AGENT_TYPE:  # ChatAgent is final
             await self._update_pending_tasks(query_id)
 
-        # Publish update to query-specific channel
-        await self.redis.publish(
-            RedisChannels.get_query_updates_channel(query_id),
-            task_update.model_dump_json(),
-        )
-
     async def _update_pending_tasks(self, query_id: str):
         try:
             pending_queue_key = RedisKeys.get_agent_pending_queue(self.agent_type)

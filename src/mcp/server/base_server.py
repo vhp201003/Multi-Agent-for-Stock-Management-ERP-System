@@ -5,7 +5,6 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -37,6 +36,47 @@ class ServerConfig(BaseModel):
 
 
 class BaseMCPServer(ABC):
+    """
+    Base MCP Server leveraging FastMCP for simplified implementation.
+
+    This class wraps FastMCP and provides a clean API for registering tools and resources.
+    It automatically handles Pydantic model serialization for tool parameters and resources.
+
+    Usage:
+        class InventoryMCPServer(BaseMCPServer):
+            def setup(self):
+                # Register tools with Pydantic models - parameters are auto-validated
+                self.add_tool(self.check_stock)
+                self.add_tool(self.list_items)
+
+                # Register resources with URI templates
+                self.add_resource("stock://{product_id}", self.get_stock_level)
+                self.add_resource("alerts://all", self.get_alerts)
+
+            # Tools can use Pydantic models for parameters
+            async def check_stock(
+                self,
+                product_id: str = Field(..., description="Product ID"),
+                warehouse: str = Field(default="MAIN", description="Warehouse code")
+            ) -> dict:
+                return {"stock": 100, "product_id": product_id, "warehouse": warehouse}
+
+            # Resources with parameters
+            async def get_stock_level(self, product_id: str) -> str:
+                return f"Stock level for {product_id}: 150 units"
+
+            async def list_items(self) -> dict:
+                return {"items": ["item1", "item2"], "count": 2}
+
+            async def get_alerts(self) -> str:
+                return "2 critical alerts, 5 warnings"
+
+        # Run server
+        config = ServerConfig(name="InventoryServer", port=8002)
+        server = InventoryMCPServer(config)
+        server.run()
+    """
+
     def __init__(self, config: ServerConfig):
         self.config = config
         self.server_id = str(uuid.uuid4())
@@ -44,7 +84,15 @@ class BaseMCPServer(ABC):
         self._shutdown_event = asyncio.Event()
         self._is_running = False
         self.logger = self._setup_logger()
-        self.mcp: Optional[FastMCP] = None
+
+        # Initialize FastMCP with configuration
+        self.mcp = FastMCP(
+            name=config.name,
+            host=config.host,
+            port=config.port,
+            debug=config.debug,
+            stateless_http=True,
+        )
 
     def _setup_logger(self) -> logging.Logger:
         server_logger = logging.getLogger(f"{self.config.name}-{self.server_id}")
@@ -62,16 +110,6 @@ class BaseMCPServer(ABC):
 
         return server_logger
 
-    async def _initialize_mcp(self) -> FastMCP:
-        mcp = FastMCP(
-            name=self.config.name,
-            stateless_http=True,
-            host=self.config.host,
-            port=self.config.port,
-            debug=self.config.debug,
-        )
-        return mcp
-
     def _get_metrics_data(self) -> dict:
         return {
             "server_id": self.server_id,
@@ -84,23 +122,105 @@ class BaseMCPServer(ABC):
         }
 
     def _setup_metrics_endpoint(self) -> None:
+        """Register metrics endpoint with FastMCP."""
+
         @self.mcp.custom_route("/metrics", methods=["GET"])
         async def metrics_endpoint(request):
             return self._get_metrics_data()
 
-    @abstractmethod
-    async def _register_tools(self) -> None:
-        """Register tools for this agent. Must be implemented by subclasses."""
-        pass
+    # ============= Public API for Subclasses =============
+
+    def add_tool(
+        self, fn, name: str | None = None, description: str | None = None
+    ) -> None:
+        """
+        Register a tool function with FastMCP.
+
+        FastMCP automatically extracts parameter information from function signature,
+        including Pydantic Field descriptions. Works with both sync and async functions.
+
+        Args:
+            fn: Function to register as a tool
+            name: Optional tool name (defaults to function name)
+            description: Optional tool description
+
+        Example:
+            async def check_stock(
+                product_id: str = Field(..., description="Product identifier"),
+                warehouse: str = Field(default="MAIN", description="Warehouse code")
+            ) -> dict:
+                return {"stock": 100}
+
+            self.add_tool(check_stock, description="Check product stock levels")
+        """
+        self.mcp.add_tool(fn, name=name, description=description)
+
+    def add_resource(self, uri_template: str, fn) -> None:
+        """
+        Register a resource with FastMCP.
+
+        FastMCP automatically handles URI template parameters. The function can be
+        async or sync, and can return str, bytes, or dict (will be JSON-encoded).
+
+        Args:
+            uri_template: URI pattern (e.g., "stock://{product_id}" or "alerts://all")
+            fn: Function to handle resource reads
+
+        Example:
+            async def get_stock_level(product_id: str) -> str:
+                return f"Stock for {product_id}: 100 units"
+
+            self.add_resource("stock://{product_id}", get_stock_level)
+        """
+        self.mcp.resource(uri_template)(fn)
+
+    def add_prompt(self, name: str, fn) -> None:
+        """
+        Register a prompt with FastMCP.
+
+        Prompts are parameterizable message templates useful for guiding LLM behavior.
+
+        Args:
+            name: Prompt name
+            fn: Async function returning list of prompt messages
+
+        Example:
+            async def analyze_data(data_type: str) -> list[dict]:
+                return [{
+                    "role": "user",
+                    "content": f"Analyze this {data_type} data"
+                }]
+
+            self.add_prompt("analyze", analyze_data)
+        """
+        self.mcp.prompt(name=name)(fn)
 
     @abstractmethod
-    async def _register_resources(self) -> None:
-        """Register resources for this agent. Must be implemented by subclasses."""
+    def setup(self) -> None:
+        """
+        Setup method called during server initialization.
+
+        Subclasses MUST override this to register tools, resources, and prompts.
+        Called before the server starts listening for requests.
+
+        Example:
+            def setup(self):
+                self.add_tool(self.check_stock)
+                self.add_tool(self.list_items)
+                self.add_resource("stock://{id}", self.get_stock)
+        """
         pass
 
-    async def _cleanup(self) -> None:
-        """Cleanup resources. Override in subclasses for custom cleanup."""
+    async def cleanup(self) -> None:
+        """
+        Cleanup method called during server shutdown.
+
+        Override in subclasses for custom cleanup logic (e.g., closing connections).
+        Called after the server stops accepting requests.
+        """
         pass
+
+    # ============= Server Lifecycle =============
 
     @asynccontextmanager
     async def _server_lifecycle(self):
@@ -108,10 +228,10 @@ class BaseMCPServer(ABC):
             self.logger.info("Starting server initialization...")
             self.metrics.start_time = time.time()
 
-            self.mcp = await self._initialize_mcp()
-            await self._register_tools()
-            await self._register_resources()
+            # Call setup hook - subclasses register tools/resources here
+            self.setup()
 
+            # Setup metrics endpoint
             self._setup_metrics_endpoint()
 
             self._is_running = True
@@ -128,7 +248,7 @@ class BaseMCPServer(ABC):
 
             try:
                 await asyncio.wait_for(
-                    self._cleanup(), timeout=self.config.shutdown_timeout
+                    self.cleanup(), timeout=self.config.shutdown_timeout
                 )
             except asyncio.TimeoutError:
                 self.logger.warning("Cleanup timeout - forcing shutdown")
@@ -141,19 +261,8 @@ class BaseMCPServer(ABC):
                 f"Starting {self.config.name} on {self.config.host}:{self.config.port}"
             )
 
-            server_task = asyncio.create_task(self.mcp.run_streamable_http_async())
-
             try:
-                done, pending = await asyncio.wait(
-                    [server_task, asyncio.create_task(self._shutdown_event.wait())],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                for task in pending:
-                    task.cancel()
-
-                await asyncio.wait(pending, timeout=5.0)
-
+                await self.mcp.run_streamable_http_async()
             except Exception as e:
                 self.logger.error(f"Server runtime error: {e}")
                 raise
@@ -161,6 +270,7 @@ class BaseMCPServer(ABC):
                 self.logger.info("Server stopped")
 
     def run(self) -> None:
+        """Run the server synchronously."""
         try:
             asyncio.run(self.run_async())
         except KeyboardInterrupt:
@@ -170,6 +280,7 @@ class BaseMCPServer(ABC):
             raise
 
     def stop(self) -> None:
+        """Stop the running server."""
         if self._is_running:
             self._shutdown_event.set()
 

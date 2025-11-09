@@ -87,7 +87,10 @@ class OrchestratorAgent(BaseAgent):
                 query_id=request.query_id,
                 sub_query="Query orchestration started",
                 status=TaskStatus.PROCESSING,
-                result={"agents_needed": list(sub_query_dict.keys())},
+                result={
+                    "agents_needed": list(sub_query_dict.keys()),
+                    "task_dependency": orchestration_result.result.task_dependency,
+                },
                 llm_usage={},
                 agent_type="orchestrator",
             )
