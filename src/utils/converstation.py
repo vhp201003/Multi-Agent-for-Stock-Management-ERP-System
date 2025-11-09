@@ -8,7 +8,9 @@ from src.typing.redis import ConversationData, RedisKeys
 logger = logging.getLogger(__name__)
 
 
-async def load_or_create_conversation(redis_client, conversation_id: str) -> ConversationData:
+async def load_or_create_conversation(
+    redis_client, conversation_id: str
+) -> ConversationData:
     try:
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
         conversation_data = await redis_client.json().get(conversation_key)
@@ -66,3 +68,20 @@ async def save_conversation_message(
 
     except Exception as e:
         logger.error(f"Failed to save conversation message: {e}")
+
+
+async def get_summary_conversation(redis_client, conversation_id: str) -> Optional[str]:
+    try:
+        conversation_key = RedisKeys.get_conversation_key(conversation_id)
+        conversation_data = await redis_client.json().get(conversation_key)
+
+        if conversation_data is None:
+            logger.debug(f"No conversation data found for {conversation_id}")
+            return None
+
+        conversation = ConversationData(**conversation_data)
+        return conversation.summary
+
+    except Exception as e:
+        logger.error(f"Failed to get conversation summary for {conversation_id}: {e}")
+        return None

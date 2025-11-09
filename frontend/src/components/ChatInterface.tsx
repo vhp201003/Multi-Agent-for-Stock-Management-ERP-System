@@ -672,11 +672,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                             </div>
                           )}
                           {update.result.task_dependency && (
-                            <div className="reasoning-item">
-                              <strong>Tasks planned:</strong> {
-                                Object.values(update.result.task_dependency).flat().length
-                              } task(s)
-                            </div>
+                            <details className="task-dependency-details">
+                              <summary className="task-dependency-summary">
+                                <strong>Tasks planned:</strong> {
+                                  Object.values(update.result.task_dependency).flat().length
+                                } task(s)
+                                <span className="result-toggle">▼</span>
+                              </summary>
+                              <div className="task-dependency-full">
+                                <pre>{JSON.stringify(update.result.task_dependency, null, 2)}</pre>
+                              </div>
+                            </details>
                           )}
                         </div>
                       )}

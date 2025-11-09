@@ -17,14 +17,14 @@ from src.typing import (
 from src.typing.redis import (
     AgentStatus,
     CommandMessage,
-    ConversationData,
     RedisChannels,
     RedisKeys,
     SharedData,
     TaskStatus,
     TaskUpdate,
 )
-from src.typing.schema.tool_call import ToolCallPlan
+from src.typing.schema.tool_call import ResourceURI, ToolCallPlan
+from src.utils.converstation import get_summary_conversation
 
 from .base_agent import BaseAgent
 
@@ -56,24 +56,11 @@ class WorkerAgent(BaseAgent):
     ) -> WorkerAgentProcessResponse:
         ### Phase 1: Load conversation and prepare messages
         sub_query = command_message.sub_query
-        conversation_key = RedisKeys.get_conversation_key(
-            command_message.conversation_id
-        )
-        conversation_data = await self.redis.json().get(conversation_key)
-        if conversation_data is None:
-            logger.error(
-                f"No conversation data found for {command_message.conversation_id}"
-            )
-            # Create a minimal conversation for processing
-            conversation = ConversationData(
-                conversation_id=command_message.conversation_id,
-                messages=[],
-                summary=None,
-            )
-        else:
-            conversation = ConversationData(**conversation_data)
-        # Summary conversation context
-        summary = conversation.summary
+        conversation_id = command_message.conversation_id
+
+        # Get conversation summary
+        summary = await get_summary_conversation(self.redis, conversation_id)
+
         messages = [
             {
                 "role": "system",
@@ -81,7 +68,9 @@ class WorkerAgent(BaseAgent):
             },
             {
                 "role": "assistant",
-                "content": f"Conversation Summary: {summary}",
+                "content": f"Conversation Summary: {summary}"
+                if summary
+                else "Conversation Summary: No prior context",
             },
             {
                 "role": "user",
@@ -109,7 +98,7 @@ class WorkerAgent(BaseAgent):
 
         mixed_calls = llm_response.result.tool_calls or []
         tool_calls = [item for item in mixed_calls if isinstance(item, ToolCallPlan)]
-        read_resources = [item for item in mixed_calls if isinstance(item, str)]
+        read_resources = [item for item in mixed_calls if isinstance(item, ResourceURI)]
 
         if tool_calls:
             for tool_call in tool_calls:
@@ -142,16 +131,16 @@ class WorkerAgent(BaseAgent):
         if read_resources:
             for resource in read_resources:
                 try:
-                    resource_result = await self.read_mcp_resource(resource)
+                    resource_result = await self.read_mcp_resource(resource.uri)
                     worker_process_result.data_resources.append(
                         ResourceCallResponse(
-                            resource_name=resource, resource_result=resource_result
+                            resource_name=resource.uri, resource_result=resource_result
                         )
                     )
                 except Exception as e:
                     worker_process_result.data_resources.append(
                         ResourceCallResponse(
-                            resource_name=resource,
+                            resource_name=resource.uri,
                             resource_result={
                                 "error": f"Resource read failed: {str(e)}"
                             },
