@@ -9,10 +9,10 @@ from src.typing.llm_response import ChatResponse
 from src.typing.redis import RedisChannels, SharedData, TaskStatus, TaskUpdate
 from src.typing.request import ChatRequest
 from src.typing.schema import (
+    ChartDataSource,
     ChatAgentSchema,
     LLMGraphField,
     LLMMarkdownField,
-    LLMSectionBreakField,
     LLMTableField,
 )
 from src.utils.converstation import save_conversation_message
@@ -127,7 +127,7 @@ class ChatAgent(BaseAgent):
                     if response.result
                     else {"error": "No response"}
                 },
-                llm_usage=response.llm_usage,
+                llm_usage=response.llm_usage or {},  # Ensure dict, never None
             )
             await self.publish_channel(
                 RedisChannels.TASK_UPDATES, task_update, TaskUpdate
@@ -143,11 +143,8 @@ class ChatAgent(BaseAgent):
     ) -> ChatResponse:
         schema = ChatAgentSchema(
             layout=[
-                LLMSectionBreakField(
-                    title="Response",
-                ),
                 LLMMarkdownField(
-                    content=f"I received your query: **{query_id}**\n\nLet me help you with that. Please provide more specific details for a better response.",
+                    content=f"## Response\n\nI received your query: **{query_id}**\n\nLet me help you with that. Please provide more specific details for a better response.",
                 ),
             ]
         )
@@ -168,11 +165,8 @@ class ChatAgent(BaseAgent):
     ) -> ChatResponse:
         schema = ChatAgentSchema(
             layout=[
-                LLMSectionBreakField(
-                    title="Error",
-                ),
                 LLMMarkdownField(
-                    content=f"**Processing Error**\n\nSorry, I encountered an error: {error}",
+                    content=f"## Processing Error\n\nSorry, I encountered an error: {error}",
                 ),
             ]
         )
@@ -182,44 +176,155 @@ class ChatAgent(BaseAgent):
             query_id=query_id,
             conversation_id=conversation_id,
             result=schema,
+            llm_usage={},  # Empty dict instead of None to satisfy Pydantic validation
         )
 
     def _fill_data_from_full_data(
         self, schema: ChatAgentSchema, full_data: Optional[Dict[str, Any]]
     ):
         """
-        Fill actual data from full_data into graph and table fields in layout.
+        Fill chart/table data from full_data using data_source specification.
 
-        full_data structure (from result_references):
-        {
-            "inventory": {
-                "check_stock": {"tool_name": "check_stock", "data": {...}, "agent_type": "inventory"},
-                "get_history": {"tool_name": "get_history", "data": {...}, "agent_type": "inventory"}
-            }
-        }
+        For GraphField: Use data_source to locate and extract data
+        For TableField: Use generic extraction
         """
         if not full_data or not schema.layout:
             return
 
         for field in schema.layout:
             if isinstance(field, LLMGraphField):
-                graph_data = self._extract_graph_data(full_data, field.title)
-                if graph_data:
-                    field.data = graph_data
+                # Extract chart data using data_source spec
+                chart_data = self._extract_chart_data_from_source(
+                    full_data, field.data_source, field.graph_type
+                )
+                if chart_data:
+                    field.data = chart_data
+                else:
+                    logger.warning(
+                        f"Failed to extract chart data for {field.title}. "
+                        f"data_source: {field.data_source}"
+                    )
             elif isinstance(field, LLMTableField):
                 table_data = self._extract_table_data(full_data, field.title)
                 if table_data:
                     field.data = table_data
 
-    def _extract_graph_data(
-        self, full_data: Dict[str, Any], title: Optional[str]
+    def _extract_chart_data_from_source(
+        self,
+        full_data: Dict[str, Any],
+        data_source: ChartDataSource,
+        graph_type: str,
     ) -> Optional[Dict[str, Any]]:
-        """Extract data for graph from full_data using generic detection."""
+        """
+        Extract and transform chart data based on data_source specification.
+
+        Generic approach:
+        1. Locate data using agent_type + tool_name + data_path
+        2. Extract label_field (X-axis) and value_field (Y-axis)
+        3. Transform to chart format: {labels: [...], datasets: [{label, data}]}
+        """
         try:
-            return self._extract_generic_graph_data(full_data)
+            # Step 1: Locate raw data
+            if data_source.agent_type not in full_data:
+                logger.warning(f"Agent {data_source.agent_type} not in full_data")
+                return None
+
+            agent_tools = full_data[data_source.agent_type]
+            if data_source.tool_name not in agent_tools:
+                logger.warning(
+                    f"Tool {data_source.tool_name} not in {data_source.agent_type}"
+                )
+                return None
+
+            tool_result = agent_tools[data_source.tool_name]
+
+            # Navigate to data using data_path
+            raw_data = self._navigate_data_path(tool_result, data_source.data_path)
+
+            if not isinstance(raw_data, list) or len(raw_data) == 0:
+                logger.warning(f"Invalid data structure at {data_source.data_path}")
+                return None
+
+            # Step 2: Extract label and value fields
+            labels = []
+            values = []
+
+            for item in raw_data:
+                if not isinstance(item, dict):
+                    continue
+
+                label_val = item.get(data_source.label_field)
+                value_val = item.get(data_source.value_field)
+
+                if label_val is None or value_val is None:
+                    continue
+
+                # Convert to appropriate types
+                label_str = str(label_val)
+                try:
+                    value_num = (
+                        float(value_val)
+                        if isinstance(value_val, (int, float, str))
+                        else 0
+                    )
+                except (ValueError, TypeError):
+                    value_num = 0
+
+                labels.append(label_str)
+                values.append(value_num)
+
+            if not labels or not values:
+                logger.warning("No valid label/value pairs extracted")
+                return None
+
+            # Step 3: Apply limits based on chart type
+            max_points = self._get_max_points_for_chart_type(graph_type)
+            if len(labels) > max_points:
+                labels = labels[:max_points]
+                values = values[:max_points]
+
+            # Step 4: Return standardized format
+            return {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": data_source.value_field.replace("_", " ").title(),
+                        "data": values,
+                        "fill": graph_type == "linechart",
+                    }
+                ],
+            }
+
         except Exception as e:
-            logger.warning(f"Failed to extract graph data: {e}")
-        return None
+            logger.error(f"Chart data extraction failed: {e}")
+            return None
+
+    def _navigate_data_path(self, obj: Any, path: str) -> Any:
+        """Navigate nested object using dot notation (e.g., 'data.results')"""
+        if not path:
+            return obj
+
+        parts = path.split(".")
+        current = obj
+
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+                if current is None:
+                    return None
+            else:
+                return None
+
+        return current
+
+    def _get_max_points_for_chart_type(self, graph_type: str) -> int:
+        """Get recommended max data points for each chart type"""
+        limits = {
+            "piechart": 8,  # Too many slices are hard to read
+            "barchart": 15,  # Balance visibility and detail
+            "linechart": 50,  # Can handle more points for trends
+        }
+        return limits.get(graph_type, 20)
 
     def _extract_table_data(
         self, full_data: Dict[str, Any], title: Optional[str]

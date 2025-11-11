@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, Cart
 import { apiService, generateId, type TaskUpdate } from '../services/api';
 import { wsService } from '../services/websocket';
 import Toast, { type ToastMessage } from './Toast';
+import { processLayoutWithData } from '../utils/chartDataExtractor';
 import './ChatInterface.css';
 
 // Extend Window interface for saveConversation
@@ -13,12 +14,21 @@ declare global {
   }
 }
 
+interface ChartDataSource {
+  agent_type: string;
+  tool_name: string;
+  label_field: string;
+  value_field: string;
+  data_path?: string;
+}
+
 interface LayoutField {
   field_type: string;
   title?: string;
   description?: string;
   content?: string;
   graph_type?: string;
+  data_source?: ChartDataSource;
   data?: {
     headers?: string[];
     rows?: any[][];
@@ -121,6 +131,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     // Frontend tạo query_id
     const queryId = generateId();
     
+    // Flag to prevent processing WebSocket updates after HTTP response
+    let responseProcessed = false;
+    
     // Nếu là message đầu tiên, conversation_id = query_id
     let currentConversationId = conversationId;
     if (!currentConversationId) {
@@ -145,6 +158,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       wsService.connect(queryId);
 
       wsService.onMessage((update) => {
+        // CRITICAL: Ignore updates after HTTP response processed
+        if (responseProcessed) {
+          console.log('Ignoring late WebSocket update after response processed');
+          return;
+        }
+        
         console.log('WebSocket update:', update);
 
         // Store all updates temporarily in thinking message
@@ -176,12 +195,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       });
 
       wsService.onClose(() => {
-        setLoading(false);
+        // Only set loading false if response not yet processed
+        if (!responseProcessed) {
+          setLoading(false);
+        }
       });
 
       wsService.onError((error) => {
         console.error('WebSocket error:', error);
-        setLoading(false);
+        if (!responseProcessed) {
+          setLoading(false);
+        }
       });
 
       // BƯỚC 2: Chờ 100ms để đảm bảo WebSocket đã connected
@@ -195,15 +219,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       );
 
       // BƯỚC 4: Process HTTP response - convert thinking message and add final answer
+      // CRITICAL: Mark response as processed FIRST to prevent race conditions
+      responseProcessed = true;
+      
+      // Then disconnect WebSocket to prevent duplicate thinking blocks
+      wsService.disconnect();
+      wsService.clearHandlers();
+      
       setMessages((prevMessages) => {
         const thinkingMsg = prevMessages.find(msg => msg.id === `${queryId}-thinking`);
         const allUpdates = thinkingMsg?.updates || [];
         
         // Remove temporary thinking message
-        let filtered = prevMessages.filter(msg => msg.id !== `${queryId}-thinking`);
+        const filtered = prevMessages.filter(msg => msg.id !== `${queryId}-thinking`);
         
         // Parse response for layout
         let layout: LayoutField[] | undefined;
+        let fullData: unknown;
         let contentText = '';
         
         if (response) {
@@ -211,11 +243,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
             contentText = response;
           } else if (typeof response === 'object') {
             // Extract final_response from HTTP response
-            const finalResponse = (response as any).response?.final_response || (response as any).final_response;
+            const finalResponse = (response as Record<string, any>).response?.final_response || (response as Record<string, any>).final_response;
             
             if (finalResponse?.layout) {
-              // Use layout from final_response
+              // Extract layout and full_data
               layout = finalResponse.layout;
+              fullData = finalResponse.full_data;
+              
+              // Process layout to fill chart data from full_data
+              if (layout && fullData) {
+                const processedLayout = processLayoutWithData(
+                  layout as unknown as Record<string, unknown>[],
+                  fullData
+                );
+                layout = processedLayout as unknown as LayoutField[];
+              }
             } else {
               // Fallback to JSON string
               contentText = JSON.stringify(response, null, 2);
@@ -224,7 +266,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
         }
         
         // Create messages to add
-        let messagesToAdd = [];
+        const messagesToAdd = [];
         
         // Add thinking process if we have updates
         if (allUpdates.length > 0) {
@@ -254,6 +296,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
         return [...filtered, ...messagesToAdd];
       });
       
+      // IMPORTANT: Set loading to false after processing response
+      setLoading(false);
+      
       // Save conversation to localStorage
       setTimeout(() => {
         if (window.saveConversation && currentConversationId) {
@@ -273,6 +318,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
 
     } catch (error) {
       console.error('Failed to send message:', error);
+      
+      // CRITICAL: Mark as processed and disconnect to prevent duplicate blocks
+      responseProcessed = true;
+      wsService.disconnect();
+      wsService.clearHandlers();
+      
       setLoading(false);
       
       const errorMessage: Message = {
@@ -419,14 +470,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   // Render layout field
   const renderLayoutField = (field: LayoutField, index: number) => {
     switch (field.field_type) {
-      case 'section_break':
-        return (
-          <div key={index} className="layout-section-break">
-            {field.title && <h3>{field.title}</h3>}
-            {field.description && <p>{field.description}</p>}
-          </div>
-        );
-      
       case 'markdown':
         return (
           <div key={index} className="layout-markdown">
@@ -463,11 +506,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       
       case 'graph':
         return renderGraph(field, index);
-      
-      case 'column_break':
-        return (
-          <div key={index} className="layout-column-break" />
-        );
       
       default:
         return null;
