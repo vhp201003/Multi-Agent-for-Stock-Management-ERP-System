@@ -84,6 +84,23 @@ class BaseAgent(ABC):
             if response_schema:
                 try:
                     data = json.loads(content) if content else {}
+
+                    logger.debug(f"Parsed JSON data type: {type(data)}")
+                    logger.debug(
+                        f"Parsed JSON data keys: {data.keys() if isinstance(data, dict) else 'N/A'}"
+                    )
+
+                    if isinstance(data, list):
+                        logger.warning(
+                            "LLM returned array instead of object, attempting to fix"
+                        )
+                        if len(data) == 1 and isinstance(data[0], dict):
+                            data = data[0]
+                        else:
+                            raise ValidationError(
+                                f"LLM returned invalid array structure: {data}"
+                            )
+
                     llm_response_schema = response_schema.model_validate(data)
 
                 except (json.JSONDecodeError, ValidationError) as e:
@@ -94,9 +111,13 @@ class BaseAgent(ABC):
                     )
                     raise
 
-                except (json.JSONDecodeError, ValidationError) as e:
-                    logger.error(f"LLM parsing/validation error (duplicate): {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during schema validation: {e}")
+                    logger.error(f"Error type: {type(e).__name__}")
                     logger.error(f"Raw LLM content: {content}")
+                    logger.error(
+                        f"Parsed data type: {type(data) if 'data' in locals() else 'N/A'}"
+                    )
                     raise
 
             if response_model:
