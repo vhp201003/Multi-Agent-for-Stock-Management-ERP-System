@@ -29,11 +29,16 @@ class LLMMarkdownField(LLMLayoutField):
     Markdown text field for headings, summaries, metrics, and formatted content.
 
     Use this for:
-    - Section headings (## Main Heading, ### Subheading)
-    - Executive summaries and key insights
-    - Metrics and KPIs (**Total Value**: $52,887.72)
-    - Lists and bullet points
-    - Horizontal separators (---)
+    - Section headings to introduce charts (## Main Heading, ### Subheading)
+    - Executive summaries highlighting key insights
+    - Contextual information before visualizations
+    - Brief metrics and KPIs (**Total Value**: $52,887.72)
+    - Actionable insights and recommendations
+
+    **BEST PRACTICE**: Combine markdown with charts
+    - Start with markdown for context/summary
+    - Follow with graph for visual representation
+    - This provides both insight and visualization
 
     Format: {"field_type": "markdown", "content": "## Heading\\n\\n**Bold text**"}
     """
@@ -52,7 +57,8 @@ class LLMMarkdownField(LLMLayoutField):
             "- Separators: ---\n"
             "- Code: `inline code`, ```block```\n\n"
             "Include business context, professional language, and actionable insights.\n"
-            "Match the user's query language (Vietnamese → Vietnamese content, English → English content)."
+            "Match the user's query language (Vietnamese → Vietnamese content, English → English content).\n\n"
+            "**TIP**: Use this to introduce charts - provide context before visualization."
         ),
     )
 
@@ -120,6 +126,8 @@ class LLMGraphField(LLMLayoutField):
     """
     Chart/graph visualization field with data source specification.
 
+    **PREFERRED FIELD TYPE**: Use this whenever you have numeric data! Charts are more engaging and easier to understand than tables.
+
     CRITICAL RULES:
     1. You MUST specify data_source with exact field names from the context
     2. Set data=null (backend auto-fills from data_source)
@@ -129,6 +137,12 @@ class LLMGraphField(LLMLayoutField):
     - piechart: Distribution/proportions (label=categories, value=numeric) - max 8 items
     - barchart: Comparison across categories (label=categories, value=numeric) - max 15 items
     - linechart: Trends/progression (label=sequential, value=numeric) - max 50 points
+
+    **USE CHARTS FOR:**
+    - Stock levels by product → barchart
+    - Movement over time → linechart
+    - Category distribution → piechart
+    - Any numeric comparison → barchart or linechart
 
     Example:
     {
@@ -211,10 +225,18 @@ class LLMTableField(LLMLayoutField):
     """
     Tabular data field for displaying structured records with multiple attributes.
 
-    Use tables when:
-    - Need to show multiple attributes per item (product details, transaction records)
-    - Stakeholders need specific detailed information
-    - Data doesn't fit visualization format well
+    **USE SPARINGLY**: Tables should be your LAST RESORT. Prefer charts/graphs for numeric data.
+
+    Use tables ONLY when:
+    - Data is primarily text-based (names, descriptions, IDs)
+    - Multiple diverse attributes per item that don't fit chart format
+    - Charts cannot effectively convey the information
+    - User explicitly asks for detailed tabular view
+
+    **AVOID tables for:**
+    - Numeric comparisons (use barchart instead)
+    - Time series data (use linechart instead)
+    - Distribution data (use piechart instead)
 
     Format:
     {
