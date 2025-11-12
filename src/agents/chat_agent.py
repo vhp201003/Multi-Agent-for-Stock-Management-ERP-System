@@ -5,11 +5,11 @@ from typing import Any, Dict, List, Optional
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 
 from src.agents.base_agent import BaseAgent
+from src.services.chart_data_mapper import ChartDataMapper
 from src.typing.llm_response import ChatResponse
 from src.typing.redis import RedisChannels, SharedData, TaskStatus, TaskUpdate
 from src.typing.request import ChatRequest
 from src.typing.schema import (
-    ChartDataSource,
     ChatAgentSchema,
     LLMGraphField,
     LLMMarkdownField,
@@ -101,13 +101,32 @@ class ChatAgent(BaseAgent):
 
             await self.publish_completion(response, chat_request.query)
 
-            # Store chat history
-            await save_conversation_message(
-                self.redis,
-                chat_request.conversation_id,
-                "assistant",
-                response.result.model_dump_json() if response.result else "No response",
-            )
+            if response.result:
+                result_dict = response.result.model_dump()
+
+                metadata = {
+                    "layout": result_dict.get("layout"),
+                    "full_data": result_dict.get("full_data"),
+                }
+
+                await save_conversation_message(
+                    self.redis,
+                    chat_request.conversation_id,
+                    "assistant",
+                    response.result.model_dump_json(),
+                    metadata=metadata,
+                )
+
+                logger.debug(
+                    f"Saved conversation message for {chat_request.conversation_id}"
+                )
+            else:
+                await save_conversation_message(
+                    self.redis,
+                    chat_request.conversation_id,
+                    "assistant",
+                    "No response",
+                )
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in command message: {e}")
@@ -182,149 +201,34 @@ class ChatAgent(BaseAgent):
     def _fill_data_from_full_data(
         self, schema: ChatAgentSchema, full_data: Optional[Dict[str, Any]]
     ):
-        """
-        Fill chart/table data from full_data using data_source specification.
-
-        For GraphField: Use data_source to locate and extract data
-        For TableField: Use generic extraction
-        """
         if not full_data or not schema.layout:
             return
 
         for field in schema.layout:
-            if isinstance(field, LLMGraphField):
-                # Extract chart data using data_source spec
-                chart_data = self._extract_chart_data_from_source(
-                    full_data, field.data_source, field.graph_type
+            if isinstance(field, LLMGraphField) and field.data_source:
+                chart_data = ChartDataMapper.extract_chart_data(
+                    full_data=full_data,
+                    data_source=field.data_source,
+                    graph_type=field.graph_type,
                 )
+
                 if chart_data:
                     field.data = chart_data
+                    logger.info(
+                        f"Populated chart '{field.title}': "
+                        f"{len(chart_data['labels'])} points from "
+                        f"{field.data_source.agent_type}.{field.data_source.tool_name}"
+                    )
                 else:
                     logger.warning(
-                        f"Failed to extract chart data for {field.title}. "
-                        f"data_source: {field.data_source}"
+                        f"Failed to populate chart '{field.title}'. "
+                        f"Source: {field.data_source.agent_type}.{field.data_source.tool_name}"
                     )
+
             elif isinstance(field, LLMTableField):
                 table_data = self._extract_table_data(full_data, field.title)
                 if table_data:
                     field.data = table_data
-
-    def _extract_chart_data_from_source(
-        self,
-        full_data: Dict[str, Any],
-        data_source: ChartDataSource,
-        graph_type: str,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Extract and transform chart data based on data_source specification.
-
-        Generic approach:
-        1. Locate data using agent_type + tool_name + data_path
-        2. Extract label_field (X-axis) and value_field (Y-axis)
-        3. Transform to chart format: {labels: [...], datasets: [{label, data}]}
-        """
-        try:
-            # Step 1: Locate raw data
-            if data_source.agent_type not in full_data:
-                logger.warning(f"Agent {data_source.agent_type} not in full_data")
-                return None
-
-            agent_tools = full_data[data_source.agent_type]
-            if data_source.tool_name not in agent_tools:
-                logger.warning(
-                    f"Tool {data_source.tool_name} not in {data_source.agent_type}"
-                )
-                return None
-
-            tool_result = agent_tools[data_source.tool_name]
-
-            # Navigate to data using data_path
-            raw_data = self._navigate_data_path(tool_result, data_source.data_path)
-
-            if not isinstance(raw_data, list) or len(raw_data) == 0:
-                logger.warning(f"Invalid data structure at {data_source.data_path}")
-                return None
-
-            # Step 2: Extract label and value fields
-            labels = []
-            values = []
-
-            for item in raw_data:
-                if not isinstance(item, dict):
-                    continue
-
-                label_val = item.get(data_source.label_field)
-                value_val = item.get(data_source.value_field)
-
-                if label_val is None or value_val is None:
-                    continue
-
-                # Convert to appropriate types
-                label_str = str(label_val)
-                try:
-                    value_num = (
-                        float(value_val)
-                        if isinstance(value_val, (int, float, str))
-                        else 0
-                    )
-                except (ValueError, TypeError):
-                    value_num = 0
-
-                labels.append(label_str)
-                values.append(value_num)
-
-            if not labels or not values:
-                logger.warning("No valid label/value pairs extracted")
-                return None
-
-            # Step 3: Apply limits based on chart type
-            max_points = self._get_max_points_for_chart_type(graph_type)
-            if len(labels) > max_points:
-                labels = labels[:max_points]
-                values = values[:max_points]
-
-            # Step 4: Return standardized format
-            return {
-                "labels": labels,
-                "datasets": [
-                    {
-                        "label": data_source.value_field.replace("_", " ").title(),
-                        "data": values,
-                        "fill": graph_type == "linechart",
-                    }
-                ],
-            }
-
-        except Exception as e:
-            logger.error(f"Chart data extraction failed: {e}")
-            return None
-
-    def _navigate_data_path(self, obj: Any, path: str) -> Any:
-        """Navigate nested object using dot notation (e.g., 'data.results')"""
-        if not path:
-            return obj
-
-        parts = path.split(".")
-        current = obj
-
-        for part in parts:
-            if isinstance(current, dict):
-                current = current.get(part)
-                if current is None:
-                    return None
-            else:
-                return None
-
-        return current
-
-    def _get_max_points_for_chart_type(self, graph_type: str) -> int:
-        """Get recommended max data points for each chart type"""
-        limits = {
-            "piechart": 8,  # Too many slices are hard to read
-            "barchart": 15,  # Balance visibility and detail
-            "linechart": 50,  # Can handle more points for trends
-        }
-        return limits.get(graph_type, 20)
 
     def _extract_table_data(
         self, full_data: Dict[str, Any], title: Optional[str]
@@ -353,14 +257,25 @@ class ChatAgent(BaseAgent):
 
                 agent_full_data = {}
 
-                for tool_name, tool_info in agent_results.items():
-                    if isinstance(tool_info, dict) and "result_id" in tool_info:
-                        result_id = tool_info["result_id"]
-                        full_result = shared_data.get_result_by_id(result_id)
-                        if full_result:
-                            agent_full_data[tool_name] = full_result
-                    else:
-                        agent_full_data[tool_name] = tool_info
+                for task_id, task_result in agent_results.items():
+                    if isinstance(task_result, dict):
+                        if "result_id" in task_result:
+                            result_id = task_result["result_id"]
+                            full_result = shared_data.get_result_by_id(result_id)
+                            if full_result:
+                                task_result = full_result
+
+                        if "tool_results" in task_result:
+                            for tool_item in task_result["tool_results"]:
+                                if (
+                                    isinstance(tool_item, dict)
+                                    and "tool_name" in tool_item
+                                ):
+                                    tool_name = tool_item["tool_name"]
+                                    tool_result = tool_item.get("tool_result", {})
+                                    agent_full_data[tool_name] = tool_result
+
+                        agent_full_data[task_id] = task_result
 
                 if agent_full_data:
                     full_data[agent_type] = agent_full_data

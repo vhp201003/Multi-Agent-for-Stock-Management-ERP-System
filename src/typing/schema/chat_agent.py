@@ -65,59 +65,51 @@ class LLMMarkdownField(LLMLayoutField):
 
 class ChartDataSource(BaseModel):
     """
-    Specification for extracting chart data from context. This tells the system WHERE to find data
-    and HOW to map it to chart axes.
+    Simplified specification for chart data extraction.
 
-    CRITICAL: You MUST identify exact field names from the available data context.
+    LLM only needs to specify:
+    - Which agent and tool has the data
+    - Which fields to use for X and Y axis
 
-    Example for product inventory:
+    Backend handles all the navigation and data extraction automatically.
+
+    Example:
     {
-        "agent_type": "inventory_agent",
-        "tool_name": "check_stock",
-        "label_field": "product_name",    # X-axis/categories
-        "value_field": "quantity",         # Y-axis/values
-        "data_path": "data"                # Path to array
+        "agent_type": "inventory",
+        "tool_name": "retrieve_stock_history",
+        "label_field": "posting_date",
+        "value_field": "quantity"
     }
     """
 
     agent_type: str = Field(
         ...,
         description=(
-            "REQUIRED: Which agent provides the data. Must match exact agent name from context.\n"
-            "Examples: 'inventory_agent', 'sales_agent', 'finance_agent'\n"
-            "Look at the AVAILABLE DATA section to find the correct agent_type."
+            "REQUIRED: Agent that provides the data. Look at results to find agent name.\n"
+            "Examples: 'inventory', 'sales', 'finance'"
         ),
     )
     tool_name: str = Field(
         ...,
         description=(
-            "REQUIRED: Which tool result to use from the agent. Must match exact tool name from context.\n"
-            "Examples: 'check_stock', 'get_history', 'search_products'\n"
-            "Look at the agent's tools in AVAILABLE DATA to find the correct tool_name."
+            "REQUIRED: Tool that generated the data. Must match tool name in results.\n"
+            "Examples: 'retrieve_stock_history', 'check_stock', 'get_products'"
         ),
     )
     label_field: str = Field(
         ...,
         description=(
-            "REQUIRED: Field name for chart labels/X-axis/categories. Must be exact field name from data.\n"
-            "Examples: 'product_name', 'date', 'category', 'region', 'month'\n"
-            "This field should contain categorical or sequential values that will appear on the X-axis."
+            "REQUIRED: Field name for X-axis (labels/categories).\n"
+            "Look at the data items to find the correct field name.\n"
+            "Examples: 'posting_date', 'product_name', 'category', 'warehouse'"
         ),
     )
     value_field: str = Field(
         ...,
         description=(
-            "REQUIRED: Field name for chart values/Y-axis/metrics. Must be exact field name from data.\n"
-            "Examples: 'quantity', 'amount', 'revenue', 'count', 'percentage'\n"
-            "This field should contain numeric values that will be visualized."
-        ),
-    )
-    data_path: Optional[str] = Field(
-        default="data",
-        description=(
-            "Optional: Path to the array in tool result. Default is 'data'.\n"
-            "Use dot notation for nested paths: 'results.items', 'summary.records'\n"
-            "If the array is at the top level of tool result, use 'data'."
+            "REQUIRED: Field name for Y-axis (numeric values).\n"
+            "Look at the data items to find the correct field name.\n"
+            "Examples: 'quantity', 'amount', 'stock_level', 'total'"
         ),
     )
 

@@ -1,53 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { apiService, generateId, type TaskUpdate } from '../services/api';
+import { apiService, generateId } from '../services/api';
 import { wsService } from '../services/websocket';
 import Toast, { type ToastMessage } from './Toast';
 import { processLayoutWithData } from '../utils/chartDataExtractor';
+import { normalizeConversationMessages, normalizeLocalStorageMessages } from '../utils/messageNormalizer';
+import { getConversation } from '../services/conversation';
+import type { Message, LayoutField, TaskUpdate } from '../types/message';
 import './ChatInterface.css';
 
 // Extend Window interface for saveConversation
 declare global {
   interface Window {
-    saveConversation?: (id: string, title: string, lastMessage: string, messages: any[]) => void;
+    saveConversation?: (id: string, title: string, lastMessage: string, messages: Message[]) => void;
   }
-}
-
-interface ChartDataSource {
-  agent_type: string;
-  tool_name: string;
-  label_field: string;
-  value_field: string;
-  data_path?: string;
-}
-
-interface LayoutField {
-  field_type: string;
-  title?: string;
-  description?: string;
-  content?: string;
-  graph_type?: string;
-  data_source?: ChartDataSource;
-  data?: {
-    headers?: string[];
-    rows?: any[][];
-    labels?: string[];
-    datasets?: Array<{
-      label: string;
-      data: any[];
-    }>;
-  };
-}
-
-interface Message {
-  id: string;
-  type: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: Date;
-  updates?: TaskUpdate[];
-  layout?: LayoutField[]; // Thêm layout cho structured response
-  isThinkingExpanded?: boolean; // Track thinking process expanded state
 }
 
 interface ChatInterfaceProps {
@@ -89,32 +56,44 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
 
   // Load messages from localStorage when conversation changes
   useEffect(() => {
-    if (propConversationId) {
-      setConversationId(propConversationId);
-      const savedConversations = localStorage.getItem('conversations');
-      if (savedConversations) {
+    const loadConversation = async () => {
+      if (propConversationId) {
+        setConversationId(propConversationId);
+        
         try {
-          const conversations = JSON.parse(savedConversations);
-          const conversation = conversations.find((c: any) => c.id === propConversationId);
-          if (conversation && conversation.messages) {
-            // Convert timestamp strings back to Date objects
-            const messages = conversation.messages.map((msg: any) => ({
-              ...msg,
-              timestamp: new Date(msg.timestamp)
-            }));
-            setMessages(messages);
+          const backendConversation = await getConversation(propConversationId, true);
+          
+          if (backendConversation && backendConversation.messages) {
+            const normalizedMessages = normalizeConversationMessages(backendConversation.messages);
+            setMessages(normalizedMessages);
+            return;
           }
         } catch (error) {
-          console.error('Failed to load conversation:', error);
-          setMessages([]);
+          console.warn('[ChatInterface] Backend conversation not found, trying localStorage:', error);
         }
+        
+        const savedConversations = localStorage.getItem('conversations');
+        if (savedConversations) {
+          try {
+            const conversations = JSON.parse(savedConversations);
+            const conversation = conversations.find((c: { id: string }) => c.id === propConversationId);
+            if (conversation && conversation.messages) {
+              const normalizedMessages = normalizeLocalStorageMessages(conversation.messages);
+              setMessages(normalizedMessages);
+            }
+          } catch (error) {
+            console.error('[ChatInterface] Failed to load conversation from localStorage:', error);
+            setMessages([]);
+          }
+        }
+      } else {
+        setConversationId(undefined);
+        setMessages([]);
+        answeredQueriesRef.current.clear();
       }
-    } else {
-      // New conversation
-      setConversationId(undefined);
-      setMessages([]);
-      answeredQueriesRef.current.clear();
-    }
+    };
+    
+    loadConversation();
   }, [propConversationId]);
 
   useEffect(() => {
@@ -124,6 +103,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       wsService.clearHandlers();
     };
   }, []);
+
+  useEffect(() => {
+    if (conversationId && messages.length > 0 && window.saveConversation) {
+      const userMsg = messages.filter(m => m.type === 'user').pop();
+      const assistantMsg = messages.filter(m => m.type === 'assistant').pop();
+      
+      window.saveConversation(
+        conversationId,
+        userMsg?.content || 'New conversation',
+        assistantMsg?.content || 'Response received',
+        messages
+      );
+    }
+  }, [messages, conversationId]);
 
   const handleSendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -298,23 +291,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       
       // IMPORTANT: Set loading to false after processing response
       setLoading(false);
-      
-      // Save conversation to localStorage
-      setTimeout(() => {
-        if (window.saveConversation && currentConversationId) {
-          setMessages((currentMessages) => {
-            const userMsg = currentMessages.find(m => m.id === queryId);
-            const assistantMsg = currentMessages.find(m => m.id === `${queryId}-answer`);
-            window.saveConversation!(
-              currentConversationId,
-              userMsg?.content || queryText,
-              assistantMsg?.content || 'Response received',
-              currentMessages
-            );
-            return currentMessages;
-          });
-        }
-      }, 0);
 
     } catch (error) {
       console.error('Failed to send message:', error);

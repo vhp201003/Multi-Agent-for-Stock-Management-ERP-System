@@ -16,7 +16,7 @@ You MUST return a valid JSON OBJECT (not array) with this EXACT structure:
 {
   "layout": [
     {"field_type": "markdown", "content": "## Heading\\n\\n**Metric**: value"},
-    {"field_type": "graph", "graph_type": "linechart", "title": "Chart Title", "data_source": {"agent_type": "inventory", "tool_name": "retrieve_stock_history", "label_field": "posting_date", "value_field": "quantity", "data_path": "tool_result.movements"}, "data": null}
+    {"field_type": "graph", "graph_type": "barchart", "title": "Chart Title", "data_source": {"agent_type": "inventory", "tool_name": "query_inventory_data", "label_field": "name", "value_field": "current_stock"}, "data": null}
   ]
 }
 
@@ -47,6 +47,41 @@ LANGUAGE MATCHING:
 - English query → English response
 - Match professional terminology and number formatting to the language
 
+HOW TO CREATE CHARTS:
+=====================
+When you see numeric data in the AVAILABLE DATA section:
+
+1. **Identify the data source:**
+   - Find which agent has the data (e.g., "inventory", "sales")
+   - Find which tool generated it (e.g., "query_inventory_data", "retrieve_stock_history")
+
+2. **Analyze the data structure:**
+   - Look at the tool result to find the array of items
+   - Examine ONE item to see available field names
+   - Identify a label field (text/dates for X-axis)
+   - Identify a value field (numbers for Y-axis)
+
+3. **Specify data_source with ONLY field names:**
+   ```json
+   "data_source": {
+       "agent_type": "inventory",
+       "tool_name": "query_inventory_data",
+       "label_field": "name",
+       "value_field": "current_stock"
+   }
+   ```
+
+4. **Critical rules for field names:**
+   - Use EXACT field names from the data items
+   - Use ONLY the field name (e.g., "name", "posting_date", "quantity")
+   - DO NOT include paths like "tool_result.items" or "data[0].name"
+   - Backend auto-discovers and extracts data - you just specify WHICH fields
+
+5. **Chart type selection:**
+   - **linechart**: Time series, trends (date/time on X-axis)
+   - **barchart**: Compare categories (product names, categories on X-axis)
+   - **piechart**: Distribution, proportions (max 8 categories)
+
 SCHEMA:
 $schema_json
 
@@ -59,21 +94,11 @@ USER QUERY: $query
 AVAILABLE DATA:
 $context
 
-INSTRUCTIONS:
-1. Detect the language of USER QUERY and respond in that same language
-2. **PRIORITIZE VISUALIZATIONS**: When data contains numeric values, ALWAYS use charts/graphs for better user experience
-3. Analyze the data structure to select the best chart type:
-   - Time-series or sequential data → linechart
-   - Comparing categories → barchart
-   - Distribution or proportions → piechart
-4. For graphs: specify exact field names from AVAILABLE DATA in data_source
-5. Use markdown for context, insights, and executive summary (BEFORE charts)
-6. Use tables ONLY when charts cannot effectively display the data (e.g., text-heavy data, multiple diverse attributes)
-
-**VISUALIZATION PRIORITY ORDER:**
-1st: Charts/Graphs (preferred for numeric data)
-2nd: Markdown summaries (for context and insights)
-3rd: Tables (only when charts are not suitable)
+Instructions:
+- Analyze the data above and respond to the user's query
+- Create visualizations (charts) for numeric data when appropriate
+- Use markdown for summaries and context
+- Follow the chart creation guidelines from the system prompt
 
 Return valid JSON: {"layout": [...]}
 Do NOT include "full_data" field.

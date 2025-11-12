@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { listConversations, deleteConversation as deleteConversationAPI } from '../services/conversation';
 import './Sidebar.css';
 
 interface Conversation {
@@ -6,7 +7,7 @@ interface Conversation {
   title: string;
   lastMessage: string;
   timestamp: Date;
-  messages?: any[]; // Store full conversation history
+  messages?: unknown[]; // Store full conversation history
 }
 
 interface SidebarProps {
@@ -22,30 +23,55 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [useBackend] = useState(true); // Toggle backend vs localStorage
 
-  useEffect(() => {
-    // Load conversations from localStorage
-    loadConversations();
-  }, []);
-
-  const loadConversations = () => {
+  const loadFromLocalStorage = () => {
     try {
       const stored = localStorage.getItem('conversations');
       if (stored) {
         const parsed = JSON.parse(stored);
         // Convert timestamp strings back to Date objects
-        const conversations = parsed.map((conv: any) => ({
+        const conversations = parsed.map((conv: Conversation) => ({
           ...conv,
           timestamp: new Date(conv.timestamp),
         }));
         setConversations(conversations);
       }
     } catch (error) {
-      console.error('Failed to load conversations:', error);
+      console.error('Failed to load conversations from localStorage:', error);
     }
   };
 
-  const saveConversation = (id: string, title: string, lastMessage: string, messages: any[]) => {
+  const loadConversations = React.useCallback(async () => {
+    console.log('[Sidebar] Loading conversations, useBackend:', useBackend);
+    if (useBackend) {
+      try {
+        console.log('[Sidebar] Fetching from backend...');
+        const response = await listConversations(100, 0);
+        console.log('[Sidebar] Backend response:', response);
+        const backendConversations = response.conversations.map(conv => ({
+          id: conv.id,
+          title: conv.title,
+          lastMessage: `${conv.message_count} messages`,
+          timestamp: new Date(conv.updated_at),
+          messages: conv.messages,
+        }));
+        console.log('[Sidebar] Loaded', backendConversations.length, 'conversations from backend');
+        setConversations(backendConversations);
+      } catch (error) {
+        console.warn('[Sidebar] Failed to load from backend, falling back to localStorage:', error);
+        loadFromLocalStorage();
+      }
+    } else {
+      loadFromLocalStorage();
+    }
+  }, [useBackend]);
+
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  const saveConversation = React.useCallback((id: string, title: string, lastMessage: string, messages: unknown[]) => {
     const conversation: Conversation = {
       id,
       title,
@@ -55,11 +81,21 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
     const updated = [conversation, ...conversations.filter(c => c.id !== id)];
     setConversations(updated);
+    
     localStorage.setItem('conversations', JSON.stringify(updated));
-  };
+  }, [conversations]);
 
-  const deleteConversation = (id: string, e: React.MouseEvent) => {
+  const deleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    
+    if (useBackend) {
+      try {
+        await deleteConversationAPI(id);
+      } catch (error) {
+        console.error('Failed to delete from backend:', error);
+      }
+    }
+    
     const updated = conversations.filter(c => c.id !== id);
     setConversations(updated);
     localStorage.setItem('conversations', JSON.stringify(updated));
@@ -94,15 +130,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     return { today, yesterday, last7Days, older };
   };
 
-
-
   // Expose saveConversation to parent via window
   useEffect(() => {
     window.saveConversation = saveConversation;
     return () => {
       delete window.saveConversation;
     };
-  }, [conversations]);
+  }, [saveConversation]);
 
   const { today, yesterday, last7Days, older } = groupConversationsByDate(filteredConversations);
 
