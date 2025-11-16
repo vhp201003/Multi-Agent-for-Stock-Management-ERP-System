@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { apiService, generateId } from '../services/api';
 import { wsService } from '../services/websocket';
 import Toast, { type ToastMessage } from './Toast';
+import ChatInput from './ChatInput';
 import { processLayoutWithData } from '../utils/chartDataExtractor';
 import { normalizeConversationMessages, normalizeLocalStorageMessages } from '../utils/messageNormalizer';
 import { getConversation } from '../services/conversation';
-import type { Message, LayoutField, TaskUpdate } from '../types/message';
+import type { Message, LayoutField } from '../types/message';
 import './ChatInterface.css';
 
 // Extend Window interface for saveConversation
@@ -23,12 +24,12 @@ interface ChatInterfaceProps {
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConversationId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Toast notification helper
   const addToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', duration = 4000) => {
@@ -106,20 +107,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
 
   useEffect(() => {
     if (conversationId && messages.length > 0 && window.saveConversation) {
-      const userMsg = messages.filter(m => m.type === 'user').pop();
-      const assistantMsg = messages.filter(m => m.type === 'assistant').pop();
+      // Debounce save to avoid excessive re-renders
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
       
-      window.saveConversation(
-        conversationId,
-        userMsg?.content || 'New conversation',
-        assistantMsg?.content || 'Response received',
-        messages
-      );
+      saveTimeoutRef.current = setTimeout(() => {
+        const userMsg = messages.filter(m => m.type === 'user').pop();
+        const assistantMsg = messages.filter(m => m.type === 'assistant').pop();
+        
+        window.saveConversation!(
+          conversationId,
+          userMsg?.content || 'New conversation',
+          assistantMsg?.content || 'Response received',
+          messages
+        );
+      }, 500); // Save after 500ms of inactivity
     }
   }, [messages, conversationId]);
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || loading) return;
+  const handleSendMessage = useCallback(async (inputText: string) => {
+    if (!inputText.trim() || loading) return;
 
     // Frontend tạo query_id
     const queryId = generateId();
@@ -137,13 +145,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     const userMessage: Message = {
       id: queryId,
       type: 'user',
-      content: input,
+      content: inputText,
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    const queryText = input;
-    setInput('');
+    const queryText = inputText;
     setLoading(true);
 
     try {
@@ -311,7 +318,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       setMessages((prev) => [...prev, errorMessage]);
       addToast('Failed to send message. Please try again.', 'error');
     }
-  };
+  }, [loading, conversationId]);
 
   // Render graph/chart
   const renderGraph = (field: LayoutField, index: number) => {
@@ -727,24 +734,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       </div>
 
       <div className="chat-input-container">
-        <div className="input-wrapper">
-          <input
-            type="text"
-            className="chat-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-            placeholder="What's in your mind?..."
-            disabled={loading}
-          />
-          <button
-            className="chat-send-button"
-            onClick={handleSendMessage}
-            disabled={loading || !input.trim()}
-          >
-            {loading ? <span className="button-spinner">⟳</span> : <span>➤</span>}
-          </button>
-        </div>
+        <ChatInput onSendMessage={handleSendMessage} loading={loading} />
       </div>
 
       <Toast toasts={toasts} onRemove={removeToast} />
