@@ -131,7 +131,11 @@ class BaseMCPServer(ABC):
     # ============= Public API for Subclasses =============
 
     def add_tool(
-        self, fn, name: str | None = None, description: str | None = None
+        self,
+        fn,
+        name: str | None = None,
+        description: str | None = None,
+        structured_output: bool | None = None,
     ) -> None:
         """
         Register a tool function with FastMCP.
@@ -143,8 +147,12 @@ class BaseMCPServer(ABC):
             fn: Function to register as a tool
             name: Optional tool name (defaults to function name)
             description: Optional tool description
+            structured_output: Controls output schema generation
+                - None: Auto-detect from return type annotation (default)
+                - True: Force structured output (requires Pydantic return type)
+                - False: Force unstructured output (dict/str)
 
-        Example:
+        Example - Pydantic parameters (auto-validated):
             async def check_stock(
                 product_id: str = Field(..., description="Product identifier"),
                 warehouse: str = Field(default="MAIN", description="Warehouse code")
@@ -152,8 +160,20 @@ class BaseMCPServer(ABC):
                 return {"stock": 100}
 
             self.add_tool(check_stock, description="Check product stock levels")
+
+        Example - Pydantic output schema:
+            class StockResponse(BaseModel):
+                stock: int = Field(..., description="Available stock")
+                warehouse: str
+
+            async def check_stock(product_id: str) -> StockResponse:
+                return StockResponse(stock=100, warehouse="MAIN")
+
+            self.add_tool(check_stock, structured_output=True)
         """
-        self.mcp.add_tool(fn, name=name, description=description)
+        self.mcp.add_tool(
+            fn, name=name, description=description, structured_output=structured_output
+        )
 
     def add_resource(self, uri_template: str, fn) -> None:
         """
