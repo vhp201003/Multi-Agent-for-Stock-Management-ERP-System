@@ -52,13 +52,32 @@ class MCPServerManager:
 
 
 def create_inventory_server(
-    port: int = 8001, warehouse: str = "MAIN-WH"
+    port: int = 8011,
+    erpnext_url: str = "http://erp.localhost:8000",
+    warehouse: str = "Stores - HP",
 ) -> InventoryMCPServer:
+    """
+    Create Inventory MCP Server with ERPNext integration.
+
+    Args:
+        port: Server port (default: 8001)
+        erpnext_url: ERPNext instance URL
+        warehouse: Default warehouse name
+
+    Returns:
+        Configured InventoryMCPServer instance
+    """
     config = InventoryServerConfig(
-        name="InventoryMCP",
+        name="InventoryMCPServer",
+        host="0.0.0.0",
         port=port,
         debug=True,
+        erpnext_url=erpnext_url,
+        erpnext_api_key="ba1a625e37f5548",  # TODO: Load from environment or config
+        erpnext_api_secret="6f53482b297cc44",  # TODO: Load from environment or config
         default_warehouse=warehouse,
+        low_stock_threshold=10,
+        critical_stock_threshold=5,
     )
     return InventoryMCPServer(config)
 
@@ -66,19 +85,25 @@ def create_inventory_server(
 async def run_default_setup():
     manager = MCPServerManager()
 
-    inventory_server = create_inventory_server()
+    logger.info("🔧 Configuring Inventory MCP Server...")
+    inventory_server = create_inventory_server(
+        port=8011,
+        erpnext_url="http://erp.localhost:8000",
+        warehouse="Main Warehouse",
+    )
     manager.add_server("inventory", inventory_server)
 
     try:
         await manager.start_all()
-
-        print("\n🚀 Servers are running. Press Ctrl+C to stop.\n")
         await manager.wait_until_stopped()
 
     except KeyboardInterrupt:
-        logger.info("Received shutdown signal")
+        logger.info("\n\n👋 Received shutdown signal")
+    except Exception as e:
+        logger.error(f"\n\n❌ Server error: {e}", exc_info=True)
     finally:
         await manager.stop_all()
+        logger.info("✅ All servers shut down gracefully")
 
 
 if __name__ == "__main__":
