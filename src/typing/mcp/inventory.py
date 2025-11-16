@@ -51,7 +51,6 @@ class StockHistoryItem(BaseModel):
     quantity: float = Field(
         ..., description="Quantity change (positive for IN, negative for OUT)"
     )
-    movement_type: str = Field(..., description="Movement type: IN, OUT")
     warehouse: str = Field(..., description="Warehouse name")
 
 
