@@ -10,7 +10,7 @@ from src.typing.mcp.base import MCPToolOutputSchema
 class CheckStockItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     warehouse: str = Field(..., description="Warehouse name")
-    quantity: float = Field(..., ge=0, description="Current stock quantity")
+    quantity: float = Field(..., description="Current stock quantity")
 
 
 class CheckStockFilters(BaseModel):
@@ -62,8 +62,8 @@ class StockHistoryFilters(BaseModel):
 
 
 class StockHistorySummary(BaseModel):
-    inbound_quantity: float = Field(..., ge=0, description="Total inbound quantity")
-    outbound_quantity: float = Field(..., ge=0, description="Total outbound quantity")
+    inbound_quantity: float = Field(..., description="Total inbound quantity")
+    outbound_quantity: float = Field(..., description="Total outbound quantity")
 
 
 class StockHistoryOutput(MCPToolOutputSchema):
@@ -78,10 +78,10 @@ class ProposeTransferItem(BaseModel):
     from_warehouse: str = Field(..., description="Source warehouse")
     to_warehouse: str = Field(..., description="Target warehouse")
     transfer_quantity: float = Field(
-        ..., ge=0, description="Proposed transfer quantity"
+        ..., description="Proposed transfer quantity"
     )
     available_quantity: float = Field(
-        ..., ge=0, description="Available quantity in source warehouse"
+        ..., description="Available quantity in source warehouse"
     )
 
 
@@ -94,16 +94,16 @@ class ProposeTransferFilters(BaseModel):
 
 class ProposeTransferSummary(BaseModel):
     total_quantity: float = Field(
-        ..., ge=0, description="Total proposed transfer quantity"
+        ..., description="Total proposed transfer quantity"
     )
     median_quantity: float = Field(
-        ..., ge=0, description="Median proposed transfer quantity"
+        ..., description="Median proposed transfer quantity"
     )
     max_quantity: float = Field(
-        ..., ge=0, description="Maximum proposed transfer quantity"
+        ..., description="Maximum proposed transfer quantity"
     )
     min_quantity: float = Field(
-        ..., ge=0, description="Minimum proposed transfer quantity"
+        ..., description="Minimum proposed transfer quantity"
     )
 
 
@@ -116,9 +116,9 @@ class ProposeTransferOutput(MCPToolOutputSchema):
 # ------------------------------- Inventory Health ------------------------------- #
 class InventoryHealthItem(BaseModel):
     item_group: str = Field(..., description="Item group name")
-    stock_quantity: float = Field(..., ge=0, description="Total stock quantity")
-    stock_value: float = Field(..., ge=0, description="Total stock value")
-    avg_doc_days: float = Field(..., ge=0, description="Average Days of Cover")
+    stock_quantity: float = Field(..., description="Total stock quantity")
+    stock_value: float = Field(..., description="Total stock value")
+    avg_doc_days: float = Field(..., description="Average Days of Cover")
 
 
 class InventoryHealthFilters(BaseModel):
@@ -129,13 +129,13 @@ class InventoryHealthFilters(BaseModel):
 
 class InventoryHealthSummary(BaseModel):
     total_stock_value: float = Field(
-        ..., ge=0, description="Total stock value across all groups"
+        ..., description="Total stock value across all groups"
     )
     items_under_min: int = Field(
-        ..., ge=0, description="Number of items below min_quantity"
+        ..., description="Number of items below min_quantity"
     )
     avg_doc_days: float = Field(
-        ..., ge=0, description="Average Days of Cover across all groups"
+        ..., description="Average Days of Cover across all groups"
     )
 
 

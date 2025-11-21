@@ -1,8 +1,51 @@
 {
   "inventory": {
-    "description": "Queries stock levels and retrieves inventory history in ERP System.",
-    "capabilities": ["check stock levels", "retrieve stock history", "query inventory data", "monitor stock availability"],
-    "dependencies": [],
-    "erpnext_module": "Inventory"
+    "description": "Manages stock levels, inter-warehouse transfers, inventory health, and valuation reconciliation in ERPNext.",
+    "capabilities": [
+      "check stock levels",
+      "retrieve stock history",
+      "propose transfers",
+      "monitor inventory health",
+      "reconcile valuation"
+    ],
+    "tools": [
+      "check_stock",
+      "retrieve_stock_history",
+      "propose_transfer",
+      "inventory_health",
+      "reconcile_valuation"
+    ]
+  },
+  "forecasting": {
+    "description": "Forecasts stock levels and demand for 3-6 months based on sales and purchase data.",
+    "capabilities": ["stock forecasting", "demand prediction"],
+    "tools": ["forecast_stock"]
+  },
+  "ordering": {
+    "description": "Automates material requests and purchase orders, and monitors purchase prices.",
+    "capabilities": ["create replenishment orders", "monitor purchase prices"],
+    "tools": ["create_replenishment", "monitor_purchase_price"]
+  },
+  "pricing": {
+    "description": "Proposes pricing rules and promotions based on stock levels and demand elasticity.",
+    "capabilities": ["propose pricing rules", "optimize promotions"],
+    "tools": ["propose_pricing_rule"]
+  },
+  "analytics": {
+    "description": "Analyzes sales performance, stock coverage, and product trends to support decision-making.",
+    "capabilities": [
+      "analyze top performers",
+      "analyze slow movers",
+      "track movers and shakers",
+      "perform Pareto analysis",
+      "analyze stock coverage"
+    ],
+    "tools": [
+      "analyze_top_performers",
+      "analyze_slow_movers",
+      "track_movers_shakers",
+      "perform_pareto_analysis",
+      "analyze_stock_coverage"
+    ]
   }
 }

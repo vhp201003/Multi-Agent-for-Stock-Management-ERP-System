@@ -35,7 +35,7 @@ def build_orchestrator_prompt(schema_model) -> str:
     for name, info in agents_info.items():
         if name != "orchestrator":  # Skip self-reference
             desc = info.get("description", "No description")
-            caps = info.get("capabilities", [])[:3]  # Max 3 capabilities
+            caps = info.get("capabilities", [])
             caps_str = ", ".join(caps) if caps else "general tasks"
             agents_desc.append(f"- **{name}**: {desc} ({caps_str})")
 

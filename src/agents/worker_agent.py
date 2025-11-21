@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 
 from config.prompts.worker import build_worker_agent_prompt
 from config.settings import get_agent_config
-
 from src.mcp.client import MCPClient
 from src.typing import (
     ResourceCallResponse,

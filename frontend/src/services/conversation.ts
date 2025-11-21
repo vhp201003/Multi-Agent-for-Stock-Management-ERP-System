@@ -3,12 +3,22 @@
  * Handles all conversation-related API calls for backend sync
  */
 
-const API_BASE = 'http://localhost:8010';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010';
+
+import type { LayoutField, TaskUpdate } from '../types/message';
+
+export interface ConversationMessageMetadata {
+  layout?: LayoutField[];
+  updates?: TaskUpdate[];
+  full_data?: Record<string, unknown>;
+  message_id?: string;
+  [key: string]: unknown;
+}
 
 export interface ConversationMessage {
   role: string;
   content: string;
-  metadata?: Record<string, any>;
+  metadata?: ConversationMessageMetadata;
   timestamp: string;
 }
 

@@ -1,9 +1,10 @@
 import logging
 
 import redis.asyncio as redis
-from config.settings import get_redis_host, get_redis_port
 from fastapi import FastAPI, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+
+from config.settings import get_cors_origins, get_redis_host, get_redis_port
 from src.api import conversation_endpoints, endpoints
 from src.api.lifespan import lifespan
 from src.typing import Request
@@ -21,10 +22,10 @@ app = FastAPI(title="Multi Agent Stock Management System", lifespan=lifespan)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],  # Vite dev server
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, OPTIONS, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

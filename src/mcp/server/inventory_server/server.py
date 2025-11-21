@@ -1,9 +1,9 @@
 import logging
-from typing import Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
-import httpx
 from pydantic import Field
 
+from src.communication import get_erpnext_connection
 from src.mcp.server.base_server import BaseMCPServer, ServerConfig
 from src.typing.mcp.inventory import (
     CheckStockOutput,
@@ -38,15 +38,10 @@ class InventoryMCPServer(BaseMCPServer):
     def __init__(self, config: InventoryServerConfig):
         super().__init__(config)
         self.inventory_config = config
-        self.http_client: Optional[httpx.AsyncClient] = None
-        self.logger.info(
-            f"Inventory server initialized with ERPNext URL: {config.erpnext_url}"
-        )
+        self.erpnext = get_erpnext_connection()
 
     def setup(self) -> None:
         self.logger.info("Setting up Inventory MCP Server tools...")
-
-        self.http_client = httpx.AsyncClient(timeout=30.0)
 
         self.add_tool(
             self.check_stock,
@@ -183,32 +178,6 @@ class InventoryMCPServer(BaseMCPServer):
             self.logger.error(f"Error in inventory_health: {e}", exc_info=True)
             raise
 
-    # ======================== HELPER METHODS ========================
-
-    def _get_auth_headers(self) -> Dict[str, str]:
-        if (
-            not self.inventory_config.erpnext_api_key
-            or not self.inventory_config.erpnext_api_secret
-        ):
-            raise ValueError("ERPNext API credentials not configured")
-
-        return {
-            "Authorization": f"token {self.inventory_config.erpnext_api_key}:{self.inventory_config.erpnext_api_secret}",
-            "Content-Type": "application/json",
-        }
-
-    def _convert_dates_to_strings(self, obj) -> any:
-        from datetime import date
-
-        if isinstance(obj, dict):
-            return {k: self._convert_dates_to_strings(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._convert_dates_to_strings(item) for item in obj]
-        elif isinstance(obj, date):
-            return obj.isoformat()
-        else:
-            return obj
-
     async def _fetch_stock_levels(
         self,
         item_code: Optional[str],
@@ -216,9 +185,6 @@ class InventoryMCPServer(BaseMCPServer):
         warehouses: Optional[str],
         quantity_type: str,
     ) -> dict:
-        if not self.http_client:
-            raise RuntimeError("HTTP client not initialized")
-
         params = {
             "item_code": item_code,
             "item_name": item_name,
@@ -227,39 +193,24 @@ class InventoryMCPServer(BaseMCPServer):
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        url = f"{self.inventory_config.erpnext_url}/api/method/agent_stock_system.controller.inventory.retrieve_stock_levels"
         try:
-            response = await self.http_client.get(
-                url,
-                headers=self._get_auth_headers(),
+            result = await self.erpnext.call_method(
+                "agent_stock_system.controller.inventory.retrieve_stock_levels",
+                method="GET",
                 params=params,
             )
-            response.raise_for_status()
-            result = response.json()
 
-            data = result.get("message", result)
-
-            if isinstance(data, dict) and data.get("success") is False:
-                error_msg = data.get("error", "Unknown backend error")
-                self.logger.error(
-                    f"Backend returned error: {error_msg} | params: {params}"
-                )
-                raise ValueError(f"Backend error: {error_msg}")
+            if isinstance(result, dict) and result.get("success") is False:
+                raise ValueError(f"Backend error: {result.get('error')}")
 
             required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in data for key in required_keys):
-                missing = required_keys - set(data.keys())
-                self.logger.error(
-                    f"Backend response missing keys: {missing} | full_response: {data}"
-                )
-                raise ValueError(f"Backend response missing required keys: {missing}")
+            if not all(key in result for key in required_keys):
+                missing = required_keys - set(result.keys())
+                raise ValueError(f"Missing keys: {missing}")
 
-            return data
+            return result
         except Exception as e:
-            self.logger.error(
-                f"Error calling retrieve_stock_levels | url: {url} | params: {params} | error: {str(e)}",
-                exc_info=True,
-            )
+            self.logger.error(f"Error in retrieve_stock_levels: {e}")
             raise
 
     async def _fetch_stock_history(
@@ -269,10 +220,6 @@ class InventoryMCPServer(BaseMCPServer):
         warehouse: Optional[str],
         days_back: int,
     ) -> dict:
-        """Call backend retrieve_stock_history endpoint."""
-        if not self.http_client:
-            raise RuntimeError("HTTP client not initialized")
-
         params = {
             "item_code": item_code,
             "item_name": item_name,
@@ -281,41 +228,24 @@ class InventoryMCPServer(BaseMCPServer):
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        url = f"{self.inventory_config.erpnext_url}/api/method/agent_stock_system.controller.inventory.retrieve_stock_history"
         try:
-            response = await self.http_client.get(
-                url,
-                headers=self._get_auth_headers(),
+            result = await self.erpnext.call_method(
+                "agent_stock_system.controller.inventory.retrieve_stock_history",
+                method="GET",
                 params=params,
             )
-            response.raise_for_status()
-            result = response.json()
 
-            data = result.get("message", result)
-
-            if isinstance(data, dict) and data.get("success") is False:
-                error_msg = data.get("error", "Unknown backend error")
-                self.logger.error(
-                    f"Backend returned error: {error_msg} | params: {params}"
-                )
-                raise ValueError(f"Backend error: {error_msg}")
-
-            data = self._convert_dates_to_strings(data)
+            if isinstance(result, dict) and result.get("success") is False:
+                raise ValueError(f"Backend error: {result.get('error')}")
 
             required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in data for key in required_keys):
-                missing = required_keys - set(data.keys())
-                self.logger.error(
-                    f"Backend response missing keys: {missing} | full_response: {data}"
-                )
-                raise ValueError(f"Backend response missing required keys: {missing}")
+            if not all(key in result for key in required_keys):
+                missing = required_keys - set(result.keys())
+                raise ValueError(f"Missing keys: {missing}")
 
-            return data
+            return result
         except Exception as e:
-            self.logger.error(
-                f"Error calling retrieve_stock_history | url: {url} | params: {params} | error: {str(e)}",
-                exc_info=True,
-            )
+            self.logger.error(f"Error in retrieve_stock_history: {e}")
             raise
 
     async def _calculate_transfers(
@@ -325,9 +255,6 @@ class InventoryMCPServer(BaseMCPServer):
         to_warehouse: str,
         from_warehouses: Optional[str],
     ) -> dict:
-        if not self.http_client:
-            raise RuntimeError("HTTP client not initialized")
-
         params = {
             "item_code": item_code,
             "item_name": item_name,
@@ -336,39 +263,24 @@ class InventoryMCPServer(BaseMCPServer):
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        url = f"{self.inventory_config.erpnext_url}/api/method/agent_stock_system.controller.inventory.propose_stock_transfer"
         try:
-            response = await self.http_client.get(
-                url,
-                headers=self._get_auth_headers(),
+            result = await self.erpnext.call_method(
+                "agent_stock_system.controller.inventory.propose_stock_transfer",
+                method="GET",
                 params=params,
             )
-            response.raise_for_status()
-            result = response.json()
 
-            data = result.get("message", result)
-
-            if isinstance(data, dict) and data.get("success") is False:
-                error_msg = data.get("error", "Unknown backend error")
-                self.logger.error(
-                    f"Backend returned error: {error_msg} | params: {params}"
-                )
-                raise ValueError(f"Backend error: {error_msg}")
+            if isinstance(result, dict) and result.get("success") is False:
+                raise ValueError(f"Backend error: {result.get('error')}")
 
             required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in data for key in required_keys):
-                missing = required_keys - set(data.keys())
-                self.logger.error(
-                    f"Backend response missing keys: {missing} | full_response: {data}"
-                )
-                raise ValueError(f"Backend response missing required keys: {missing}")
+            if not all(key in result for key in required_keys):
+                missing = required_keys - set(result.keys())
+                raise ValueError(f"Missing keys: {missing}")
 
-            return data
+            return result
         except Exception as e:
-            self.logger.error(
-                f"Error calling propose_stock_transfer | url: {url} | params: {params} | error: {str(e)}",
-                exc_info=True,
-            )
+            self.logger.error(f"Error in propose_stock_transfer: {e}")
             raise
 
     async def _analyze_health(
@@ -377,9 +289,6 @@ class InventoryMCPServer(BaseMCPServer):
         item_groups: Optional[str],
         horizon_days: int,
     ) -> dict:
-        if not self.http_client:
-            raise RuntimeError("HTTP client not initialized")
-
         params = {
             "warehouses": warehouses,
             "item_groups": item_groups,
@@ -387,41 +296,25 @@ class InventoryMCPServer(BaseMCPServer):
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        url = f"{self.inventory_config.erpnext_url}/api/method/agent_stock_system.controller.inventory.analyze_inventory_health"
         try:
-            response = await self.http_client.get(
-                url,
-                headers=self._get_auth_headers(),
+            result = await self.erpnext.call_method(
+                "agent_stock_system.controller.inventory.analyze_inventory_health",
+                method="GET",
                 params=params,
             )
-            response.raise_for_status()
-            result = response.json()
 
-            data = result.get("message", result)
-
-            if isinstance(data, dict) and data.get("success") is False:
-                error_msg = data.get("error", "Unknown backend error")
-                self.logger.error(
-                    f"Backend returned error: {error_msg} | params: {params}"
-                )
-                raise ValueError(f"Backend error: {error_msg}")
+            if isinstance(result, dict) and result.get("success") is False:
+                raise ValueError(f"Backend error: {result.get('error')}")
 
             required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in data for key in required_keys):
-                missing = required_keys - set(data.keys())
-                self.logger.error(
-                    f"Backend response missing keys: {missing} | full_response: {data}"
-                )
-                raise ValueError(f"Backend response missing required keys: {missing}")
+            if not all(key in result for key in required_keys):
+                missing = required_keys - set(result.keys())
+                raise ValueError(f"Missing keys: {missing}")
 
-            return data
+            return result
         except Exception as e:
-            self.logger.error(
-                f"Error calling analyze_inventory_health | url: {url} | params: {params} | error: {str(e)}",
-                exc_info=True,
-            )
+            self.logger.error(f"Error in analyze_inventory_health: {e}")
             raise
 
     async def cleanup(self) -> None:
-        if self.http_client:
-            await self.http_client.aclose()
+        await self.erpnext.close()

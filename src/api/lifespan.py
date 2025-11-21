@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src.agents.analytics_agent import AnalyticsAgent
 from src.agents.chat_agent import ChatAgent
 from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.agents.summary_agent import SummaryAgent
+from src.managers.analytics_manager import AnalyticsManager
 from src.managers.inventory_manager import InventoryManager
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,8 @@ class AgentManager:
         self.chat_agent: ChatAgent = None
         self.summary_agent: SummaryAgent = None
         self.inventory_manager: InventoryManager = None
+        self.analytics_agent: AnalyticsAgent = None
+        self.analytics_manager: AnalyticsManager = None
         self.tasks: list[asyncio.Task] = []
         self.redis_client = None
 
@@ -36,6 +40,8 @@ class AgentManager:
             self.chat_agent = ChatAgent()
             self.summary_agent = SummaryAgent()
             self.inventory_manager = InventoryManager()
+            self.analytics_agent = AnalyticsAgent()
+            self.analytics_manager = AnalyticsManager()
             self.redis_client = self.orchestrator.redis
 
             # Create background tasks
@@ -44,11 +50,18 @@ class AgentManager:
                 asyncio.create_task(
                     self.inventory_agent.start(), name="inventory_agent"
                 ),
-                asyncio.create_task(self.chat_agent.start(), name="chat_agent"),
-                asyncio.create_task(self.summary_agent.start(), name="summary_agent"),
                 asyncio.create_task(
                     self.inventory_manager.start(), name="inventory_manager"
                 ),
+                asyncio.create_task(
+                    self.analytics_agent.start(), name="analytics_agent"
+                ),
+                asyncio.create_task(
+                    self.analytics_manager.start(),
+                    name="analytics_manager",
+                ),
+                asyncio.create_task(self.chat_agent.start(), name="chat_agent"),
+                asyncio.create_task(self.summary_agent.start(), name="summary_agent"),
             ]
 
             logger.info("All agents and managers started successfully")

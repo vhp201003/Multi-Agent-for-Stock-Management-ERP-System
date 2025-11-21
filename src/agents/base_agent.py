@@ -3,12 +3,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Type
 
-import redis.asyncio as redis
-from config.settings import get_agent_config, get_redis_host, get_redis_port
 from dotenv import load_dotenv
-from groq import AsyncGroq
-from jsonschema import ValidationError
+from pydantic import ValidationError
 
+from config.settings import get_agent_config
+from src.communication import get_async_redis_connection, get_groq_client
 from src.typing import BaseAgentResponse, BaseMessage, BaseSchema
 
 load_dotenv()
@@ -22,11 +21,13 @@ class BaseAgent(ABC):
         agent_type: str,
     ):
         self.agent_type = agent_type
-        self.redis = redis.Redis(
-            host=get_redis_host(), port=get_redis_port(), decode_responses=True
-        )
         self.config = get_agent_config(self.agent_type)
-        self.llm = AsyncGroq(api_key=self.config.api_key)
+
+        self._redis_manager = get_async_redis_connection()
+        self.redis = self._redis_manager.client
+
+        self._llm_manager = get_groq_client()
+        self.llm = self._llm_manager.get_client()
 
     async def _call_llm(
         self,
@@ -53,6 +54,7 @@ class BaseAgent(ABC):
                 messages=messages,
                 temperature=self.config.temperature,
                 response_format=response_format,
+                reasoning_format="hidden",
             )
 
             choice = response.choices[0]
@@ -85,39 +87,16 @@ class BaseAgent(ABC):
                 try:
                     data = json.loads(content) if content else {}
 
-                    logger.debug(f"Parsed JSON data type: {type(data)}")
-                    logger.debug(
-                        f"Parsed JSON data keys: {data.keys() if isinstance(data, dict) else 'N/A'}"
-                    )
-
                     if isinstance(data, list):
-                        logger.warning(
-                            "LLM returned array instead of object, attempting to fix"
-                        )
                         if len(data) == 1 and isinstance(data[0], dict):
                             data = data[0]
                         else:
-                            raise ValidationError(
-                                f"LLM returned invalid array structure: {data}"
-                            )
+                            raise ValidationError(f"Invalid array structure: {data}")
 
                     llm_response_schema = response_schema.model_validate(data)
 
                 except (json.JSONDecodeError, ValidationError) as e:
-                    logger.error(f"LLM parsing/validation error: {e}")
-                    logger.error(f"Raw LLM content: {content}")
-                    logger.error(
-                        f"Parsed data: {data if 'data' in locals() else 'Failed to parse'}"
-                    )
-                    raise
-
-                except Exception as e:
-                    logger.error(f"Unexpected error during schema validation: {e}")
-                    logger.error(f"Error type: {type(e).__name__}")
-                    logger.error(f"Raw LLM content: {content}")
-                    logger.error(
-                        f"Parsed data type: {type(data) if 'data' in locals() else 'N/A'}"
-                    )
+                    logger.error(f"Schema validation failed: {e}")
                     raise
 
             if response_model:

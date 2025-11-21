@@ -1,9 +1,8 @@
 import json
 import logging
 
-import redis.asyncio as redis
-from config.settings import get_redis_host, get_redis_port
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
+from src.communication import get_async_redis_connection
 from src.typing.redis import (
     AgentStatus,
     CommandMessage,
@@ -22,9 +21,9 @@ logger = logging.getLogger(__name__)
 class BaseManager:
     def __init__(self, agent_type: str):
         self.agent_type = agent_type
-        self.redis = redis.Redis(
-            host=get_redis_host(), port=get_redis_port(), decode_responses=True
-        )
+
+        self._redis_manager = get_async_redis_connection()
+        self.redis = self._redis_manager.client
 
     async def get_sub_channels(self) -> list[str]:
         return [RedisChannels.QUERY_CHANNEL, RedisChannels.TASK_UPDATES]
@@ -197,7 +196,6 @@ class BaseManager:
             logger.error(f"Failed to update pending tasks for {self.agent_type}: {e}")
 
     def _check_dependencies(self, task_node, shared_data: SharedData) -> bool:
-        """Check if all dependencies for a task are completed using new SharedData schema."""
         if not task_node or not hasattr(task_node, "dependencies"):
             logger.warning(f"Invalid task_node provided: {task_node}")
             return False

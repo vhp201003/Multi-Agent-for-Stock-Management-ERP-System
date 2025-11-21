@@ -140,9 +140,111 @@ class SharedData(BaseModel):
 # Install uv package manager
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Set environment variables
-echo "GROQ_API_KEY=your_key_here" > .env
+# Install Node.js (for frontend)
+# Visit https://nodejs.org/ or use nvm
 ```
+
+### Environment Configuration
+
+The system uses `.env` files for configuration management. **Never commit `.env` files to version control!**
+
+#### Backend Configuration
+
+1. **Copy the example file**:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit `.env` with your configuration**:
+   ```bash
+   # Server Configuration
+   HOST=0.0.0.0
+   PORT=8010
+   RELOAD=true
+   LOG_LEVEL=info
+   
+   # CORS Origins (comma-separated)
+   CORS_ORIGINS=http://localhost:5173,http://localhost:5174
+   
+   # Redis Configuration
+   REDIS_HOST=localhost
+   REDIS_PORT=6379
+   
+   # ERPNext Configuration
+   ERPNEXT_URL=http://erp.localhost:8000
+   ERPNEXT_API_KEY=your_api_key_here
+   ERPNEXT_API_SECRET=your_api_secret_here
+   
+   # MCP Server Ports
+   INVENTORY_SERVER_PORT=8011
+   ANALYTICS_SERVER_PORT=8012
+   
+   # Warehouse Settings
+   DEFAULT_WAREHOUSE=Main Warehouse
+   LOW_STOCK_THRESHOLD=10
+   CRITICAL_STOCK_THRESHOLD=5
+   
+   # Analytics Settings
+   DEFAULT_LOOKBACK_DAYS=30
+   DEFAULT_TOP_N=10
+   PARETO_CUTOFF=0.8
+   
+   # Profile Configuration
+   CONFIG_PROFILE=default
+   ```
+
+#### Frontend Configuration
+
+1. **Navigate to frontend directory**:
+   ```bash
+   cd frontend
+   ```
+
+2. **Copy the example file**:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Edit `frontend/.env` with your configuration**:
+   ```bash
+   # Backend API Configuration
+   VITE_API_BASE_URL=http://localhost:8010
+   VITE_WS_BASE_URL=ws://localhost:8010
+   ```
+
+#### Environment Variables Reference
+
+**Backend Variables:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HOST` | Server host address | `0.0.0.0` |
+| `PORT` | Server port | `8010` |
+| `RELOAD` | Enable auto-reload in development | `true` |
+| `LOG_LEVEL` | Logging level (debug, info, warning, error) | `info` |
+| `CORS_ORIGINS` | Comma-separated allowed CORS origins | `http://localhost:5173,http://localhost:5174` |
+| `REDIS_HOST` | Redis server host | `localhost` |
+| `REDIS_PORT` | Redis server port | `6379` |
+| `GROQ_API_KEY` | Groq API key for LLM (shared by all agents) | *(required)* |
+| `ERPNEXT_URL` | ERPNext instance URL | `http://localhost:8001` |
+| `ERPNEXT_API_KEY` | ERPNext API key | *(required)* |
+| `ERPNEXT_API_SECRET` | ERPNext API secret | *(required)* |
+| `INVENTORY_SERVER_PORT` | Inventory MCP server port | `8011` |
+| `ANALYTICS_SERVER_PORT` | Analytics MCP server port | `8012` |
+| `DEFAULT_WAREHOUSE` | Default warehouse name | `Main Warehouse` |
+| `LOW_STOCK_THRESHOLD` | Low stock alert threshold | `10` |
+| `CRITICAL_STOCK_THRESHOLD` | Critical stock alert threshold | `5` |
+| `DEFAULT_LOOKBACK_DAYS` | Default analytics lookback period | `30` |
+| `DEFAULT_TOP_N` | Default top N items in analytics | `10` |
+| `PARETO_CUTOFF` | Pareto analysis cutoff percentage | `0.8` |
+| `CONFIG_PROFILE` | Configuration profile to use | `default` |
+
+**Frontend Variables:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VITE_API_BASE_URL` | Backend API base URL (HTTP) | `http://localhost:8010` |
+| `VITE_WS_BASE_URL` | Backend WebSocket base URL | `ws://localhost:8010` |
 
 ### Infrastructure
 ```yaml
