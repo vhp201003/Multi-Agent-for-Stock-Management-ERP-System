@@ -152,7 +152,8 @@ class InventoryMCPServer(BaseMCPServer):
     async def inventory_health(
         self,
         warehouses: List[str] = Field(
-            ..., min_items=1, description="List of warehouse names to analyze"
+            default_factory=list,
+            description="List of warehouse names to analyze. Leave empty to analyze all warehouses.",
         ),
         item_groups: Optional[List[str]] = Field(
             None, description="Optional list of item groups to filter by"

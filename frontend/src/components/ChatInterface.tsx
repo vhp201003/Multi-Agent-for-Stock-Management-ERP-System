@@ -624,7 +624,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                     update.agent_type.charAt(0).toUpperCase() + update.agent_type.slice(1).replace('_', ' ') : 
                     'Agent';
                   
-                  const isWorker = update.agent_type?.includes('inventory') || update.agent_type === 'worker';
+                  const isWorker = update.agent_type && !['orchestrator'].includes(update.agent_type);
                   const isOrchestrator = update.agent_type === 'orchestrator';
                   
                   return (

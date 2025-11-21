@@ -9,7 +9,6 @@ from config.settings import (
     get_critical_stock_threshold,
     get_default_lookback_days,
     get_default_top_n,
-    get_default_warehouse,
     get_erpnext_api_key,
     get_erpnext_api_secret,
     get_erpnext_url,
@@ -138,7 +137,6 @@ def create_inventory_server(
         erpnext_url=erpnext_url or get_erpnext_url(),
         erpnext_api_key=erpnext_api_key or get_erpnext_api_key(),
         erpnext_api_secret=erpnext_api_secret or get_erpnext_api_secret(),
-        default_warehouse=warehouse or get_default_warehouse(),
         low_stock_threshold=low_stock_threshold or get_low_stock_threshold(),
         critical_stock_threshold=critical_stock_threshold
         or get_critical_stock_threshold(),

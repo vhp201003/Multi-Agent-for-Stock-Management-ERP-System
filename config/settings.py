@@ -123,10 +123,6 @@ def get_analytics_server_port() -> int:
     return get_env_int("ANALYTICS_SERVER_PORT", 8012)
 
 
-def get_default_warehouse() -> str:
-    return get_env_str("DEFAULT_WAREHOUSE", "Main Warehouse")
-
-
 def get_low_stock_threshold() -> int:
     return get_env_int("LOW_STOCK_THRESHOLD", 10)
 

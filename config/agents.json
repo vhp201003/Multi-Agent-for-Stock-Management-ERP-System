@@ -16,21 +16,6 @@
       "reconcile_valuation"
     ]
   },
-  "forecasting": {
-    "description": "Forecasts stock levels and demand for 3-6 months based on sales and purchase data.",
-    "capabilities": ["stock forecasting", "demand prediction"],
-    "tools": ["forecast_stock"]
-  },
-  "ordering": {
-    "description": "Automates material requests and purchase orders, and monitors purchase prices.",
-    "capabilities": ["create replenishment orders", "monitor purchase prices"],
-    "tools": ["create_replenishment", "monitor_purchase_price"]
-  },
-  "pricing": {
-    "description": "Proposes pricing rules and promotions based on stock levels and demand elasticity.",
-    "capabilities": ["propose pricing rules", "optimize promotions"],
-    "tools": ["propose_pricing_rule"]
-  },
   "analytics": {
     "description": "Analyzes sales performance, stock coverage, and product trends to support decision-making.",
     "capabilities": [

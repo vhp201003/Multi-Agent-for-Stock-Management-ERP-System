@@ -93,7 +93,8 @@ class AnalyticsMCPServer(BaseMCPServer):
             default=10, ge=1, description="Number of top items to return"
         ),
         warehouses: List[str] = Field(
-            ..., min_items=1, description="List of warehouse names"
+            default_factory=list,
+            description="List of warehouse names. Leave empty to query all warehouses.",
         ),
         channels: List[str] = Field(
             default=["POS", "Online"], description="Sales channels to include"
@@ -132,7 +133,8 @@ class AnalyticsMCPServer(BaseMCPServer):
             default=30, ge=0, description="Minimum days item must be on sale"
         ),
         warehouses: List[str] = Field(
-            ..., min_items=1, description="List of warehouse names"
+            default_factory=list,
+            description="List of warehouse names. Leave empty to query all warehouses.",
         ),
         min_stock_balance: float = Field(
             default=0.0, ge=0, description="Minimum stock balance to consider"
@@ -194,7 +196,8 @@ class AnalyticsMCPServer(BaseMCPServer):
     async def analyze_stock_coverage(
         self,
         warehouses: List[str] = Field(
-            ..., min_items=1, description="List of warehouse names"
+            default_factory=list,
+            description="List of warehouse names. Leave empty to query all warehouses.",
         ),
         item_groups: Optional[List[str]] = Field(
             None, description="Optional list of item groups to filter"
@@ -246,7 +249,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             "to_date": to_date,
             "metric": metric,
             "top_n": top_n,
-            "warehouses": ",".join(warehouses),
+            "warehouses": warehouses,
             "channels": ",".join(channels),
             "exclude_returns": exclude_returns,
             "merge_variants": merge_variants,
@@ -286,7 +289,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             "to_date": to_date,
             "top_n": top_n,
             "min_days_on_sale": min_days_on_sale,
-            "warehouses": ",".join(warehouses),
+            "warehouses": warehouses,
             "min_stock_balance": min_stock_balance,
         }
 
