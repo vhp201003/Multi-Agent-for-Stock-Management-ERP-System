@@ -1,5 +1,3 @@
-from typing import Dict, List, Optional
-
 from pydantic import BaseModel, Field
 
 from src.typing.mcp.base import MCPToolOutputSchema
@@ -18,7 +16,7 @@ class TopPerformersItem(BaseModel):
     share_pct: float = Field(
         ..., ge=0, le=1, description="Percentage of total metric (qty or revenue)"
     )
-    sparkline_qty: List[float] = Field(
+    sparkline_qty: list[float] = Field(
         ..., description="Daily sales trend for short-term analysis"
     )
 
@@ -30,8 +28,8 @@ class TopPerformersFilters(BaseModel):
     to_date: str = Field(..., description="End date for sales data (YYYY-MM-DD)")
     metric: str = Field(..., description="Ranking metric: qty or revenue")
     top_n: int = Field(..., ge=1, description="Number of top items to return")
-    warehouses: List[str] = Field(..., description="List of warehouse names")
-    channels: List[str] = Field(..., description="Sales channels: POS, Online, etc.")
+    warehouses: list[str] = Field(..., description="List of warehouse names")
+    channels: list[str] = Field(..., description="Sales channels: POS, Online, etc.")
     exclude_returns: bool = Field(
         ..., description="Whether to exclude return transactions"
     )
@@ -49,7 +47,7 @@ class TopPerformersSummary(BaseModel):
 class TopPerformersOutput(MCPToolOutputSchema):
     """Schema for analyze_top_performers tool output."""
 
-    ranking: List[TopPerformersItem] = Field(
+    ranking: list[TopPerformersItem] = Field(
         ..., description="Chartable list of top-performing items"
     )
     summary: TopPerformersSummary
@@ -61,12 +59,10 @@ class SlowMoversSuggestion(BaseModel):
     """Schema for action suggestions in analyze_slow_movers."""
 
     action: str = Field(..., description="Suggested action: markdown, bundle")
-    discount_pct: Optional[float] = Field(
+    discount_pct: float | None = Field(
         None, ge=0, description="Discount percentage for markdown"
     )
-    bundle_with: Optional[List[str]] = Field(
-        None, description="Item codes to bundle with"
-    )
+    bundle_with: list[str] | None = Field(None, description="Item codes to bundle with")
 
 
 class SlowMoversItem(BaseModel):
@@ -80,7 +76,7 @@ class SlowMoversItem(BaseModel):
     gmroi: float = Field(..., description="Gross Margin Return on Investment")
     stock_balance: float = Field(..., ge=0, description="Current stock balance")
     days_without_sale: int = Field(..., ge=0, description="Days without sales")
-    suggestion: Optional[SlowMoversSuggestion] = Field(
+    suggestion: SlowMoversSuggestion | None = Field(
         None, description="Suggested action"
     )
 
@@ -94,7 +90,7 @@ class SlowMoversFilters(BaseModel):
     min_days_on_sale: int = Field(
         ..., ge=0, description="Minimum days on sale to consider"
     )
-    warehouses: List[str] = Field(..., description="List of warehouse names")
+    warehouses: list[str] = Field(..., description="List of warehouse names")
     min_stock_balance: float = Field(
         ..., ge=0, description="Minimum stock balance to consider"
     )
@@ -115,7 +111,7 @@ class SlowMoversSummary(BaseModel):
 class SlowMoversOutput(MCPToolOutputSchema):
     """Schema for analyze_slow_movers tool output."""
 
-    slow_movers: List[SlowMoversItem] = Field(
+    slow_movers: list[SlowMoversItem] = Field(
         ..., description="Chartable list of slow-moving items"
     )
     summary: SlowMoversSummary
@@ -140,10 +136,10 @@ class MoversShakersItem(BaseModel):
 class MoversShakersFilters(BaseModel):
     """Schema for filters_applied in track_movers_shakers."""
 
-    period_current: Dict[str, str] = Field(
+    period_current: dict[str, str] = Field(
         ..., description="Current period: {from: YYYY-MM-DD, to: YYYY-MM-DD}"
     )
-    period_prev: Dict[str, str] = Field(
+    period_prev: dict[str, str] = Field(
         ..., description="Previous period: {from: YYYY-MM-DD, to: YYYY-MM-DD}"
     )
     metric: str = Field(..., description="Comparison metric: qty or revenue")
@@ -165,7 +161,7 @@ class MoversShakersSummary(BaseModel):
 class MoversShakersOutput(MCPToolOutputSchema):
     """Schema for track_movers_shakers tool output."""
 
-    movers: List[MoversShakersItem] = Field(
+    movers: list[MoversShakersItem] = Field(
         ..., description="Chartable list of movers and shakers"
     )
     summary: MoversShakersSummary
@@ -207,7 +203,7 @@ class ParetoAnalysisSummary(BaseModel):
 class ParetoAnalysisOutput(MCPToolOutputSchema):
     """Schema for perform_pareto_analysis tool output."""
 
-    pareto: List[ParetoAnalysisItem] = Field(
+    pareto: list[ParetoAnalysisItem] = Field(
         ..., description="Chartable Pareto analysis data"
     )
     summary: ParetoAnalysisSummary
@@ -221,15 +217,11 @@ class StockCoverageRecommendation(BaseModel):
     action: str = Field(
         ..., description="Recommended action: monitor, order, markdown, bundle"
     )
-    note: Optional[str] = Field(
-        None, description="Additional note for the recommendation"
-    )
-    discount_pct: Optional[float] = Field(
+    note: str | None = Field(None, description="Additional note for the recommendation")
+    discount_pct: float | None = Field(
         None, ge=0, description="Discount percentage for markdown"
     )
-    order_qty: Optional[float] = Field(
-        None, ge=0, description="Suggested order quantity"
-    )
+    order_qty: float | None = Field(None, ge=0, description="Suggested order quantity")
 
 
 class StockCoverageItem(BaseModel):
@@ -245,7 +237,7 @@ class StockCoverageItem(BaseModel):
     doc_days: float = Field(
         ..., ge=0, description="Stock Cover Days (stock_qty / avg_daily_sales)"
     )
-    recommendation: Optional[StockCoverageRecommendation] = Field(
+    recommendation: StockCoverageRecommendation | None = Field(
         None, description="Recommended action"
     )
 
@@ -253,19 +245,19 @@ class StockCoverageItem(BaseModel):
 class StockCoverageFilters(BaseModel):
     """Schema for filters_applied in analyze_stock_coverage."""
 
-    warehouses: List[str] = Field(..., description="List of warehouse names")
-    item_groups: Optional[List[str]] = Field(None, description="List of item groups")
-    items: Optional[List[str]] = Field(None, description="List of specific item codes")
+    warehouses: list[str] = Field(..., description="List of warehouse names")
+    item_groups: list[str] | None = Field(None, description="List of item groups")
+    items: list[str] | None = Field(None, description="List of specific item codes")
     lookback_days: int = Field(
         ..., ge=1, description="Days to calculate avg daily sales"
     )
-    min_doc_days: Optional[float] = Field(
+    min_doc_days: float | None = Field(
         None, ge=0, description="Minimum Stock Cover Days filter"
     )
-    max_doc_days: Optional[float] = Field(
+    max_doc_days: float | None = Field(
         None, ge=0, description="Maximum Stock Cover Days filter"
     )
-    top_n: Optional[int] = Field(
+    top_n: int | None = Field(
         None, ge=1, description="Limit to top N items by stock_qty"
     )
 
@@ -287,7 +279,7 @@ class StockCoverageSummary(BaseModel):
 class StockCoverageOutput(MCPToolOutputSchema):
     """Schema for analyze_stock_coverage tool output."""
 
-    stock_coverage: List[StockCoverageItem] = Field(
+    stock_coverage: list[StockCoverageItem] = Field(
         ..., description="Chartable stock coverage data"
     )
     summary: StockCoverageSummary
