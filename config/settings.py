@@ -9,12 +9,42 @@ load_dotenv()
 
 
 class AgentConfig(BaseModel):
+    """Agent configuration loaded from profile.
+
+    LLM parameters (model, temperature, top_p, etc.) are defined here and can be
+    unpacked directly into LLM API calls using **config.get_llm_params().
+    """
+
     model: str
     mcp_server_url: Optional[str] = None
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     messages: List[Dict[str, str]] = Field(default_factory=list)
+
+    def get_llm_params(self) -> Dict[str, Any]:
+        """Extract LLM parameters for API calls.
+
+        Returns dict with: model, temperature, top_p, max_tokens, frequency_penalty, presence_penalty
+        (excludes None values and non-LLM fields like mcp_server_url, messages)
+
+        Usage: **config.get_llm_params() in _call_llm()
+        """
+        params = {
+            "model": self.model,
+            "temperature": self.temperature,
+        }
+        if self.max_tokens is not None:
+            params["max_tokens"] = self.max_tokens
+        if self.top_p is not None:
+            params["top_p"] = self.top_p
+        if self.frequency_penalty is not None:
+            params["frequency_penalty"] = self.frequency_penalty
+        if self.presence_penalty is not None:
+            params["presence_penalty"] = self.presence_penalty
+        return params
 
 
 class ConfigManager:
@@ -35,9 +65,6 @@ class ConfigManager:
         agents = self._config.get("agents", {})
         agent_config = agents.get(agent_type, {})
         return AgentConfig(**agent_config)
-
-    def get_global_setting(self, key: str) -> Any:
-        return self._config.get("global_settings", {}).get(key)
 
 
 config_manager = ConfigManager(profile=os.environ.get("CONFIG_PROFILE", "default"))

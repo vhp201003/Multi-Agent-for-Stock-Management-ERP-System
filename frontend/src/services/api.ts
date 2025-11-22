@@ -54,19 +54,50 @@ class ApiService {
     },
   });
 
+  async getMe(token: string): Promise<any> {
+    const response = await this.client.get('/auth/me', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return response.data;
+  }
+
+  async login(data: any): Promise<any> {
+    // Form data for OAuth2
+    const formData = new FormData();
+    formData.append('username', data.email);
+    formData.append('password', data.password);
+    
+    const response = await this.client.post('/auth/token', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
+  async register(data: any): Promise<any> {
+    const response = await this.client.post('/auth/register', data);
+    return response.data;
+  }
+
   async submitQuery(queryId: string, query: string, conversationId?: string): Promise<QueryResponse> {
+    const token = localStorage.getItem('token');
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    
     const requestData: QueryRequest = {
       query_id: queryId,
       query,
       ...(conversationId && { conversation_id: conversationId }),
     };
     
-    const response = await this.client.post<QueryResponse>('/query', requestData);
+    const response = await this.client.post<QueryResponse>('/query', requestData, { headers });
     return response.data;
   }
 
   async getQueryStatus(queryId: string): Promise<QueryStatus> {
-    const response = await this.client.get<QueryStatus>(`/query/${queryId}`);
+    const token = localStorage.getItem('token');
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const response = await this.client.get<QueryStatus>(`/query/${queryId}`, { headers });
     return response.data;
   }
 

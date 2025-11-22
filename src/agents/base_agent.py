@@ -36,26 +36,31 @@ class BaseAgent(ABC):
         messages: List[Dict[str, str]],
         response_schema: Optional[Type[BaseSchema]] = None,
         response_model: Optional[Type[BaseAgentResponse]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> BaseAgentResponse:
         if not self.llm:
             raise ValueError("No Groq API key provided")
         try:
             response_format = None
-            if response_schema:
+            if response_schema and not tools:
                 schema = response_schema.model_json_schema()
-
                 response_format = {
                     "type": "json_schema",
                     "json_schema": {"name": "response", "schema": schema},
                 }
 
-            response = await self.llm.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                temperature=self.config.temperature,
-                response_format=response_format,
-                reasoning_format="hidden",
-            )
+            llm_params = self.config.get_llm_params()
+
+            call_kwargs = {
+                **llm_params,
+                "messages": messages,
+                "response_format": response_format,
+            }
+
+            if tools:
+                call_kwargs["tools"] = tools
+
+            response = await self.llm.chat.completions.create(**call_kwargs)
 
             choice = response.choices[0]
             message = getattr(choice, "message", None)
@@ -77,12 +82,12 @@ class BaseAgent(ABC):
                     "queue_time": getattr(raw_usage, "queue_time", None),
                     "total_time": getattr(raw_usage, "total_time", None),
                 }
-
             else:
                 llm_usage = None
 
             llm_response_schema = None
 
+            # Handle schema validation if response_schema is provided
             if response_schema:
                 try:
                     data = json.loads(content) if content else {}
@@ -98,6 +103,27 @@ class BaseAgent(ABC):
                 except (json.JSONDecodeError, ValidationError) as e:
                     logger.error(f"Schema validation failed: {e}")
                     raise
+            elif tools:
+                # When tools are provided, extract tool_calls from message
+                tool_calls = getattr(message, "tool_calls", None)
+                if tool_calls:
+                    # Tool calls are available in message.tool_calls
+                    llm_response_schema = {
+                        "tool_calls": tool_calls,
+                        "content": content,
+                    }
+                    logger.debug(
+                        f"Extracted {len(tool_calls)} tool calls from response"
+                    )
+                else:
+                    # No tool calls, just return content
+                    llm_response_schema = {
+                        "tool_calls": [],
+                        "content": content,
+                    }
+            else:
+                # No response_schema and no tools: return plain text response
+                llm_response_schema = content
 
             if response_model:
                 result = response_model(

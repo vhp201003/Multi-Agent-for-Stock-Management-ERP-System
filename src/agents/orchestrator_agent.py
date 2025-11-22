@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from config.prompts import build_orchestrator_prompt
-
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
 from src.agents.summary_agent import AGENT_TYPE as SUMMARY_AGENT_TYPE
 from src.typing.llm_response import OrchestratorResponse
@@ -76,6 +75,20 @@ class OrchestratorAgent(BaseAgent):
             if error:
                 raise ValueError(error)
 
+            # ✅ NEW: Check if orchestration returned no agents (simple query)
+            if (
+                not orchestration_result.result.agents_needed
+                or len(orchestration_result.result.agents_needed) == 0
+            ):
+                logger.info(
+                    f"No specialized agents needed for query {request.query_id}, "
+                    f"routing to ChatAgent for conversational response"
+                )
+                # Route directly to ChatAgent and wait for its response
+                await self._route_to_chat_agent_directly(request)
+                return  # ← Exit early, don't do complex orchestration
+
+            # ✅ Complex orchestration flow (unchanged)
             await self._initialize_shared_state(request, orchestration_result)
             sub_query_dict = self._build_sub_query_dict(orchestration_result)
             if not sub_query_dict:
@@ -147,14 +160,72 @@ class OrchestratorAgent(BaseAgent):
     def _validate_orchestration_result(
         self, orchestration_result: OrchestratorResponse
     ) -> Optional[str]:
+        """Validate orchestration result.
+
+        Returns error string if validation fails, None if OK.
+        Note: Empty agents_needed is VALID (indicates simple query for ChatAgent)
+        """
         if orchestration_result.error:
             return orchestration_result.error
-        if (
-            not orchestration_result.result
-            or not orchestration_result.result.agents_needed
-        ):
-            return "No agents identified for query processing"
+
+        # Empty agents_needed is OK - means route to ChatAgent for conversation
+        # Only fail if result is completely missing
+        if not orchestration_result.result:
+            return "Orchestration returned no result"
+
         return None
+
+    async def _route_to_chat_agent_directly(self, request: Request) -> None:
+        """Route simple queries (no specialized agents) directly to ChatAgent.
+
+        Used when orchestrator determines query needs conversation only,
+        not data retrieval or domain-specific analysis.
+
+        Args:
+            request: Original user request with query, query_id, conversation_id
+        """
+        try:
+            logger.info(
+                f"Routing simple query {request.query_id} to ChatAgent (no agents needed)"
+            )
+
+            # Create minimal context for ChatAgent - just the original query
+            empty_context = {
+                "original_query": request.query,
+                "agents_completed": [],
+                "results": {},
+            }
+
+            # Create ChatRequest for ChatAgent
+            chat_message = ChatRequest(
+                query_id=request.query_id,
+                conversation_id=request.conversation_id,
+                query=request.query,
+                context=empty_context,
+            )
+
+            # Publish to ChatAgent channel
+            chat_channel = RedisChannels.get_command_channel(CHAT_AGENT_TYPE)
+            await self.publish_channel(chat_channel, chat_message, ChatRequest)
+
+            logger.info(
+                f"Successfully routed simple query {request.query_id} to ChatAgent"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to route to ChatAgent for {request.query_id}: {e}")
+            # Publish error response
+            error_response = CompletionResponse.response_error(
+                query_id=request.query_id,
+                error=f"Failed to process simple query: {str(e)}",
+                conversation_id=request.conversation_id,
+            )
+            completion_channel = RedisChannels.get_query_completion_channel(
+                request.query_id
+            )
+            await self.publish_channel(
+                completion_channel, error_response, CompletionResponse
+            )
 
     async def _initialize_shared_state(
         self, request: Request, orchestration_result: OrchestratorResponse

@@ -10,7 +10,6 @@ from src.typing import (
     ResourceCallResponse,
     ToolCallResponse,
     ToolCallResultResponse,
-    ToolCallSchema,
     WorkerAgentProcessResponse,
 )
 from src.typing.redis import (
@@ -22,7 +21,6 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
-from src.typing.schema.tool_call import ResourceURI, ToolCallPlan
 from src.utils.converstation import get_summary_conversation
 from src.utils.shared_data_utils import get_shared_data, update_shared_data
 
@@ -78,39 +76,55 @@ class WorkerAgent(BaseAgent):
             },
         ]
 
-        ### Phase 2: Call LLM to get tool and resource usage
+        ### Phase 2: Call LLM to get tool calls from Groq tool_calls
+        groq_tools = None
+        if hasattr(self, "_mcp_tools_for_groq"):
+            groq_tools = self._mcp_tools_for_groq
+
+        # Call LLM with tools but WITHOUT response_schema
+        # Groq will return tool_calls in message.tool_calls
         llm_response: ToolCallResponse = await self._call_llm(
             query_id=command_message.query_id,
             conversation_id=command_message.conversation_id,
             messages=messages,
-            response_schema=ToolCallSchema,
             response_model=ToolCallResponse,
+            tools=groq_tools,
         )
 
-        ### Phase 3: execute tool calls and resource reads
-        ### 3.1 Extract tool calls and execute tools
-
+        ### Phase 3: Extract tool calls from Groq and execute them
         worker_process_result = WorkerAgentProcessResponse()
         worker_process_result.query_id = command_message.query_id
         worker_process_result.conversation_id = command_message.conversation_id
-        worker_process_result.result = llm_response.result
         worker_process_result.llm_reasoning = llm_response.llm_reasoning
 
-        mixed_calls = llm_response.result.tool_calls or []
-        tool_calls = [item for item in mixed_calls if isinstance(item, ToolCallPlan)]
-        read_resources = [item for item in mixed_calls if isinstance(item, ResourceURI)]
+        # Extract tool_calls from Groq response
+        groq_tool_calls = []
+        if (
+            isinstance(llm_response.result, dict)
+            and "tool_calls" in llm_response.result
+        ):
+            groq_tool_calls = llm_response.result.get("tool_calls", [])
 
-        if tool_calls:
-            for tool_call in tool_calls:
-                tool_name = tool_call.tool_name
-                parameters = tool_call.parameters
+        if groq_tool_calls:
+            for groq_tool_call in groq_tool_calls:
+                # groq_tool_call is ChatCompletionMessageToolCall
+                # Extract tool_name and parameters from groq_tool_call.function
                 try:
+                    tool_name = groq_tool_call.function.name
+                    # Parameters come as JSON string, need to parse
+                    parameters_json = groq_tool_call.function.arguments
+                    if isinstance(parameters_json, str):
+                        parameters = json.loads(parameters_json)
+                    else:
+                        parameters = parameters_json
+
                     tool_result: Dict[str, Any] = await self.call_mcp_tool(
                         tool_name, parameters
                     )
                     # Parse JSON string to dict if needed
                     if isinstance(tool_result, str):
                         tool_result = json.loads(tool_result)
+
                     worker_process_result.tools_result.append(
                         ToolCallResultResponse(
                             tool_name=tool_name,
@@ -118,34 +132,26 @@ class WorkerAgent(BaseAgent):
                             tool_result=tool_result,
                         )
                     )
+                    logger.debug(
+                        f"{self.agent_type}: Executed tool '{tool_name}' with result"
+                    )
                 except Exception as e:
+                    logger.error(
+                        f"{self.agent_type}: Tool call failed for {groq_tool_call}: {e}"
+                    )
                     worker_process_result.tools_result.append(
                         ToolCallResultResponse(
-                            tool_name=tool_name,
-                            parameters=parameters,
+                            tool_name=getattr(
+                                groq_tool_call.function, "name", "unknown"
+                            ),
+                            parameters=json.loads(
+                                getattr(groq_tool_call.function, "arguments", "{}")
+                            ),
                             tool_result={"error": f"Tool call failed: {str(e)}"},
                         )
                     )
-
-        ### 3.1 Extract resource reads and read resources
-        if read_resources:
-            for resource in read_resources:
-                try:
-                    resource_result = await self.read_mcp_resource(resource.uri)
-                    worker_process_result.data_resources.append(
-                        ResourceCallResponse(
-                            resource_name=resource.uri, resource_result=resource_result
-                        )
-                    )
-                except Exception as e:
-                    worker_process_result.data_resources.append(
-                        ResourceCallResponse(
-                            resource_name=resource.uri,
-                            resource_result={
-                                "error": f"Resource read failed: {str(e)}"
-                            },
-                        )
-                    )
+        else:
+            logger.debug(f"{self.agent_type}: No tool calls requested by LLM")
 
         return worker_process_result
 
@@ -342,14 +348,22 @@ class WorkerAgent(BaseAgent):
             client = await self.get_mcp_client()
 
             tools = await client.list_tools()
-            resources = await client.list_resource_templates()
+
+            tools_dicts = [
+                t.model_dump() if hasattr(t, "model_dump") else t for t in tools
+            ]
+            from src.utils.extract_schema import extract_groq_tools
+
+            self._mcp_tools_for_groq = extract_groq_tools(tools_dicts)
 
             self.prompt = build_worker_agent_prompt(
                 agent_type=self.agent_type,
                 agent_description=self.agent_description,
-                tools=tools,
-                resources=resources,
                 examples=self.examples,
+            )
+
+            logger.info(
+                f"{self.agent_type}: Initialized with {len(self._mcp_tools_for_groq)} Groq tools"
             )
 
         except Exception as e:

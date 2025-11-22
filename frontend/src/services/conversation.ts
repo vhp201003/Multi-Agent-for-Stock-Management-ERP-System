@@ -39,15 +39,24 @@ export interface ConversationListResponse {
 /**
  * Create a new conversation
  */
+/**
+ * Create a new conversation
+ */
 export const createConversation = async (
   conversationId: string,
   title?: string
 ): Promise<Conversation> => {
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}/conversations`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       conversation_id: conversationId,
       title: title || `Conversation ${conversationId.slice(0, 8)}`,
@@ -73,7 +82,13 @@ export const getConversation = async (
     url.searchParams.set('include_messages', 'true');
   }
 
-  const response = await fetch(url.toString());
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url.toString(), { headers });
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -96,7 +111,13 @@ export const listConversations = async (
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('offset', offset.toString());
 
-  const response = await fetch(url.toString());
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url.toString(), { headers });
 
   if (!response.ok) {
     throw new Error(`Failed to list conversations: ${response.statusText}`);
@@ -112,11 +133,17 @@ export const updateConversationTitle = async (
   conversationId: string,
   title: string
 ): Promise<Conversation> => {
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}/conversations/${conversationId}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({ title }),
   });
 
@@ -134,8 +161,15 @@ export const updateConversationTitle = async (
  * Delete a conversation
  */
 export const deleteConversation = async (conversationId: string): Promise<void> => {
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}/conversations/${conversationId}`, {
     method: 'DELETE',
+    headers,
   });
 
   if (!response.ok) {

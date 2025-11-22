@@ -55,24 +55,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     scrollToBottom();
   }, [messages]);
 
-  // Load messages from localStorage when conversation changes
+  // Load messages from backend or localStorage when conversation changes
   useEffect(() => {
     const loadConversation = async () => {
       if (propConversationId) {
         setConversationId(propConversationId);
+        console.log('[ChatInterface] Loading conversation:', propConversationId);
         
         try {
+          // ✅ Try backend first (persistent storage)
+          console.log('[ChatInterface] Fetching from backend...');
           const backendConversation = await getConversation(propConversationId, true);
           
-          if (backendConversation && backendConversation.messages) {
+          if (backendConversation && backendConversation.messages && backendConversation.messages.length > 0) {
+            console.log('[ChatInterface] Loaded from backend:', backendConversation.messages.length, 'messages');
             const normalizedMessages = normalizeConversationMessages(backendConversation.messages);
             setMessages(normalizedMessages);
             return;
           }
         } catch (error) {
-          console.warn('[ChatInterface] Backend conversation not found, trying localStorage:', error);
+          console.warn('[ChatInterface] Backend fetch failed:', error);
         }
         
+        // ✅ Fallback to localStorage
+        console.log('[ChatInterface] Trying localStorage...');
         const savedConversations = localStorage.getItem('conversations');
         if (savedConversations) {
           try {

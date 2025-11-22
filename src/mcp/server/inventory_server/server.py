@@ -107,7 +107,7 @@ class InventoryMCPServer(BaseMCPServer):
 
     async def retrieve_stock_history(
         self,
-        item_code: str = Field(..., description="ERPNext item code (required)"),
+        item_code: str = Field(None, description="ERPNext item code"),
         item_name: Optional[str] = Field(None, description="Item name for reference"),
         warehouse: Optional[str] = Field(
             None, description="Filter by specific warehouse"
@@ -129,8 +129,8 @@ class InventoryMCPServer(BaseMCPServer):
 
     async def propose_transfer(
         self,
-        item_code: str = Field(..., description="ERPNext item code (required)"),
-        to_warehouse: str = Field(..., description="Target warehouse for transfer"),
+        item_code: str = Field(None, description="ERPNext item code (required)"),
+        to_warehouse: str = Field(None, description="Target warehouse for transfer"),
         from_warehouses: Optional[str] = Field(
             None, description="Source warehouses (comma-separated)"
         ),

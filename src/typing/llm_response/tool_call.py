@@ -1,15 +1,16 @@
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-
-from src.typing.schema.tool_call import ToolCallSchema
 
 from .base_response import BaseAgentResponse
 
 
 class ToolCallResponse(BaseAgentResponse):
-    result: Optional[ToolCallSchema] = None
+    # result contains dict with "tool_calls" (list of ChatCompletionMessageToolCall)
+    # and "content" (str) from Groq response
+    # Not validated against ToolCallSchema to allow raw Groq tool_calls
+    result: Optional[Any] = None
 
 
 class ToolCallResultResponse(BaseModel):

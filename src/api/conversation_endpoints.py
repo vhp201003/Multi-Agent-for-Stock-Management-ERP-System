@@ -54,12 +54,12 @@ class ConversationListResponse(BaseModel):
 
 # Endpoint Handlers
 async def create_conversation_handler(
-    redis, request: ConversationCreateRequest
+    redis, request: ConversationCreateRequest, user_id: str
 ) -> ConversationResponse:
     """Create a new conversation."""
     try:
         conversation = await create_conversation(
-            redis, request.conversation_id, request.title
+            redis, request.conversation_id, request.title, user_id
         )
         return _conversation_to_response(conversation)
     except Exception as e:
@@ -68,11 +68,21 @@ async def create_conversation_handler(
 
 
 async def get_conversation_handler(
-    redis, conversation_id: str, include_messages: bool = False
+    redis,
+    conversation_id: str,
+    user_id: Optional[str] = None,
+    include_messages: bool = False,
 ) -> ConversationResponse:
-    """Get a single conversation by ID."""
+    """Get a single conversation by ID.
+
+    Args:
+        redis: Redis client
+        conversation_id: Conversation ID to retrieve
+        user_id: Optional user ID for ownership validation
+        include_messages: Whether to include messages in response
+    """
     try:
-        conversation = await get_conversation(redis, conversation_id)
+        conversation = await get_conversation(redis, conversation_id, user_id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -85,11 +95,13 @@ async def get_conversation_handler(
 
 
 async def list_conversations_handler(
-    redis, limit: int = 50, offset: int = 0
+    redis, user_id: str, limit: int = 50, offset: int = 0
 ) -> ConversationListResponse:
     """List all conversations with pagination."""
     try:
-        conversations = await list_conversations(redis, limit=limit, offset=offset)
+        conversations = await list_conversations(
+            redis, user_id, limit=limit, offset=offset
+        )
 
         # Sort by updated_at descending (most recent first)
         sorted_conversations = sorted(
@@ -108,12 +120,22 @@ async def list_conversations_handler(
 
 
 async def update_conversation_handler(
-    redis, conversation_id: str, request: ConversationUpdateRequest
+    redis,
+    conversation_id: str,
+    request: ConversationUpdateRequest,
+    user_id: Optional[str] = None,
 ) -> ConversationResponse:
-    """Update conversation title."""
+    """Update conversation title.
+
+    Args:
+        redis: Redis client
+        conversation_id: Conversation ID to update
+        request: Update request with new title
+        user_id: Optional user ID for ownership validation
+    """
     try:
         conversation = await update_conversation_title(
-            redis, conversation_id, request.title
+            redis, conversation_id, request.title, user_id
         )
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -126,10 +148,18 @@ async def update_conversation_handler(
         raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
 
 
-async def delete_conversation_handler(redis, conversation_id: str) -> dict:
-    """Delete a conversation."""
+async def delete_conversation_handler(
+    redis, conversation_id: str, user_id: Optional[str] = None
+) -> dict:
+    """Delete a conversation.
+
+    Args:
+        redis: Redis client
+        conversation_id: Conversation ID to delete
+        user_id: Optional user ID for ownership validation
+    """
     try:
-        success = await delete_conversation(redis, conversation_id)
+        success = await delete_conversation(redis, conversation_id, user_id)
         if not success:
             raise HTTPException(status_code=404, detail="Conversation not found")
 

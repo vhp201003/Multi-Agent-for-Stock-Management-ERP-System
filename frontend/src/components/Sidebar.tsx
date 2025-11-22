@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { listConversations, deleteConversation as deleteConversationAPI } from '../services/conversation';
+import { useAuth } from '../context/AuthContext';
 import './Sidebar.css';
 
 interface Conversation {
@@ -24,6 +25,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [useBackend] = useState(true); // Toggle backend vs localStorage
+  const { user, logout } = useAuth();
 
   const loadFromLocalStorage = () => {
     try {
@@ -49,22 +51,28 @@ const Sidebar: React.FC<SidebarProps> = ({
         console.log('[Sidebar] Fetching from backend...');
         const response = await listConversations(100, 0);
         console.log('[Sidebar] Backend response:', response);
-        const backendConversations = response.conversations.map(conv => ({
-          id: conv.id,
-          title: conv.title,
-          lastMessage: `${conv.message_count} messages`,
-          timestamp: new Date(conv.updated_at),
-          messages: conv.messages,
-        }));
-        console.log('[Sidebar] Loaded', backendConversations.length, 'conversations from backend');
-        setConversations(backendConversations);
+        
+        if (response && response.conversations && response.conversations.length > 0) {
+          const backendConversations = response.conversations.map(conv => ({
+            id: conv.id,
+            title: conv.title || `Conversation ${conv.id.slice(0, 8)}`,
+            lastMessage: `${conv.message_count || 0} messages`,
+            timestamp: new Date(conv.updated_at),
+            messages: conv.messages || [],
+          }));
+          console.log('[Sidebar] Loaded', backendConversations.length, 'conversations from backend');
+          setConversations(backendConversations);
+          return;
+        }
       } catch (error) {
-        console.warn('[Sidebar] Failed to load from backend, falling back to localStorage:', error);
-        loadFromLocalStorage();
+        console.warn('[Sidebar] Failed to load from backend:', error);
+        // Continue to fallback
       }
-    } else {
-      loadFromLocalStorage();
     }
+    
+    // ✅ Fallback to localStorage
+    console.log('[Sidebar] Falling back to localStorage');
+    loadFromLocalStorage();
   }, [useBackend]);
 
   useEffect(() => {
@@ -229,13 +237,21 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Bottom Actions */}
           <div className="sidebar-footer">
-            <button className="sidebar-footer-btn" title="Settings">
-              Settings
-            </button>
             <div className="user-profile">
-              <div className="user-info">
-                <div className="user-name">User</div>
+              <div className="user-avatar">
+                {user?.email?.charAt(0).toUpperCase() || 'U'}
               </div>
+              <div className="user-info">
+                <div className="user-name">{user?.full_name || user?.email || 'User'}</div>
+                {user?.email && <div className="user-email">{user.email}</div>}
+              </div>
+              <button 
+                className="logout-btn" 
+                onClick={logout}
+                title="Logout"
+              >
+                ⎋
+              </button>
             </div>
           </div>
         </>

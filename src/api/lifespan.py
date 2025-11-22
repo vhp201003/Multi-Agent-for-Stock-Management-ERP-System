@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class AgentManager:
-    """Manages the lifecycle of all agents and managers."""
-
     def __init__(self):
         self.orchestrator: OrchestratorAgent = None
         self.inventory_agent: InventoryAgent = None
@@ -30,11 +28,9 @@ class AgentManager:
         self.redis_client = None
 
     async def start(self):
-        """Initialize and start all agents and managers."""
         try:
             logger.info("Starting all agents and managers...")
 
-            # Initialize agents
             self.orchestrator = OrchestratorAgent()
             self.inventory_agent = InventoryAgent()
             self.chat_agent = ChatAgent()
@@ -44,7 +40,6 @@ class AgentManager:
             self.analytics_manager = AnalyticsManager()
             self.redis_client = self.orchestrator.redis
 
-            # Create background tasks
             self.tasks = [
                 asyncio.create_task(self.orchestrator.start(), name="orchestrator"),
                 asyncio.create_task(
@@ -71,7 +66,6 @@ class AgentManager:
             raise
 
     async def stop(self):
-        """Stop all agents and managers gracefully."""
         logger.info("Initiating graceful shutdown...")
 
         for task in self.tasks:
@@ -96,7 +90,6 @@ agent_manager = AgentManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan context manager."""
     await agent_manager.start()
     yield
     await agent_manager.stop()

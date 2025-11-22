@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 async def load_or_create_conversation(
-    redis_client, conversation_id: str
+    redis_client, conversation_id: str, user_id: Optional[str] = None
 ) -> ConversationData:
     try:
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
@@ -23,7 +23,8 @@ async def load_or_create_conversation(
                 conversation_id=conversation_id,
                 messages=[],
                 updated_at=datetime.now(),
-                max_messages=50,  # Keep last 50 messages
+                max_messages=50,
+                user_id=user_id,
             )
             await redis_client.json().set(
                 conversation_key,
@@ -88,14 +89,34 @@ async def get_summary_conversation(redis_client, conversation_id: str) -> Option
 
 
 async def get_conversation(
-    redis_client, conversation_id: str
+    redis_client, conversation_id: str, user_id: Optional[str] = None
 ) -> Optional["Conversation"]:
-    """Get a conversation by ID with proper model."""
+    """Get a conversation by ID with proper model.
+
+    Args:
+        redis_client: Redis client instance
+        conversation_id: Conversation ID to retrieve
+        user_id: Optional user ID for permission check (if provided, validates ownership)
+
+    Returns:
+        Conversation object if found, None otherwise
+    """
     try:
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
         conversation_data = await redis_client.json().get(conversation_key)
 
         if not conversation_data:
+            logger.debug(f"Conversation {conversation_id} not found")
+            return None
+
+        if (
+            user_id
+            and conversation_data.get("user_id")
+            and conversation_data.get("user_id") != user_id
+        ):
+            logger.warning(
+                f"User {user_id} attempted to access conversation {conversation_id} (owner: {conversation_data.get('user_id')})"
+            )
             return None
 
         conv_data = ConversationData(**conversation_data)
@@ -113,7 +134,7 @@ async def get_conversation(
 
 
 async def list_conversations(
-    redis_client, limit: int = 50, offset: int = 0
+    redis_client, user_id: str, limit: int = 50, offset: int = 0
 ) -> list["Conversation"]:
     """List all conversations with pagination."""
     try:
@@ -131,6 +152,14 @@ async def list_conversations(
                     conv_data_raw = await redis_client.json().get(key)
                     if conv_data_raw:
                         conv_data = ConversationData(**conv_data_raw)
+
+                        # Filter by user_id
+                        if (
+                            not hasattr(conv_data, "user_id")
+                            or conv_data.user_id != user_id
+                        ):
+                            continue
+
                         conversations.append(
                             Conversation(
                                 id=conv_data.conversation_id,
@@ -155,10 +184,15 @@ async def list_conversations(
 
 
 async def create_conversation(
-    redis_client, conversation_id: str, title: Optional[str] = None
+    redis_client,
+    conversation_id: str,
+    title: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> "Conversation":
     """Create a new conversation."""
-    conversation = await load_or_create_conversation(redis_client, conversation_id)
+    conversation = await load_or_create_conversation(
+        redis_client, conversation_id, user_id
+    )
 
     return Conversation(
         id=conversation.conversation_id,
@@ -170,14 +204,32 @@ async def create_conversation(
 
 
 async def update_conversation_title(
-    redis_client, conversation_id: str, title: str
+    redis_client, conversation_id: str, title: str, user_id: Optional[str] = None
 ) -> Optional["Conversation"]:
-    """Update conversation title (stored in metadata)."""
+    """Update conversation title (stored in metadata).
+
+    Args:
+        redis_client: Redis client
+        conversation_id: Conversation ID to update
+        title: New conversation title
+        user_id: Optional user ID for ownership validation
+    """
     try:
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
         conversation_data = await redis_client.json().get(conversation_key)
 
         if not conversation_data:
+            return None
+
+        # ✅ SECURITY: If user_id provided, validate ownership before update
+        if (
+            user_id
+            and conversation_data.get("user_id")
+            and conversation_data.get("user_id") != user_id
+        ):
+            logger.warning(
+                f"User {user_id} attempted to update conversation {conversation_id}"
+            )
             return None
 
         if "metadata" not in conversation_data:
@@ -201,10 +253,35 @@ async def update_conversation_title(
         return None
 
 
-async def delete_conversation(redis_client, conversation_id: str) -> bool:
-    """Delete a conversation."""
+async def delete_conversation(
+    redis_client, conversation_id: str, user_id: Optional[str] = None
+) -> bool:
+    """Delete a conversation.
+
+    Args:
+        redis_client: Redis client
+        conversation_id: Conversation ID to delete
+        user_id: Optional user ID for ownership validation
+    """
     try:
         conversation_key = RedisKeys.get_conversation_key(conversation_id)
+
+        # Check ownership before delete
+        conversation_data = await redis_client.json().get(conversation_key)
+        if not conversation_data:
+            return False
+
+        # ✅ SECURITY: If user_id provided, validate ownership before delete
+        if (
+            user_id
+            and conversation_data.get("user_id")
+            and conversation_data.get("user_id") != user_id
+        ):
+            logger.warning(
+                f"User {user_id} attempted to delete conversation {conversation_id}"
+            )
+            return False
+
         result = await redis_client.delete(conversation_key)
         return result > 0
 
