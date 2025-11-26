@@ -9,7 +9,12 @@ import { processLayoutWithData } from '../utils/chartDataExtractor';
 import { normalizeConversationMessages, normalizeLocalStorageMessages } from '../utils/messageNormalizer';
 import { getConversation } from '../services/conversation';
 import type { Message, LayoutField } from '../types/message';
+import type { WebSocketMessage } from '../services/websocket';
 import './ChatInterface.css';
+
+type QueueItem = 
+  | { type: 'final_response'; response: any; queryId: string }
+  | { type?: undefined; message: WebSocketMessage; queryId: string };
 
 // Extend Window interface for saveConversation
 declare global {
@@ -29,10 +34,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Toast notification helper
-  const addToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', duration = 4000) => {
+  const addToast = useCallback((message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', duration = 4000) => {
     const id = generateId();
     const newToast: ToastMessage = { id, message, type, duration };
     setToasts((prev) => [...prev, newToast]);
@@ -40,11 +45,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     if (duration) {
       setTimeout(() => removeToast(id), duration);
     }
-  };
+  }, []);
 
-  const removeToast = (id: string) => {
+  const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, []);
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = () => {
@@ -132,50 +137,86 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     }
   }, [messages, conversationId]);
 
-  const handleSendMessage = useCallback(async (inputText: string) => {
-    if (!inputText.trim() || loading) return;
+  const messageQueue = React.useRef<QueueItem[]>([]);
+  const isProcessingQueue = React.useRef(false);
 
-    // Frontend tạo query_id
-    const queryId = generateId();
-    
-    // Flag to prevent processing WebSocket updates after HTTP response
-    let responseProcessed = false;
-    
-    // Nếu là message đầu tiên, conversation_id = query_id
-    let currentConversationId = conversationId;
-    if (!currentConversationId) {
-      currentConversationId = queryId;
-      setConversationId(currentConversationId);
-    }
+  const processQueue = useCallback(async () => {
+    if (isProcessingQueue.current) return;
+    isProcessingQueue.current = true;
 
-    const userMessage: Message = {
-      id: queryId,
-      type: 'user',
-      content: inputText,
-      timestamp: new Date(),
-    };
+    while (messageQueue.current.length > 0) {
+      const item = messageQueue.current.shift();
+      
+      if (!item) continue;
 
-    setMessages((prev) => [...prev, userMessage]);
-    const queryText = inputText;
-    setLoading(true);
-
-    try {
-      // BƯỚC 1: Kết nối WebSocket TRƯỚC để không bỏ lỡ updates
-      wsService.connect(queryId);
-
-      wsService.onMessage((message) => {
-        // CRITICAL: Ignore updates after HTTP response processed
-        if (responseProcessed) {
-          console.log('Ignoring late WebSocket update after response processed');
-          return;
-        }
+      // Handle Final Response
+      if (item.type === 'final_response') {
+        const { response, queryId } = item;
         
-        // Map new message types to UI update structure
-        let uiUpdate: any = null;
+        setMessages((prevMessages) => {
+            const filtered = prevMessages.filter(msg => msg.id !== `${queryId}-thinking`);
+            
+            let layout: LayoutField[] | undefined;
+            let fullData: unknown;
+            let contentText = '';
+            
+            if (response) {
+              if (typeof response === 'string') {
+                contentText = response;
+              } else if (typeof response === 'object') {
+                const finalResponse = (response as Record<string, any>).response?.final_response || (response as Record<string, any>).final_response;
+                
+                if (finalResponse?.layout) {
+                  layout = finalResponse.layout;
+                  fullData = finalResponse.full_data;
+                  if (layout && fullData) {
+                    const processedLayout = processLayoutWithData(
+                      layout as unknown as Record<string, unknown>[],
+                      fullData
+                    );
+                    layout = processedLayout as unknown as LayoutField[];
+                  }
+                } else {
+                  contentText = JSON.stringify(response, null, 2);
+                }
+              }
+            }
+            
+            const messagesToAdd = [];
+            // Find the thinking message to preserve its updates
+            const thinkingMsg = prevMessages.find(msg => msg.id === `${queryId}-thinking`);
+            if (thinkingMsg && thinkingMsg.updates && thinkingMsg.updates.length > 0) {
+                 messagesToAdd.push({
+                    ...thinkingMsg,
+                    id: `${queryId}-thinking-display`,
+                    isThinkingExpanded: false
+                 });
+            }
 
-        switch (message.type) {
+            if (contentText || layout) {
+              messagesToAdd.push({
+                id: `${queryId}-answer`,
+                type: 'assistant',
+                content: contentText,
+                timestamp: new Date(),
+                layout: layout,
+              } as Message);
+            }
+            
+            return [...filtered, ...messagesToAdd];
+        });
+        
+        setLoading(false);
+        continue;
+      }
+
+      // Handle WebSocket Message
+      const { message, queryId } = item;
+      
+      // Map message to UI update
+      let uiUpdate: any = null;
+      switch (message.type) {
           case 'orchestrator':
-            // message.data is already a TaskUpdate object from backend
             uiUpdate = {
                 ...message.data,
                 agent_type: message.data.agent_type || 'orchestrator'
@@ -214,154 +255,143 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
               timestamp: message.timestamp
             };
             break;
-          default:
-            console.warn('Unknown message type:', message.type);
-            return;
-        }
+      }
 
-        if (!uiUpdate) return;
+      if (uiUpdate) {
+        // Special handling for Typing Effect on 'thinking' messages
+        if (message.type === 'thinking' && uiUpdate.message) {
+            const fullText = uiUpdate.message;
+            let currentText = '';
+            const chunkSize = 10; // chars per tick
+            
+            // Create the update object initially with empty message
+            const updateId = generateId();
+            const initialUpdate = { ...uiUpdate, message: '', id: updateId };
 
-        // Store all updates temporarily in thinking message
-        setMessages((prev) => {
-          const hasThinkingMsg = prev.some(msg => msg.id === `${queryId}-thinking`);
-          if (!hasThinkingMsg) {
-            const thinkingMsg: Message = {
-              id: `${queryId}-thinking`,
-              type: 'system',
-              content: '',
-              timestamp: new Date(),
-              updates: [uiUpdate],
-              isThinkingExpanded: true, // Start expanded during streaming
-            };
-            return [...prev, thinkingMsg];
-          }
-          
-          // Add updates to thinking message
-          return prev.map(msg => 
-            msg.id === `${queryId}-thinking`
-              ? { 
-                  ...msg, 
-                  updates: [...(msg.updates || []), uiUpdate],
-                  isThinkingExpanded: true, // Keep expanded while streaming
+            // Add the empty update first
+            setMessages((prev) => {
+                const hasThinkingMsg = prev.some(msg => msg.id === `${queryId}-thinking`);
+                if (!hasThinkingMsg) {
+                    return [...prev, {
+                        id: `${queryId}-thinking`,
+                        type: 'system',
+                        content: '',
+                        timestamp: new Date(),
+                        updates: [initialUpdate],
+                        isThinkingExpanded: true,
+                    }];
                 }
-              : msg
-          );
-        });
+                return prev.map(msg => 
+                    msg.id === `${queryId}-thinking`
+                    ? { ...msg, updates: [...(msg.updates || []), initialUpdate], isThinkingExpanded: true }
+                    : msg
+                );
+            });
+
+            // Type out the text
+            for (let i = 0; i < fullText.length; i += chunkSize) {
+                currentText += fullText.slice(i, i + chunkSize);
+                
+                setMessages((prev) => prev.map(msg => {
+                    if (msg.id !== `${queryId}-thinking`) return msg;
+                    const updates = msg.updates || [];
+                    const newUpdates = updates.map(u => 
+                        (u as any).id === updateId ? { ...u, message: currentText } : u
+                    );
+                    return { ...msg, updates: newUpdates };
+                }));
+                
+                await new Promise(r => setTimeout(r, 5)); // 10ms delay for typing speed
+            }
+        } else {
+            // Non-typing updates (immediate)
+            setMessages((prev) => {
+              const hasThinkingMsg = prev.some(msg => msg.id === `${queryId}-thinking`);
+              if (!hasThinkingMsg) {
+                return [...prev, {
+                  id: `${queryId}-thinking`,
+                  type: 'system',
+                  content: '',
+                  timestamp: new Date(),
+                  updates: [uiUpdate],
+                  isThinkingExpanded: true,
+                }];
+              }
+              return prev.map(msg => 
+                msg.id === `${queryId}-thinking`
+                  ? { ...msg, updates: [...(msg.updates || []), uiUpdate], isThinkingExpanded: true }
+                  : msg
+              );
+            });
+        }
+        
+        // Small delay between messages to prevent UI jitter
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+
+    isProcessingQueue.current = false;
+  }, []);
+
+  const addToQueue = useCallback((item: any) => {
+    messageQueue.current.push(item);
+    processQueue();
+  }, [processQueue]);
+
+  const handleSendMessage = useCallback(async (inputText: string) => {
+    if (!inputText.trim() || loading) return;
+
+    const queryId = generateId();
+    let currentConversationId = conversationId;
+    if (!currentConversationId) {
+      currentConversationId = queryId;
+      setConversationId(currentConversationId);
+    }
+
+    const userMessage: Message = {
+      id: queryId,
+      type: 'user',
+      content: inputText,
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    const queryText = inputText;
+    setLoading(true);
+
+    try {
+      wsService.connect(queryId);
+
+      wsService.onMessage((message) => {
+        addToQueue({ message, queryId });
       });
 
       wsService.onClose(() => {
-        // Only set loading false if response not yet processed
-        if (!responseProcessed) {
-          setLoading(false);
-        }
+         // Optional: handle close
       });
 
       wsService.onError((error) => {
         console.error('WebSocket error:', error);
-        if (!responseProcessed) {
-          setLoading(false);
-        }
       });
 
-      // BƯỚC 2: Chờ 100ms để đảm bảo WebSocket đã connected
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // BƯỚC 3: Gửi query và chờ HTTP response (final answer)
       const response = await apiService.submitQuery(
         queryId,
         queryText,
         currentConversationId
       );
 
-      // BƯỚC 4: Process HTTP response - convert thinking message and add final answer
-      // CRITICAL: Mark response as processed FIRST to prevent race conditions
-      responseProcessed = true;
-      
-      // Then disconnect WebSocket to prevent duplicate thinking blocks
+      // Push final response to queue
+      addToQueue({ type: 'final_response', response, queryId });
+
       wsService.disconnect();
       wsService.clearHandlers();
-      
-      setMessages((prevMessages) => {
-        const thinkingMsg = prevMessages.find(msg => msg.id === `${queryId}-thinking`);
-        const allUpdates = thinkingMsg?.updates || [];
-        
-        // Remove temporary thinking message
-        const filtered = prevMessages.filter(msg => msg.id !== `${queryId}-thinking`);
-        
-        // Parse response for layout
-        let layout: LayoutField[] | undefined;
-        let fullData: unknown;
-        let contentText = '';
-        
-        if (response) {
-          if (typeof response === 'string') {
-            contentText = response;
-          } else if (typeof response === 'object') {
-            // Extract final_response from HTTP response
-            const finalResponse = (response as Record<string, any>).response?.final_response || (response as Record<string, any>).final_response;
-            
-            if (finalResponse?.layout) {
-              // Extract layout and full_data
-              layout = finalResponse.layout;
-              fullData = finalResponse.full_data;
-              
-              // Process layout to fill chart data from full_data
-              if (layout && fullData) {
-                const processedLayout = processLayoutWithData(
-                  layout as unknown as Record<string, unknown>[],
-                  fullData
-                );
-                layout = processedLayout as unknown as LayoutField[];
-              }
-            } else {
-              // Fallback to JSON string
-              contentText = JSON.stringify(response, null, 2);
-            }
-          }
-        }
-        
-        // Create messages to add
-        const messagesToAdd = [];
-        
-        // Add thinking process if we have updates
-        if (allUpdates.length > 0) {
-          const displayThinkingMsg: Message = {
-            id: `${queryId}-thinking-display`,
-            type: 'system',
-            content: '',
-            timestamp: new Date(),
-            updates: allUpdates,
-            isThinkingExpanded: false, // Collapse after response complete
-          };
-          messagesToAdd.push(displayThinkingMsg);
-        }
-        
-        // Add assistant message with final answer
-        if (contentText || layout) {
-          const assistantMessage: Message = {
-            id: `${queryId}-answer`,
-            type: 'assistant',
-            content: contentText,
-            timestamp: new Date(),
-            layout: layout,
-          };
-          messagesToAdd.push(assistantMessage);
-        }
-        
-        return [...filtered, ...messagesToAdd];
-      });
-      
-      // IMPORTANT: Set loading to false after processing response
-      setLoading(false);
 
     } catch (error) {
       console.error('Failed to send message:', error);
-      
-      // CRITICAL: Mark as processed and disconnect to prevent duplicate blocks
-      responseProcessed = true;
       wsService.disconnect();
       wsService.clearHandlers();
-      
       setLoading(false);
       
       const errorMessage: Message = {
@@ -373,7 +403,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       setMessages((prev) => [...prev, errorMessage]);
       addToast('Failed to send message. Please try again.', 'error');
     }
-  }, [loading, conversationId]);
+  }, [loading, conversationId, addToQueue, addToast]);
 
   // Render graph/chart
   const renderGraph = (field: LayoutField, index: number) => {
@@ -551,7 +581,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   };
 
   // Generic helper function to extract tool result summary
-  const extractToolResultSummary = (toolResult: any, toolName: string): string => {
+  const extractToolResultSummary = (toolResult: any): string => {
+
     // Handle string results
     if (typeof toolResult === 'string') {
       return toolResult;
@@ -724,7 +755,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                                   {tool.tool_result && (
                                     <details className="tool-result-details">
                                       <summary className="tool-result-summary">
-                                        <strong>Result:</strong> {extractToolResultSummary(tool.tool_result, tool.tool_name)}
+                                        <strong>Result:</strong> {extractToolResultSummary(tool.tool_result)}
                                         <span className="result-toggle">▼</span>
                                       </summary>
                                       <div className="tool-result-full">
