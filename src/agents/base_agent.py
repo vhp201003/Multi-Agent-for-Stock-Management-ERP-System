@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from config.settings import get_agent_config
 from src.communication import get_async_redis_connection, get_groq_client
 from src.typing import BaseMessage, BaseSchema
+from src.typing.redis.constants import RedisChannels
 
 load_dotenv()
 
@@ -118,6 +119,19 @@ class BaseAgent(ABC):
 
                 llm_reasoning = getattr(message, "reasoning", None)
 
+                # Broadcast reasoning if available
+                if llm_reasoning and query_id:
+                    from src.typing.redis.constants import MessageType
+
+                    await self.publish_broadcast(
+                        RedisChannels.get_query_updates_channel(query_id),
+                        MessageType.THINKING,
+                        {
+                            "reasoning": llm_reasoning,
+                            "agent_type": self.agent_type,
+                        },
+                    )
+
                 if tool_calls and tools and tool_executor:
                     assistant_msg = {
                         "role": "assistant",
@@ -209,6 +223,21 @@ class BaseAgent(ABC):
 
         except Exception as e:
             logger.error(f"Message publish failed for {channel}: {e}")
+
+    async def publish_broadcast(
+        self,
+        channel: str,
+        message_type: str,  # MessageType enum value
+        data: Dict[str, Any],
+    ):
+        """Publish a structured broadcast message."""
+        try:
+            from src.typing.redis.constants import BroadcastMessage
+
+            message = BroadcastMessage(type=message_type, data=data)
+            await self.redis.publish(channel, message.model_dump_json())
+        except Exception as e:
+            logger.error(f"Broadcast publish failed for {channel}: {e}")
 
     @abstractmethod
     async def start(self):

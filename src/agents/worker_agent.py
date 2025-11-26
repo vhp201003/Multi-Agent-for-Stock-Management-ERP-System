@@ -90,7 +90,9 @@ class WorkerAgent(BaseAgent):
         # Define tool executor for ReAct loop
         async def tool_executor(tool_calls: List[Any]) -> List[Dict[str, Any]]:
             return await self._execute_tools(
-                tool_calls, worker_process_result.tools_result
+                tool_calls,
+                worker_process_result.tools_result,
+                worker_process_result.query_id,
             )
 
         # Call LLM with ReAct loop
@@ -113,6 +115,7 @@ class WorkerAgent(BaseAgent):
         self,
         tool_calls: List[Any],
         tools_result_accumulator: List[ToolCallResultResponse],
+        query_id: str,
     ) -> List[Dict[str, Any]]:
         tool_results_messages = []
         for tool_call in tool_calls:
@@ -163,6 +166,20 @@ class WorkerAgent(BaseAgent):
                     }
                 )
 
+                # Broadcast tool execution
+                from src.typing.redis.constants import MessageType
+
+                await self.publish_broadcast(
+                    RedisChannels.get_query_updates_channel(query_id),
+                    MessageType.TOOL_EXECUTION,
+                    {
+                        "tool_name": tool_name,
+                        "parameters": parameters,
+                        "result": tool_result,  # Frontend can handle full result or we can truncate
+                        "agent_type": self.agent_type,
+                    },
+                )
+
             except Exception as e:
                 logger.error(
                     f"{self.agent_type}: Tool call failed for {tool_call}: {e}"
@@ -185,6 +202,18 @@ class WorkerAgent(BaseAgent):
                         "tool_call_id": tool_call.id,
                         "content": json.dumps({"error": error_message}),
                     }
+                )
+
+                # Broadcast error
+                from src.typing.redis.constants import MessageType
+
+                await self.publish_broadcast(
+                    RedisChannels.get_query_updates_channel(query_id),
+                    MessageType.ERROR,
+                    {
+                        "error": error_message,
+                        "agent_type": self.agent_type,
+                    },
                 )
 
         return tool_results_messages
@@ -309,10 +338,12 @@ class WorkerAgent(BaseAgent):
                 RedisChannels.TASK_UPDATES, task_update, TaskUpdate
             )
             # Also publish to the query-specific updates channel
-            await self.publish_channel(
+            from src.typing.redis.constants import MessageType
+
+            await self.publish_broadcast(
                 RedisChannels.get_query_updates_channel(command_message.query_id),
-                task_update,
-                TaskUpdate,
+                MessageType.TASK_UPDATE,
+                task_update.model_dump(),
             )
 
     async def find_task_id_by_query(

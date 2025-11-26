@@ -80,8 +80,9 @@ async def websocket_handler(websocket: WebSocket, query_id: str):
                     and data.get("agent_type") == "chat_agent"
                 ):
                     logger.info(f"Query {query_id} completed, closing WebSocket")
-                    await websocket.close(code=1000, reason="Query completed")
-                    break
+                    # Don't close immediately, let frontend handle it or wait for timeout
+                    # await websocket.close(code=1000, reason="Query completed")
+                    # break
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for query_id: {query_id}")

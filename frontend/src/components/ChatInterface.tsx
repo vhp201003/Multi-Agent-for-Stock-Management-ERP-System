@@ -163,14 +163,63 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       // BƯỚC 1: Kết nối WebSocket TRƯỚC để không bỏ lỡ updates
       wsService.connect(queryId);
 
-      wsService.onMessage((update) => {
+      wsService.onMessage((message) => {
         // CRITICAL: Ignore updates after HTTP response processed
         if (responseProcessed) {
           console.log('Ignoring late WebSocket update after response processed');
           return;
         }
         
-        console.log('WebSocket update:', update);
+        // Map new message types to UI update structure
+        let uiUpdate: any = null;
+
+        switch (message.type) {
+          case 'orchestrator':
+            // message.data is already a TaskUpdate object from backend
+            uiUpdate = {
+                ...message.data,
+                agent_type: message.data.agent_type || 'orchestrator'
+            };
+            break;
+          case 'tool_execution':
+            uiUpdate = {
+              agent_type: message.data.agent_type || 'worker',
+              status: 'done',
+              result: {
+                tool_results: [{
+                  tool_name: message.data.tool_name,
+                  parameters: message.data.parameters,
+                  tool_result: message.data.result
+                }]
+              },
+              timestamp: message.timestamp
+            };
+            break;
+          case 'thinking':
+            uiUpdate = {
+              agent_type: message.data.agent_type || 'worker',
+              status: 'processing',
+              message: message.data.reasoning,
+              timestamp: message.timestamp
+            };
+            break;
+          case 'task_update':
+            uiUpdate = message.data;
+            break;
+          case 'error':
+             uiUpdate = {
+              agent_type: message.data.agent_type || 'system',
+              status: 'failed',
+              message: message.data.error,
+              timestamp: message.timestamp
+            };
+            break;
+          default:
+            console.warn('Unknown message type:', message.type);
+            return;
+        }
+
+        if (!uiUpdate) return;
 
         // Store all updates temporarily in thinking message
         setMessages((prev) => {
@@ -181,7 +230,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
               type: 'system',
               content: '',
               timestamp: new Date(),
-              updates: [update],
+              updates: [uiUpdate],
               isThinkingExpanded: true, // Start expanded during streaming
             };
             return [...prev, thinkingMsg];
@@ -192,7 +241,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
             msg.id === `${queryId}-thinking`
               ? { 
                   ...msg, 
-                  updates: [...(msg.updates || []), update],
+                  updates: [...(msg.updates || []), uiUpdate],
                   isThinkingExpanded: true, // Keep expanded while streaming
                 }
               : msg

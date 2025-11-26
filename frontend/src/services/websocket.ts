@@ -1,17 +1,16 @@
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8010';
 
+export type MessageType = 
+  | 'orchestrator'
+  | 'tool_execution'
+  | 'thinking'
+  | 'task_update'
+  | 'error';
+
 export interface WebSocketMessage {
-  status: string;
-  agent_type?: string;
-  step?: string;
-  message?: string;
-  result?: any; // Changed from string to any to support objects
-  llm_usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-  timestamp?: string;
+  type: MessageType;
+  data: any;
+  timestamp: string;
 }
 
 export type MessageHandler = (message: WebSocketMessage) => void;

@@ -107,10 +107,16 @@ class OrchestratorAgent(BaseAgent):
                 llm_usage={},
                 agent_type="orchestrator",
             )
-            await self.publish_channel(
+            
+            from src.typing.redis.constants import MessageType
+
+            await self.publish_broadcast(
                 RedisChannels.get_query_updates_channel(request.query_id),
-                initial_update,
-                TaskUpdate,
+                MessageType.ORCHESTRATOR,
+                {
+                    **initial_update.model_dump(),
+                    "agent_type": "orchestrator",
+                },
             )
 
         except Exception as e:

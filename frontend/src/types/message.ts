@@ -34,7 +34,12 @@ export interface TaskUpdate {
   status: 'processing' | 'done' | 'failed';
   message?: string;
   sub_query?: string;
-  result?: unknown;
+  result?: any;
+  llm_usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 export interface Message {

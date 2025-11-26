@@ -64,3 +64,23 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     ERROR = "error"
     PROCESSING = "processing"
+
+
+from datetime import datetime
+from typing import Any, Dict
+
+from pydantic import BaseModel, Field
+
+
+class MessageType(str, Enum):
+    ORCHESTRATOR = "orchestrator"
+    TOOL_EXECUTION = "tool_execution"
+    THINKING = "thinking"
+    TASK_UPDATE = "task_update"
+    ERROR = "error"
+
+
+class BroadcastMessage(BaseModel):
+    type: MessageType
+    data: Dict[str, Any]
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
