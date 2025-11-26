@@ -3,12 +3,13 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from toon import encode
+
 from config.prompts.worker import build_worker_agent_prompt
 from config.settings import get_agent_config
 from src.mcp.client import MCPClient
 from src.typing import (
     ResourceCallResponse,
-    ToolCallResponse,
     ToolCallResultResponse,
     WorkerAgentProcessResponse,
 )
@@ -81,79 +82,112 @@ class WorkerAgent(BaseAgent):
         if hasattr(self, "_mcp_tools_for_groq"):
             groq_tools = self._mcp_tools_for_groq
 
-        # Call LLM with tools but WITHOUT response_schema
-        # Groq will return tool_calls in message.tool_calls
-        llm_response: ToolCallResponse = await self._call_llm(
-            query_id=command_message.query_id,
-            conversation_id=command_message.conversation_id,
-            messages=messages,
-            response_model=ToolCallResponse,
-            tools=groq_tools,
-        )
-
-        ### Phase 3: Extract tool calls from Groq and execute them
+        # Initialize result object
         worker_process_result = WorkerAgentProcessResponse()
         worker_process_result.query_id = command_message.query_id
         worker_process_result.conversation_id = command_message.conversation_id
-        worker_process_result.llm_reasoning = llm_response.llm_reasoning
 
-        # Extract tool_calls from Groq response
-        groq_tool_calls = []
-        if (
-            isinstance(llm_response.result, dict)
-            and "tool_calls" in llm_response.result
-        ):
-            groq_tool_calls = llm_response.result.get("tool_calls", [])
+        # Define tool executor for ReAct loop
+        async def tool_executor(tool_calls: List[Any]) -> List[Dict[str, Any]]:
+            return await self._execute_tools(
+                tool_calls, worker_process_result.tools_result
+            )
 
-        if groq_tool_calls:
-            for groq_tool_call in groq_tool_calls:
-                # groq_tool_call is ChatCompletionMessageToolCall
-                # Extract tool_name and parameters from groq_tool_call.function
-                try:
-                    tool_name = groq_tool_call.function.name
-                    # Parameters come as JSON string, need to parse
-                    parameters_json = groq_tool_call.function.arguments
-                    if isinstance(parameters_json, str):
-                        parameters = json.loads(parameters_json)
-                    else:
-                        parameters = parameters_json
+        # Call LLM with ReAct loop
+        result, llm_usage, llm_reasoning = await self._call_llm(
+            query_id=command_message.query_id,
+            messages=messages,
+            tools=groq_tools,
+            tool_executor=tool_executor,
+        )
 
-                    tool_result: Dict[str, Any] = await self.call_mcp_tool(
-                        tool_name, parameters
-                    )
-                    # Parse JSON string to dict if needed
-                    if isinstance(tool_result, str):
-                        tool_result = json.loads(tool_result)
+        worker_process_result.llm_reasoning = llm_reasoning
+        worker_process_result.llm_usage = llm_usage
 
-                    worker_process_result.tools_result.append(
-                        ToolCallResultResponse(
-                            tool_name=tool_name,
-                            parameters=parameters,
-                            tool_result=tool_result,
-                        )
-                    )
-                    logger.debug(
-                        f"{self.agent_type}: Executed tool '{tool_name}' with result"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"{self.agent_type}: Tool call failed for {groq_tool_call}: {e}"
-                    )
-                    worker_process_result.tools_result.append(
-                        ToolCallResultResponse(
-                            tool_name=getattr(
-                                groq_tool_call.function, "name", "unknown"
-                            ),
-                            parameters=json.loads(
-                                getattr(groq_tool_call.function, "arguments", "{}")
-                            ),
-                            tool_result={"error": f"Tool call failed: {str(e)}"},
-                        )
-                    )
-        else:
-            logger.debug(f"{self.agent_type}: No tool calls requested by LLM")
+        if isinstance(result, str):
+            logger.debug(f"{self.agent_type}: Final LLM response: {result}")
 
         return worker_process_result
+
+    async def _execute_tools(
+        self,
+        tool_calls: List[Any],
+        tools_result_accumulator: List[ToolCallResultResponse],
+    ) -> List[Dict[str, Any]]:
+        tool_results_messages = []
+        for tool_call in tool_calls:
+            try:
+                tool_name = tool_call.function.name
+                parameters_json = tool_call.function.arguments
+                if isinstance(parameters_json, str):
+                    parameters = json.loads(parameters_json)
+                else:
+                    parameters = parameters_json
+
+                tool_result: Dict[str, Any] = await self.call_mcp_tool(
+                    tool_name, parameters
+                )
+
+                if isinstance(tool_result, str):
+                    tool_result = json.loads(tool_result)
+
+                tools_result_accumulator.append(
+                    ToolCallResultResponse(
+                        tool_name=tool_name,
+                        parameters=parameters,
+                        tool_result=tool_result,
+                    )
+                )
+                logger.debug(
+                    f"{self.agent_type}: Executed tool '{tool_name}' with result"
+                )
+
+                # Truncate tool result for LLM context if too large
+                try:
+                    tool_result_str = encode(tool_result)
+                except Exception as e:
+                    logger.warning(f"Toon encoding failed, falling back to JSON: {e}")
+                    tool_result_str = json.dumps(tool_result)
+
+                if len(tool_result_str) > 20000:
+                    tool_result_str = (
+                        tool_result_str[:20000]
+                        + f"... (truncated {len(tool_result_str) - 20000} chars)"
+                    )
+
+                tool_results_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result_str,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"{self.agent_type}: Tool call failed for {tool_call}: {e}"
+                )
+                error_message = f"Tool call failed: {str(e)}"
+
+                tools_result_accumulator.append(
+                    ToolCallResultResponse(
+                        tool_name=getattr(tool_call.function, "name", "unknown"),
+                        parameters=json.loads(
+                            getattr(tool_call.function, "arguments", "{}")
+                        ),
+                        tool_result={"error": error_message},
+                    )
+                )
+
+                tool_results_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({"error": error_message}),
+                    }
+                )
+
+        return tool_results_messages
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()

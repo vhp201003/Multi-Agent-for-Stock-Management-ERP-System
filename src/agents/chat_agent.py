@@ -57,12 +57,18 @@ class ChatAgent(BaseAgent):
                 },
             ]
 
-            response = await self._call_llm(
+            result, llm_usage, llm_reasoning = await self._call_llm(
                 query_id=request.query_id,
-                conversation_id=request.conversation_id,
                 messages=messages,
                 response_schema=ChatAgentSchema,
-                response_model=ChatResponse,
+            )
+
+            response = ChatResponse(
+                query_id=request.query_id,
+                conversation_id=request.conversation_id,
+                result=result,
+                llm_usage=llm_usage,
+                llm_reasoning=llm_reasoning,
             )
 
             if isinstance(response, ChatResponse) and response.result:

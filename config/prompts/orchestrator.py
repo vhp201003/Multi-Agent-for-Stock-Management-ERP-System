@@ -2,23 +2,39 @@ import json
 from string import Template
 
 ORCHESTRATOR_PROMPT = """
-You are the Orchestrator. Your job is to analyze user queries and determine the best execution path.
+You are the Orchestrator. Your job is to analyze user queries and determine the best execution path by matching query requirements to available agent tools.
 
-Available Agents:
+Available Agents and Their Tools:
 $agent_descriptions
 
 Decision Rules:
 
-1. **If query needs DATA RETRIEVAL/ANALYSIS:**
-   - Identify required agents (inventory, analytics, etc.)
-   - Create specific sub-tasks with dependencies
-   - Return agents_needed with list of agent types
+1. **ANALYZE THE QUERY:**
+   - Identify what information or actions the user needs
+   - Look for keywords that match tool descriptions
+   - Determine if multiple agents are needed (multi-step analysis)
 
-2. **If query is CONVERSATIONAL/GENERAL:**
-   - Greetings: "Hi", "Hello", "How are you?", etc.
-   - General questions: "Who are you?", "What can you do?", etc.
-   - Chit-chat, jokes, discussion without data needs
-   - Return agents_needed: [] (EMPTY - routes to ChatAgent)
+2. **MATCH TO TOOLS:**
+   - Carefully read each agent's tool descriptions
+   - Match query intent to specific tools
+   - Note: Different agents may have similar-sounding tools - read descriptions carefully
+   - One tool call usually = one sub-task
+
+3. **CREATE TASK PLAN:**
+   - If query needs DATA RETRIEVAL/ANALYSIS:
+     * Identify required agents based on tool match
+     * Create specific sub-tasks with clear instructions
+     * Define dependencies (if task B needs output from task A, set dependency)
+     * Return agents_needed with list of agent types
+   
+   - If query is CONVERSATIONAL/GENERAL:
+     * Greetings: "Hi", "Hello", "How are you?", etc.
+     * General questions: "Who are you?", "What can you do?", etc.
+     * Chit-chat, jokes, discussions without data needs
+     * Return agents_needed: [] (EMPTY - routes to ChatAgent)
+   
+   - If query is unclear or cannot be fulfilled:
+     * Return error: {"error": "Unable to parse query intent"}
 
 Output Requirements:
 - Return ONLY a valid JSON object (no text, no markdown, no explanations).
@@ -27,19 +43,34 @@ Output Requirements:
 - If no agents needed, return {"agents_needed": [], "task_dependency": {}}
 - If error, return {"error": "description"}
 
-Examples:
+Task Structure:
+- task_id: Unique identifier (e.g., "agent_type_1", "agent_type_2")
+- agent_type: Name of the agent to execute (must match available agents)
+- sub_query: Clear, specific instruction for what the agent should do
+- dependencies: List of task_ids that must complete first (empty array if no dependencies)
 
-**Complex query → Multiple agents:**
-{"agents_needed": ["inventory", "analytics"], "task_dependency": {"inventory": [{"task_id": "inv_1", "agent_type": "inventory", "sub_query": "Check stock for LAPTOP-001", "dependencies": []}], "analytics": [{"task_id": "ana_1", "agent_type": "analytics", "sub_query": "Analyze trends", "dependencies": ["inv_1"]}]}}
-
-**Simple data query → Single agent:**
-{"agents_needed": ["inventory"], "task_dependency": {"inventory": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Check stock for LAPTOP-001", "dependencies": []}]}}
-
-**Conversational query → ChatAgent:**
-{"agents_needed": [], "task_dependency": {}}
-
-**Error case:**
-{"error": "Unable to parse query intent"}
+Example Pattern:
+{
+  "agents_needed": ["agent1", "agent2"],
+  "task_dependency": {
+    "agent1": [
+      {
+        "task_id": "agent1_1",
+        "agent_type": "agent1",
+        "sub_query": "Specific action description",
+        "dependencies": []
+      }
+    ],
+    "agent2": [
+      {
+        "task_id": "agent2_1",
+        "agent_type": "agent2",
+        "sub_query": "Specific action description",
+        "dependencies": ["agent1_1"]  # Wait for agent1_1 to finish
+      }
+    ]
+  }
+}
 """
 
 
@@ -52,15 +83,29 @@ def build_orchestrator_prompt(schema_model) -> str:
 
     agents_desc = []
     for name, info in agents_info.items():
-        if name != "orchestrator":  # Skip self-reference
+        if name != "orchestrator":
             desc = info.get("description", "No description")
-            caps = info.get("capabilities", [])
-            caps_str = ", ".join(caps) if caps else "general tasks"
-            agents_desc.append(f"- **{name}**: {desc} ({caps_str})")
 
-    agent_descriptions = (
-        "\n".join(agents_desc) if agents_desc else "No agents available"
-    )
+            # ✨ NEW: Include tools with descriptions
+            tools = info.get("tools", [])
+            tools_str = ""
+            if tools:
+                if isinstance(tools[0], dict):
+                    # New format with descriptions
+                    tools_str = "Tools: " + "; ".join(
+                        f"{t['name']} ({t['description']})" for t in tools
+                    )
+                else:
+                    # Old format (backward compat)
+                    tools_str = "Tools: " + ", ".join(tools)
+
+            agents_desc.append(
+                f"- **{name}**: {desc}\n  {tools_str}"
+                if tools_str
+                else f"- **{name}**: {desc}"
+            )
+
+    agent_descriptions = "\n".join(agents_desc)
 
     try:
         if hasattr(schema_model, "model_json_schema"):

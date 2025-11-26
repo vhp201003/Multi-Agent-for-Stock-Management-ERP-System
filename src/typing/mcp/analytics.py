@@ -8,13 +8,13 @@ from src.typing.mcp.base import MCPToolOutputSchema
 class TopPerformersItem(BaseModel):
     """Schema for individual item in analyze_top_performers output."""
 
-    rank: int = Field(..., ge=1, description="Rank position")
+    rank: int = Field(..., description="Rank position")
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
-    qty: float = Field(..., ge=0, description="Sold quantity")
-    revenue: float = Field(..., ge=0, description="Revenue")
+    qty: float = Field(..., description="Sold quantity")
+    revenue: float = Field(..., description="Revenue")
     share_pct: float = Field(
-        ..., ge=0, le=1, description="Percentage of total metric (qty or revenue)"
+        ..., description="Percentage of total metric (qty or revenue)"
     )
     sparkline_qty: list[float] = Field(
         ..., description="Daily sales trend for short-term analysis"
@@ -27,7 +27,7 @@ class TopPerformersFilters(BaseModel):
     from_date: str = Field(..., description="Start date for sales data (YYYY-MM-DD)")
     to_date: str = Field(..., description="End date for sales data (YYYY-MM-DD)")
     metric: str = Field(..., description="Ranking metric: qty or revenue")
-    top_n: int = Field(..., ge=1, description="Number of top items to return")
+    top_n: int = Field(..., description="Number of top items to return")
     warehouses: list[str] = Field(..., description="List of warehouse names")
     channels: list[str] = Field(..., description="Sales channels: POS, Online, etc.")
     exclude_returns: bool = Field(
@@ -39,9 +39,9 @@ class TopPerformersFilters(BaseModel):
 class TopPerformersSummary(BaseModel):
     """Schema for summary in analyze_top_performers."""
 
-    total_qty: float = Field(..., ge=0, description="Total sold quantity")
-    total_revenue: float = Field(..., ge=0, description="Total revenue")
-    total_sku_sold: int = Field(..., ge=0, description="Number of unique SKUs sold")
+    total_qty: float = Field(..., description="Total sold quantity")
+    total_revenue: float = Field(..., description="Total revenue")
+    total_sku_sold: int = Field(..., description="Number of unique SKUs sold")
 
 
 class TopPerformersOutput(MCPToolOutputSchema):
@@ -60,7 +60,7 @@ class SlowMoversSuggestion(BaseModel):
 
     action: str = Field(..., description="Suggested action: markdown, bundle")
     discount_pct: float | None = Field(
-        None, ge=0, description="Discount percentage for markdown"
+        None, description="Discount percentage for markdown"
     )
     bundle_with: list[str] | None = Field(None, description="Item codes to bundle with")
 
@@ -71,11 +71,11 @@ class SlowMoversItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
     sell_through_rate: float = Field(
-        ..., ge=0, le=1, description="Sold qty / (opening stock + incoming)"
+        ..., description="Sold qty / (opening stock + incoming)"
     )
     gmroi: float = Field(..., description="Gross Margin Return on Investment")
-    stock_balance: float = Field(..., ge=0, description="Current stock balance")
-    days_without_sale: int = Field(..., ge=0, description="Days without sales")
+    stock_balance: float = Field(..., description="Current stock balance")
+    days_without_sale: int = Field(..., description="Days without sales")
     suggestion: SlowMoversSuggestion | None = Field(
         None, description="Suggested action"
     )
@@ -86,13 +86,11 @@ class SlowMoversFilters(BaseModel):
 
     from_date: str = Field(..., description="Start date for sales data (YYYY-MM-DD)")
     to_date: str = Field(..., description="End date for sales data (YYYY-MM-DD)")
-    top_n: int = Field(..., ge=1, description="Number of slow-moving items to return")
-    min_days_on_sale: int = Field(
-        ..., ge=0, description="Minimum days on sale to consider"
-    )
+    top_n: int = Field(..., description="Number of slow-moving items to return")
+    min_days_on_sale: int = Field(..., description="Minimum days on sale to consider")
     warehouses: list[str] = Field(..., description="List of warehouse names")
     min_stock_balance: float = Field(
-        ..., ge=0, description="Minimum stock balance to consider"
+        ..., description="Minimum stock balance to consider"
     )
 
 
@@ -100,11 +98,9 @@ class SlowMoversSummary(BaseModel):
     """Schema for summary in analyze_slow_movers."""
 
     total_stock_balance: float = Field(
-        ..., ge=0, description="Total stock balance of slow movers"
+        ..., description="Total stock balance of slow movers"
     )
-    avg_sell_through_rate: float = Field(
-        ..., ge=0, description="Average sell-through rate"
-    )
+    avg_sell_through_rate: float = Field(..., description="Average sell-through rate")
     avg_gmroi: float = Field(..., description="Average GMROI")
 
 
@@ -127,10 +123,10 @@ class MoversShakersItem(BaseModel):
     growth_pct: float = Field(
         ..., description="Percentage growth compared to previous period"
     )
-    qty_current: float = Field(..., ge=0, description="Quantity in current period")
-    qty_prev: float = Field(..., ge=0, description="Quantity in previous period")
-    revenue_current: float = Field(..., ge=0, description="Revenue in current period")
-    revenue_prev: float = Field(..., ge=0, description="Revenue in previous period")
+    qty_current: float = Field(..., description="Quantity in current period")
+    qty_prev: float = Field(..., description="Quantity in previous period")
+    revenue_current: float = Field(..., description="Revenue in current period")
+    revenue_prev: float = Field(..., description="Revenue in previous period")
 
 
 class MoversShakersFilters(BaseModel):
@@ -143,17 +139,17 @@ class MoversShakersFilters(BaseModel):
         ..., description="Previous period: {from: YYYY-MM-DD, to: YYYY-MM-DD}"
     )
     metric: str = Field(..., description="Comparison metric: qty or revenue")
-    top_n: int = Field(..., ge=1, description="Number of movers to return")
+    top_n: int = Field(..., description="Number of movers to return")
 
 
 class MoversShakersSummary(BaseModel):
     """Schema for summary in track_movers_shakers."""
 
     total_movers_up: int = Field(
-        ..., ge=0, description="Number of items with positive growth"
+        ..., description="Number of items with positive growth"
     )
     total_movers_down: int = Field(
-        ..., ge=0, description="Number of items with negative growth"
+        ..., description="Number of items with negative growth"
     )
     avg_growth_pct: float = Field(..., description="Average growth percentage")
 
@@ -174,10 +170,8 @@ class ParetoAnalysisItem(BaseModel):
 
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
-    revenue: float = Field(..., ge=0, description="Revenue contribution")
-    cum_share: float = Field(
-        ..., ge=0, le=1, description="Cumulative share of total metric"
-    )
+    revenue: float = Field(..., description="Revenue contribution")
+    cum_share: float = Field(..., description="Cumulative share of total metric")
 
 
 class ParetoAnalysisFilters(BaseModel):
@@ -191,13 +185,11 @@ class ParetoAnalysisFilters(BaseModel):
 class ParetoAnalysisSummary(BaseModel):
     """Schema for summary in perform_pareto_analysis."""
 
-    cutoff_pct: float = Field(
-        ..., ge=0, le=1, description="Pareto cutoff percentage, e.g., 0.8"
-    )
+    cutoff_pct: float = Field(..., description="Pareto cutoff percentage, e.g., 0.8")
     count_to_80pct: int = Field(
-        ..., ge=0, description="Number of items reaching 80% of total"
+        ..., description="Number of items reaching 80% of total"
     )
-    total_revenue: float = Field(..., ge=0, description="Total revenue")
+    total_revenue: float = Field(..., description="Total revenue")
 
 
 class ParetoAnalysisOutput(MCPToolOutputSchema):
@@ -219,9 +211,9 @@ class StockCoverageRecommendation(BaseModel):
     )
     note: str | None = Field(None, description="Additional note for the recommendation")
     discount_pct: float | None = Field(
-        None, ge=0, description="Discount percentage for markdown"
+        None, description="Discount percentage for markdown"
     )
-    order_qty: float | None = Field(None, ge=0, description="Suggested order quantity")
+    order_qty: float | None = Field(None, description="Suggested order quantity")
 
 
 class StockCoverageItem(BaseModel):
@@ -230,12 +222,12 @@ class StockCoverageItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
     warehouse: str = Field(..., description="Warehouse name")
-    stock_qty: float = Field(..., ge=0, description="Current stock quantity")
+    stock_qty: float = Field(..., description="Current stock quantity")
     avg_daily_sales: float = Field(
-        ..., ge=0, description="Average daily sales over lookback period"
+        ..., description="Average daily sales over lookback period"
     )
     doc_days: float = Field(
-        ..., ge=0, description="Stock Cover Days (stock_qty / avg_daily_sales)"
+        ..., description="Stock Cover Days (stock_qty / avg_daily_sales)"
     )
     recommendation: StockCoverageRecommendation | None = Field(
         None, description="Recommended action"
@@ -248,32 +240,24 @@ class StockCoverageFilters(BaseModel):
     warehouses: list[str] = Field(..., description="List of warehouse names")
     item_groups: list[str] | None = Field(None, description="List of item groups")
     items: list[str] | None = Field(None, description="List of specific item codes")
-    lookback_days: int = Field(
-        ..., ge=1, description="Days to calculate avg daily sales"
-    )
+    lookback_days: int = Field(..., description="Days to calculate avg daily sales")
     min_doc_days: float | None = Field(
-        None, ge=0, description="Minimum Stock Cover Days filter"
+        None, description="Minimum Stock Cover Days filter"
     )
     max_doc_days: float | None = Field(
-        None, ge=0, description="Maximum Stock Cover Days filter"
+        None, description="Maximum Stock Cover Days filter"
     )
-    top_n: int | None = Field(
-        None, ge=1, description="Limit to top N items by stock_qty"
-    )
+    top_n: int | None = Field(None, description="Limit to top N items by stock_qty")
 
 
 class StockCoverageSummary(BaseModel):
     """Schema for summary in analyze_stock_coverage."""
 
     avg_doc_days: float = Field(
-        ..., ge=0, description="Average Stock Cover Days across items"
+        ..., description="Average Stock Cover Days across items"
     )
-    items_low_coverage: int = Field(
-        ..., ge=0, description="Number of items with low DoC"
-    )
-    items_high_coverage: int = Field(
-        ..., ge=0, description="Number of items with high DoC"
-    )
+    items_low_coverage: int = Field(..., description="Number of items with low DoC")
+    items_high_coverage: int = Field(..., description="Number of items with high DoC")
 
 
 class StockCoverageOutput(MCPToolOutputSchema):

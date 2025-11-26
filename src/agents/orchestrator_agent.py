@@ -149,12 +149,18 @@ class OrchestratorAgent(BaseAgent):
     async def _run_llm_orchestration(
         self, request: Request, messages: List[Dict[str, Any]]
     ) -> OrchestratorResponse:
-        return await self._call_llm(
+        result, llm_usage, llm_reasoning = await self._call_llm(
             query_id=request.query_id,
-            conversation_id=request.conversation_id,
             messages=messages,
             response_schema=OrchestratorSchema,
-            response_model=OrchestratorResponse,
+        )
+
+        return OrchestratorResponse(
+            query_id=request.query_id,
+            conversation_id=request.conversation_id,
+            result=result,
+            llm_usage=llm_usage,
+            llm_reasoning=llm_reasoning,
         )
 
     def _validate_orchestration_result(

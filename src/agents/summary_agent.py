@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from config.prompts.summary_agent import SUMMARY_AGENT_PROMPTS
-
 from src.agents.base_agent import BaseAgent
 from src.typing.llm_response import SummaryResponse
 from src.typing.redis import (
@@ -66,12 +65,18 @@ class SummaryAgent(BaseAgent):
                 {"role": "user", "content": user_prompt},
             ]
 
-            summary_response: SummaryResponse = await self._call_llm(
+            result, llm_usage, llm_reasoning = await self._call_llm(
                 query_id=command_message.query_id,
-                conversation_id=conversation_id,
                 messages=messages,
                 response_schema=SummaryAgentSchema,
-                response_model=SummaryResponse,
+            )
+
+            summary_response = SummaryResponse(
+                query_id=command_message.query_id,
+                conversation_id=conversation_id,
+                result=result,
+                llm_usage=llm_usage,
+                llm_reasoning=llm_reasoning,
             )
 
             return summary_response

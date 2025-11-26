@@ -1,36 +1,61 @@
 {
   "inventory": {
-    "description": "Manages stock levels, inter-warehouse transfers, inventory health, and valuation reconciliation in ERPNext.",
+    "description": "Manages stock levels, inter-warehouse transfers, inventory health",
     "capabilities": [
       "check stock levels",
       "retrieve stock history",
       "propose transfers",
-      "monitor inventory health",
-      "reconcile valuation"
+      "monitor inventory health"
     ],
     "tools": [
-      "check_stock",
-      "retrieve_stock_history",
-      "propose_transfer",
-      "inventory_health",
-      "reconcile_valuation"
+      {
+        "name": "check_stock",
+        "description": "Check current stock levels across warehouses"
+      },
+      {
+        "name": "retrieve_stock_history",
+        "description": "Get historical stock movements"
+      },
+      {
+        "name": "propose_transfer",
+        "description": "Propose warehouse transfers"
+      },
+      {
+        "name": "inventory_health",
+        "description": "Basic inventory health and Days of Cover"
+      }
     ]
   },
   "analytics": {
-    "description": "Analyzes sales performance, stock coverage, and product trends to support decision-making.",
+    "description": "Analyzes sales performance, stock coverage, and product trends",
     "capabilities": [
       "analyze top performers",
       "analyze slow movers",
-      "track movers and shakers",
-      "perform Pareto analysis",
-      "analyze stock coverage"
+      "track movers",
+      "Pareto analysis",
+      "stock coverage analysis"
     ],
     "tools": [
-      "analyze_top_performers",
-      "analyze_slow_movers",
-      "track_movers_shakers",
-      "perform_pareto_analysis",
-      "analyze_stock_coverage"
+      {
+        "name": "analyze_top_performers",
+        "description": "Top items by quantity or revenue"
+      },
+      {
+        "name": "analyze_slow_movers",
+        "description": "Identify slow-moving items"
+      },
+      {
+        "name": "track_movers_shakers",
+        "description": "Items with significant growth/decline"
+      },
+      {
+        "name": "perform_pareto_analysis",
+        "description": "80/20 revenue analysis"
+      },
+      {
+        "name": "analyze_stock_coverage",
+        "description": "Days of Cover analysis with reorder recommendations"
+      }
     ]
   }
 }

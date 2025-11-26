@@ -19,7 +19,6 @@ from src.api import auth_endpoints, conversation_endpoints, endpoints
 from src.api.lifespan import lifespan
 from src.typing import Request
 
-# Load environment variables from .env file
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -29,10 +28,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-# Create FastAPI app with lifespan management
 app = FastAPI(title="Multi Agent Stock Management System", lifespan=lifespan)
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(),
@@ -46,34 +43,28 @@ app.include_router(auth_endpoints.router)
 
 @app.post("/query")
 async def query_endpoint(request: Request):
-    """Handle query requests."""
     return await endpoints.handle_query(request)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, query_id: str = Query(...)):
-    """WebSocket endpoint for real-time query updates."""
     await endpoints.websocket_handler(websocket, query_id)
 
 
 @app.get("/query/{query_id}")
 async def query_status_endpoint(query_id: str):
-    """Get query status by query_id."""
     return await endpoints.get_query_status(query_id)
 
 
 @app.get("/health")
 async def health_endpoint():
-    """Health check endpoint."""
     return await endpoints.health_check()
 
 
-# Conversation Management Endpoints
 @app.post("/conversations", response_model=conversation_endpoints.ConversationResponse)
 async def create_conversation(
     request: conversation_endpoints.ConversationCreateRequest,
 ):
-    """Create a new conversation."""
     redis_client = redis.Redis(
         host=get_redis_host(), port=get_redis_port(), decode_responses=True
     )
@@ -91,7 +82,6 @@ async def create_conversation(
 async def list_conversations(
     limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)
 ):
-    """List all conversations with pagination."""
     redis_client = redis.Redis(
         host=get_redis_host(), port=get_redis_port(), decode_responses=True
     )
@@ -112,13 +102,6 @@ async def get_conversation(
     include_messages: bool = Query(False),
     user_id: str = Query(None),
 ):
-    """Get a single conversation by ID.
-
-    Args:
-        conversation_id: The conversation ID to retrieve
-        include_messages: Whether to include messages in response
-        user_id: Optional user ID for ownership validation
-    """
     redis_client = redis.Redis(
         host=get_redis_host(), port=get_redis_port(), decode_responses=True
     )
@@ -139,13 +122,6 @@ async def update_conversation(
     request: conversation_endpoints.ConversationUpdateRequest,
     user_id: str = Query(None),
 ):
-    """Update conversation title.
-
-    Args:
-        conversation_id: The conversation ID to update
-        request: Update request with new title
-        user_id: Optional user ID for ownership validation
-    """
     redis_client = redis.Redis(
         host=get_redis_host(), port=get_redis_port(), decode_responses=True
     )
@@ -159,12 +135,6 @@ async def update_conversation(
 
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, user_id: str = Query(None)):
-    """Delete a conversation.
-
-    Args:
-        conversation_id: The conversation ID to delete
-        user_id: Optional user ID for ownership validation
-    """
     redis_client = redis.Redis(
         host=get_redis_host(), port=get_redis_port(), decode_responses=True
     )
