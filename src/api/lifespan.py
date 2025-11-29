@@ -6,10 +6,12 @@ from fastapi import FastAPI
 
 from src.agents.analytics_agent import AnalyticsAgent
 from src.agents.chat_agent import ChatAgent
+from src.agents.forecasting_agent import ForecastingAgent
 from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.agents.summary_agent import SummaryAgent
 from src.managers.analytics_manager import AnalyticsManager
+from src.managers.forecasting_manager import ForecastingManager
 from src.managers.inventory_manager import InventoryManager
 
 logger = logging.getLogger(__name__)
@@ -20,10 +22,12 @@ class AgentManager:
         self.orchestrator: OrchestratorAgent = None
         self.inventory_agent: InventoryAgent = None
         self.chat_agent: ChatAgent = None
+        self.forecasting_agent: ForecastingAgent = None
         self.summary_agent: SummaryAgent = None
         self.inventory_manager: InventoryManager = None
         self.analytics_agent: AnalyticsAgent = None
         self.analytics_manager: AnalyticsManager = None
+        self.forecasting_manager: ForecastingManager = None
         self.tasks: list[asyncio.Task] = []
         self.redis_client = None
 
@@ -34,20 +38,25 @@ class AgentManager:
             self.orchestrator = OrchestratorAgent()
             self.inventory_agent = InventoryAgent()
             self.chat_agent = ChatAgent()
+            self.forecasting_agent = ForecastingAgent()
             self.summary_agent = SummaryAgent()
             self.inventory_manager = InventoryManager()
             self.analytics_agent = AnalyticsAgent()
             self.analytics_manager = AnalyticsManager()
+            self.forecasting_manager = ForecastingManager()
             self.redis_client = self.orchestrator.redis
 
             self.tasks = [
+                # Orchestrator
                 asyncio.create_task(self.orchestrator.start(), name="orchestrator"),
-                asyncio.create_task(
-                    self.inventory_agent.start(), name="inventory_agent"
-                ),
+                # Inventory
                 asyncio.create_task(
                     self.inventory_manager.start(), name="inventory_manager"
                 ),
+                asyncio.create_task(
+                    self.inventory_agent.start(), name="inventory_agent"
+                ),
+                # Analytics
                 asyncio.create_task(
                     self.analytics_agent.start(), name="analytics_agent"
                 ),
@@ -55,7 +64,16 @@ class AgentManager:
                     self.analytics_manager.start(),
                     name="analytics_manager",
                 ),
+                # Forecasting
+                asyncio.create_task(
+                    self.forecasting_manager.start(), name="forecasting_manager"
+                ),
+                asyncio.create_task(
+                    self.forecasting_agent.start(), name="forecasting_agent"
+                ),
+                # Chat
                 asyncio.create_task(self.chat_agent.start(), name="chat_agent"),
+                # Summary
                 asyncio.create_task(self.summary_agent.start(), name="summary_agent"),
             ]
 

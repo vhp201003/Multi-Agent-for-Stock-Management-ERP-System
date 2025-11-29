@@ -12,12 +12,17 @@ from config.settings import (
     get_erpnext_api_key,
     get_erpnext_api_secret,
     get_erpnext_url,
+    get_forecasting_server_port,
     get_inventory_server_port,
     get_low_stock_threshold,
     get_pareto_cutoff,
 )
 from src.mcp.server.analytics_server import AnalyticsMCPServer, AnalyticsServerConfig
 from src.mcp.server.base_server import BaseMCPServer
+from src.mcp.server.forecasting_server.server import (
+    ForecastingMCPServer,
+    ForecastingServerConfig,
+)
 from src.mcp.server.inventory_server import InventoryMCPServer, InventoryServerConfig
 
 load_dotenv()
@@ -135,6 +140,18 @@ def create_analytics_server(
     return AnalyticsMCPServer(config)
 
 
+def create_forecasting_server(
+    port: int | None = None,
+) -> ForecastingMCPServer:
+    config = ForecastingServerConfig(
+        name="ForecastingMCPServer",
+        host="0.0.0.0",
+        port=port or get_forecasting_server_port(),
+        debug=True,
+    )
+    return ForecastingMCPServer(config)
+
+
 async def run_server() -> None:
     manager = MCPServerManager()
 
@@ -146,6 +163,10 @@ async def run_server() -> None:
         logger.info("🔧 Configuring Analytics MCP Server...")
         analytics_server = create_analytics_server()
         manager.add_server("analytics", analytics_server)
+
+        logger.info("🔧 Configuring Forecasting MCP Server...")
+        forecasting_server = create_forecasting_server()
+        manager.add_server("forecasting", forecasting_server)
 
         await manager.start_all()
         await manager.wait_until_stopped()
