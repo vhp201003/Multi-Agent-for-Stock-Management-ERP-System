@@ -57,5 +57,15 @@
         "description": "Days of Cover analysis with reorder recommendations"
       }
     ]
+  },
+  "forecasting": {
+    "description": "Specializes in sales forecasting and demand prediction using historical data",
+    "capabilities": ["predict sales forecast", "predict demand"],
+    "tools": [
+      {
+        "name": "predict_sales_forecast",
+        "description": "Predict sales forecast for a specific item using V2 model"
+      }
+    ]
   }
 }
