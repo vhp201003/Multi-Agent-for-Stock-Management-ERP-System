@@ -35,6 +35,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoadDone = React.useRef(false);
 
   // Toast notification helper
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', duration = 4000) => {
@@ -52,16 +53,32 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   }, []);
 
   // Auto-scroll to bottom when messages change
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  // Smart auto-scroll
+  // Auto-scroll to bottom only on initial load or user message
+  const scrollToBottom = useCallback(() => {
+    // Always scroll on initial load
+    if (!initialLoadDone.current && messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      initialLoadDone.current = true;
+      return;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    const isUserMessage = lastMessage?.type === 'user';
+
+    // Always scroll if the last message is from the user
+    if (isUserMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [scrollToBottom]);
 
   // Load messages from backend or localStorage when conversation changes
   useEffect(() => {
+    initialLoadDone.current = false;
     const loadConversation = async () => {
       if (propConversationId) {
         setConversationId(propConversationId);
@@ -262,7 +279,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
         if (message.type === 'thinking' && uiUpdate.message) {
             const fullText = uiUpdate.message;
             let currentText = '';
-            const chunkSize = 10; // chars per tick
+            const chunkSize = 15; // chars per tick
             
             // Create the update object initially with empty message
             const updateId = generateId();
@@ -727,13 +744,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                       
                       {update.message && (
                         <div className="step-message">
-                          <strong>Action:</strong> {update.message}
+                          {update.message}
                         </div>
                       )}
                       
                       {update.sub_query && (
                         <div className="step-query">
-                          <strong>Query:</strong> {update.sub_query}
+                          {update.sub_query}
                         </div>
                       )}
                       

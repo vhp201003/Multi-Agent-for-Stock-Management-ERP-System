@@ -1,4 +1,8 @@
+from datetime import datetime
 from enum import Enum
+from typing import Any, Dict
+
+from pydantic import BaseModel, Field
 
 
 class RedisChannels:
@@ -64,12 +68,6 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     ERROR = "error"
     PROCESSING = "processing"
-
-
-from datetime import datetime
-from typing import Any, Dict
-
-from pydantic import BaseModel, Field
 
 
 class MessageType(str, Enum):

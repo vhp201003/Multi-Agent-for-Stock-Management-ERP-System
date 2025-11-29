@@ -107,7 +107,7 @@ class OrchestratorAgent(BaseAgent):
                 llm_usage={},
                 agent_type="orchestrator",
             )
-            
+
             from src.typing.redis.constants import MessageType
 
             await self.publish_broadcast(
