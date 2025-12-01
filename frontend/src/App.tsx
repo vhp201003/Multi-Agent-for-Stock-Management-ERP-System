@@ -5,6 +5,8 @@ import ChatInterface from './components/ChatInterface'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { Login } from './pages/Login'
 import { Register } from './pages/Register'
+import AdminLayout from './layouts/AdminLayout'
+import Dashboard from './pages/Dashboard'
 import './App.css'
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -47,6 +49,18 @@ function App() {
               <MainLayout />
             </PrivateRoute>
           } />
+          <Route path="/admin" element={
+            <PrivateRoute>
+              <AdminLayout />
+            </PrivateRoute>
+          }>
+            <Route index element={<Dashboard />} />
+            {/* Add other admin routes here as placeholders */}
+            <Route path="users" element={<div>Users Page (Coming Soon)</div>} />
+            <Route path="settings" element={<div>Settings Page (Coming Soon)</div>} />
+            <Route path="analytics" element={<div>Analytics Page (Coming Soon)</div>} />
+            <Route path="integrations" element={<div>Integrations Page (Coming Soon)</div>} />
+          </Route>
         </Routes>
       </Router>
     </AuthProvider>

@@ -15,7 +15,7 @@ from config.settings import (
     get_server_host,
     get_server_port,
 )
-from src.api import auth_endpoints, conversation_endpoints, endpoints
+from src.api import auth_endpoints, conversation_endpoints, endpoints, admin_endpoints
 from src.api.lifespan import lifespan
 from src.typing import Request
 
@@ -39,6 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_endpoints.router)
+app.include_router(admin_endpoints.router)
 
 
 @app.post("/query")

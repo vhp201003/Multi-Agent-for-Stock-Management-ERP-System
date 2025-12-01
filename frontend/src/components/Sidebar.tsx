@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listConversations, deleteConversation as deleteConversationAPI } from '../services/conversation';
 import { useAuth } from '../context/AuthContext';
 import './Sidebar.css';
@@ -22,6 +23,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSelectConversation,
   onNewConversation,
 }) => {
+  const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [useBackend] = useState(true); // Toggle backend vs localStorage
@@ -245,6 +247,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <div className="user-name">{user?.full_name || user?.email || 'User'}</div>
                 {user?.email && <div className="user-email">{user.email}</div>}
               </div>
+              <button 
+                className="admin-btn" 
+                onClick={() => navigate('/admin')}
+                title="Admin Dashboard"
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', marginRight: '8px' }}
+              >
+                ⚙️
+              </button>
               <button 
                 className="logout-btn" 
                 onClick={logout}
