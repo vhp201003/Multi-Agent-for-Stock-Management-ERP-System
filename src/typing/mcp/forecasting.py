@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 
 from src.typing.mcp.base import MCPToolOutputSchema
 
+# ======================================= Sales Forecast =======================================
+
 
 class ForecastItem(BaseModel):
     month: int = Field(..., description="Month number (1, 2, ...)")
@@ -45,3 +47,27 @@ class ForecastOutput(MCPToolOutputSchema):
     items: list[ForecastItem] | None = None
     summary: ForecastSummary | None = None
     filters_applied: ForecastFilters | None = None
+
+
+# ======================================= Inventory Forecast =======================================
+class InventoryForecastItem(BaseModel):
+    item: str = Field(..., description="Item code")
+    warehouse: str = Field(..., description="Warehouse name")
+    month: int = Field(..., description="Month number")
+    month_year: str = Field(..., description="Month and Year")
+    predicted_qty: int = Field(..., description="Predicted quantity")
+    confidence_lower: float = Field(..., description="Lower bound")
+    confidence_upper: float = Field(..., description="Upper bound")
+    std_dev: float = Field(..., description="Standard deviation")
+
+
+class InventoryForecastFilters(BaseModel):
+    item_code: str = Field(..., description="Item code used for prediction")
+    warehouse: str = Field(..., description="Warehouse name")
+    months: int = Field(..., description="Number of months requested")
+
+
+class InventoryForecastOutput(MCPToolOutputSchema):
+    items: list[InventoryForecastItem] | None = None
+    summary: ForecastSummary | None = None
+    filters_applied: InventoryForecastFilters | None = None
