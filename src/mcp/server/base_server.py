@@ -5,9 +5,13 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
+
+from src.typing.mcp.base import HITLMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +140,7 @@ class BaseMCPServer(ABC):
         name: str | None = None,
         description: str | None = None,
         structured_output: bool | None = None,
+        hitl: Optional[HITLMetadata] = None,
     ) -> None:
         """
         Register a tool function with FastMCP.
@@ -151,29 +156,54 @@ class BaseMCPServer(ABC):
                 - None: Auto-detect from return type annotation (default)
                 - True: Force structured output (requires Pydantic return type)
                 - False: Force unstructured output (dict/str)
+            hitl: Optional Human-in-the-Loop metadata for approval workflow
+                - If provided, tool will require user approval before execution
+                - Agent reads this from tool annotations at runtime
 
-        Example - Pydantic parameters (auto-validated):
-            async def check_stock(
-                product_id: str = Field(..., description="Product identifier"),
-                warehouse: str = Field(default="MAIN", description="Warehouse code")
-            ) -> dict:
-                return {"stock": 100}
-
-            self.add_tool(check_stock, description="Check product stock levels")
-
-        Example - Pydantic output schema:
-            class StockResponse(BaseModel):
-                stock: int = Field(..., description="Available stock")
-                warehouse: str
-
-            async def check_stock(product_id: str) -> StockResponse:
-                return StockResponse(stock=100, warehouse="MAIN")
-
-            self.add_tool(check_stock, structured_output=True)
+        Example - Tool with HITL:
+            self.add_tool(
+                self.create_purchase_order,
+                description="Create a new purchase order",
+                hitl=HITLMetadata(
+                    requires_approval=True,
+                    approval_level=ApprovalLevel.REVIEW,
+                    modifiable_fields=["quantity", "supplier_id"],
+                    approval_message="Please review this purchase order"
+                )
+            )
         """
+        # Build annotations with HITL metadata as extra fields
+        annotations: Optional[ToolAnnotations] = None
+        if hitl:
+            # Note: Can't store on bound method, so just log and use annotations
+            # Convert HITLMetadata to x-hitl-* fields in ToolAnnotations
+            annotations = ToolAnnotations(**hitl.to_annotations())
+            self.logger.info(
+                f"Tool '{name or fn.__name__}' registered with HITL: "
+                f"level={hitl.approval_level.value}, modifiable={hitl.modifiable_fields}"
+            )
+
         self.mcp.add_tool(
-            fn, name=name, description=description, structured_output=structured_output
+            fn,
+            name=name,
+            description=description,
+            annotations=annotations,
+            structured_output=structured_output,
         )
+
+    def get_tool_hitl_metadata(self, tool_name: str) -> Optional[HITLMetadata]:
+        """
+        Get HITL metadata for a registered tool.
+
+        Used internally to check if a tool requires approval.
+        """
+        # Look up the tool in FastMCP's registry
+        tool_manager = getattr(self.mcp, "_tool_manager", None)
+        if tool_manager and hasattr(tool_manager, "tools"):
+            tool = tool_manager.tools.get(tool_name)
+            if tool and hasattr(tool, "fn"):
+                return getattr(tool.fn, "_hitl_metadata", None)
+        return None
 
     def add_resource(self, uri_template: str, fn) -> None:
         """

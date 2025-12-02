@@ -31,7 +31,9 @@ export interface LayoutField {
 export interface TaskUpdate {
   agent_type: string;
   step?: string;
-  status: 'processing' | 'done' | 'failed';
+  status: 'processing' | 'done' | 'failed' | 'pending_approval' | 'auto_approved';
+  type?: 'approval_required';
+  approval?: any;
   message?: string;
   sub_query?: string;
   result?: any;
@@ -40,6 +42,7 @@ export interface TaskUpdate {
     completion_tokens?: number;
     total_tokens?: number;
   };
+  timestamp?: string;
 }
 
 export interface Message {

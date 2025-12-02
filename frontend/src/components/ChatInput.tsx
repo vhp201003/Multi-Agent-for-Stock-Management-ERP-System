@@ -1,4 +1,6 @@
 import React, { useState, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
+import './ChatInput.css';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -7,6 +9,7 @@ interface ChatInputProps {
 
 const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSendMessage, loading }) => {
   const [input, setInput] = useState('');
+  const { hitlMode, toggleHitlMode } = useAuth();
 
   const handleSend = useCallback(() => {
     if (!input.trim() || loading) return;
@@ -21,9 +24,20 @@ const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSendMessage, loading
     }
   }, [handleSend]);
 
+  const handleToggle = useCallback(() => {
+    toggleHitlMode();
+  }, [toggleHitlMode]);
+
   return (
     <div className="chat-input-container">
       <div className="input-wrapper">
+        <button
+          className={`hitl-toggle ${hitlMode === 'auto' ? 'auto' : 'review'}`}
+          onClick={handleToggle}
+          title={hitlMode === 'review' ? 'Review Mode: You approve tool calls' : 'Auto Mode: Tools run automatically'}
+        >
+          {hitlMode === 'review' ? '👁' : '⚡'}
+        </button>
         <input
           type="text"
           className="chat-input"

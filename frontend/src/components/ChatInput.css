@@ -1,0 +1,31 @@
+/* HITL Toggle Button */
+.hitl-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #3a3a3a;
+  background: #2a2a2a;
+  color: #e8e8e8;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.hitl-toggle:hover {
+  border-color: #667eea;
+  background: #333;
+}
+
+.hitl-toggle.review {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.15);
+}
+
+.hitl-toggle.auto {
+  border-color: #48bb78;
+  background: rgba(72, 187, 120, 0.15);
+}

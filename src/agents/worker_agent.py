@@ -13,6 +13,7 @@ from src.typing import (
     ToolCallResultResponse,
     WorkerAgentProcessResponse,
 )
+from src.typing.approval import ApprovalAction
 from src.typing.redis import (
     AgentStatus,
     CommandMessage,
@@ -47,6 +48,10 @@ class WorkerAgent(BaseAgent):
         self.mcp_client: Optional[MCPClient] = None
         self.examples = examples
 
+        # HITL: Track current query_id for approval requests
+        self._current_query_id: Optional[str] = None
+        self._current_task_id: Optional[str] = None
+
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(self.agent_type)]
 
@@ -56,6 +61,12 @@ class WorkerAgent(BaseAgent):
         ### Phase 1: Load conversation and prepare messages
         sub_query = command_message.sub_query
         conversation_id = command_message.conversation_id
+
+        # HITL: Store current query context for approval requests
+        self._current_query_id = command_message.query_id
+        self._current_task_id = await self.find_task_id_by_query(
+            command_message.query_id, sub_query
+        )
 
         # Get conversation summary
         summary = await get_summary_conversation(self.redis, conversation_id)
@@ -126,6 +137,59 @@ class WorkerAgent(BaseAgent):
                     parameters = json.loads(parameters_json)
                 else:
                     parameters = parameters_json
+
+                # ============= HITL: Check if tool requires approval =============
+                if self.tool_requires_approval(tool_name):
+                    logger.info(
+                        f"{self.agent_type}: Tool '{tool_name}' requires approval"
+                    )
+
+                    approval = await self.request_approval(
+                        query_id=query_id,
+                        tool_name=tool_name,
+                        proposed_params=parameters,
+                        task_id=self._current_task_id,
+                    )
+
+                    if approval.action == ApprovalAction.REJECT:
+                        # Tool rejected - add rejection message to context
+                        rejection_msg = {
+                            "status": "rejected",
+                            "reason": approval.reason or "User rejected this action",
+                            "message": "The user has rejected this action. Please acknowledge and suggest alternatives if applicable.",
+                        }
+
+                        tools_result_accumulator.append(
+                            ToolCallResultResponse(
+                                tool_name=tool_name,
+                                parameters=parameters,
+                                tool_result=rejection_msg,
+                            )
+                        )
+
+                        tool_results_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(rejection_msg),
+                            }
+                        )
+
+                        logger.info(
+                            f"{self.agent_type}: Tool '{tool_name}' was rejected by user"
+                        )
+                        continue
+
+                    elif approval.action == ApprovalAction.MODIFY:
+                        # User modified params - merge with original
+                        if approval.modified_params:
+                            parameters = {**parameters, **approval.modified_params}
+                            logger.info(
+                                f"{self.agent_type}: Tool '{tool_name}' params modified by user"
+                            )
+
+                    # APPROVE or MODIFY (with updated params) - continue to execute
+                # ============= End HITL =============
 
                 tool_result: Dict[str, Any] = await self.call_mcp_tool(
                     tool_name, parameters
@@ -413,6 +477,22 @@ class WorkerAgent(BaseAgent):
 
             self._mcp_tools_for_groq = extract_groq_tools(tools_dicts)
 
+            # HITL: Load tool approval metadata from MCP client
+            for tool in tools:
+                tool_name = (
+                    tool.get("name")
+                    if isinstance(tool, dict)
+                    else getattr(tool, "name", None)
+                )
+                if tool_name:
+                    hitl = client.get_tool_hitl_metadata(tool_name)
+                    if hitl and hitl.requires_approval:
+                        self.register_tool_hitl(tool_name, hitl)
+                        logger.info(
+                            f"{self.agent_type}: Tool '{tool_name}' requires HITL approval "
+                            f"(level={hitl.approval_level.value})"
+                        )
+
             self.prompt = build_worker_agent_prompt(
                 agent_type=self.agent_type,
                 agent_description=self.agent_description,
@@ -420,7 +500,8 @@ class WorkerAgent(BaseAgent):
             )
 
             logger.info(
-                f"{self.agent_type}: Initialized with {len(self._mcp_tools_for_groq)} Groq tools"
+                f"{self.agent_type}: Initialized with {len(self._mcp_tools_for_groq)} Groq tools, "
+                f"{len(self._tools_hitl_metadata)} require approval"
             )
 
         except Exception as e:
