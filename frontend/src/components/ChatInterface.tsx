@@ -3,12 +3,15 @@ import ReactMarkdown from 'react-markdown';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { apiService, generateId } from '../services/api';
 import { wsService } from '../services/websocket';
+import { useAuth } from '../context/AuthContext';
 import Toast, { type ToastMessage } from './Toast';
 import ChatInput from './ChatInput';
+import ApprovalCard from './ApprovalCard';
 import { processLayoutWithData } from '../utils/chartDataExtractor';
 import { normalizeConversationMessages, normalizeLocalStorageMessages } from '../utils/messageNormalizer';
 import { getConversation } from '../services/conversation';
-import type { Message, LayoutField } from '../types/message';
+import type { Message, LayoutField, TaskUpdate } from '../types/message';
+import type { ApprovalRequest, ApprovalResponse } from '../types/approval';
 import type { WebSocketMessage } from '../services/websocket';
 import './ChatInterface.css';
 
@@ -32,6 +35,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  // HITL: Track resolved approvals (approval_id -> action taken)
+  const [resolvedApprovals, setResolvedApprovals] = useState<Map<string, ApprovalResponse['action']>>(new Map());
+  const { hitlMode } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,6 +57,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  // HITL: Handle approval response from inline card
+  const handleApprovalResponse = useCallback((response: ApprovalResponse) => {
+    // Mark as resolved
+    setResolvedApprovals((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(response.approval_id, response.action);
+      return newMap;
+    });
+
+    // Send to backend via WebSocket
+    wsService.sendApprovalResponse(response);
+
+    // Show toast
+    const actionText = response.action === 'approve' ? 'approved' : 
+                       response.action === 'modify' ? 'modified & approved' : 'rejected';
+    addToast(`Action ${actionText}`, response.action === 'reject' ? 'warning' : 'success');
+  }, [addToast]);
 
   // Auto-scroll to bottom when messages change
   // Smart auto-scroll
@@ -230,6 +254,108 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       // Handle WebSocket Message
       const { message, queryId } = item;
       
+      // HITL: Handle approval messages - add as update in thinking process
+      if (message.type === 'approval_required') {
+        const approvalRequest = message.data as ApprovalRequest;
+        
+        // AUTO MODE: Automatically approve without user interaction
+        if (hitlMode === 'auto') {
+          const autoApprovalResponse: ApprovalResponse = {
+            approval_id: approvalRequest.approval_id,
+            query_id: approvalRequest.query_id,
+            action: 'approve',
+            modified_params: undefined
+          };
+          
+          // Send auto-approval to backend
+          wsService.sendApprovalResponse(autoApprovalResponse);
+          
+          // Mark as resolved immediately
+          setResolvedApprovals((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(approvalRequest.approval_id, 'approve');
+            return newMap;
+          });
+          
+          // Add auto-approved update to thinking process
+          const autoApprovedUpdate: TaskUpdate = {
+            type: 'approval_required',
+            agent_type: approvalRequest.agent_type,
+            status: 'auto_approved',
+            approval: approvalRequest,
+            timestamp: message.timestamp
+          };
+          
+          setMessages((prev) => {
+            const hasThinkingMsg = prev.some(msg => msg.id === `${queryId}-thinking`);
+            if (!hasThinkingMsg) {
+              return [...prev, {
+                id: `${queryId}-thinking`,
+                type: 'system',
+                content: '',
+                timestamp: new Date(),
+                updates: [autoApprovedUpdate],
+                isThinkingExpanded: true,
+              }];
+            }
+            return prev.map(msg => 
+              msg.id === `${queryId}-thinking`
+                ? { ...msg, updates: [...(msg.updates || []), autoApprovedUpdate], isThinkingExpanded: true }
+                : msg
+            );
+          });
+          
+          continue;
+        }
+        
+        // REVIEW MODE: Show approval card for manual approval
+        const approvalUpdate: TaskUpdate = {
+          type: 'approval_required',
+          agent_type: approvalRequest.agent_type,
+          status: 'pending_approval',
+          approval: approvalRequest,
+          timestamp: message.timestamp
+        };
+        
+        // Add to thinking message updates
+        setMessages((prev) => {
+          const hasThinkingMsg = prev.some(msg => msg.id === `${queryId}-thinking`);
+          if (!hasThinkingMsg) {
+            return [...prev, {
+              id: `${queryId}-thinking`,
+              type: 'system',
+              content: '',
+              timestamp: new Date(),
+              updates: [approvalUpdate],
+              isThinkingExpanded: true,
+            }];
+          }
+          return prev.map(msg => 
+            msg.id === `${queryId}-thinking`
+              ? { ...msg, updates: [...(msg.updates || []), approvalUpdate], isThinkingExpanded: true }
+              : msg
+          );
+        });
+        
+        // Scroll to show approval card
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+        
+        continue;
+      }
+
+      if (message.type === 'approval_resolved') {
+        const { approval_id, action } = message.data;
+        // Mark as resolved in state
+        setResolvedApprovals((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(approval_id, action);
+          return newMap;
+        });
+        continue;
+      }
+
       // Map message to UI update
       let uiUpdate: any = null;
       switch (message.type) {
@@ -348,7 +474,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     }
 
     isProcessingQueue.current = false;
-  }, []);
+  }, [hitlMode]);
 
   const addToQueue = useCallback((item: any) => {
     messageQueue.current.push(item);
@@ -722,6 +848,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                 </summary>
                 <div className="thinking-content">
                 {message.updates.map((update, index) => {
+                  // HITL: Render approval card inline
+                  if ((update as any).type === 'approval_required' && (update as any).approval) {
+                    const approval = (update as any).approval as ApprovalRequest;
+                    const isResolved = resolvedApprovals.has(approval.approval_id);
+                    const resolvedAction = resolvedApprovals.get(approval.approval_id);
+                    
+                    return (
+                      <ApprovalCard
+                        key={`approval-${approval.approval_id}`}
+                        approval={approval}
+                        onRespond={handleApprovalResponse}
+                        isResolved={isResolved}
+                        resolvedAction={resolvedAction}
+                      />
+                    );
+                  }
+                  
                   // Parse agent-specific information
                   const agentName = update.agent_type ? 
                     update.agent_type.charAt(0).toUpperCase() + update.agent_type.slice(1).replace('_', ' ') : 

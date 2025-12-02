@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -61,28 +62,71 @@ async def websocket_handler(websocket: WebSocket, query_id: str):
 
         logger.info(f"WebSocket connected for query_id: {query_id}")
 
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                # Redis decode_responses=True already returns string, no need to decode
-                data_str = message["data"]
-                if isinstance(data_str, bytes):
-                    data_str = data_str.decode("utf-8")
+        # HITL: Create tasks for bidirectional communication
+        async def listen_redis():
+            """Listen for Redis messages and forward to WebSocket"""
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    data_str = message["data"]
+                    if isinstance(data_str, bytes):
+                        data_str = data_str.decode("utf-8")
 
-                data = json.loads(data_str)
+                    data = json.loads(data_str)
+                    logger.info(
+                        f"Update for query_id {query_id}: {data.get('type', 'unknown')}"
+                    )
+                    await websocket.send_text(json.dumps(data))
 
-                # Send the update directly to the WebSocket client
-                logger.info(f"Update for query_id {query_id}: {data}")
-                await websocket.send_text(json.dumps(data))
+        async def listen_websocket():
+            """Listen for WebSocket messages (approval responses) and forward to Redis"""
+            while True:
+                try:
+                    message = await websocket.receive_text()
+                    data = json.loads(message)
 
-                # Auto-disconnect if query is completed
-                if (
-                    data.get("status") == "done"
-                    and data.get("agent_type") == "chat_agent"
-                ):
-                    logger.info(f"Query {query_id} completed, closing WebSocket")
-                    # Don't close immediately, let frontend handle it or wait for timeout
-                    # await websocket.close(code=1000, reason="Query completed")
-                    # break
+                    # HITL: Handle approval response from frontend
+                    if data.get("type") == "approval_response":
+                        approval_data = data.get("data", {})
+                        approval_channel = RedisChannels.get_approval_response_channel(
+                            query_id
+                        )
+
+                        # Publish to approval response channel for agent to receive
+                        await redis_client.publish(
+                            approval_channel, json.dumps(approval_data)
+                        )
+                        logger.info(
+                            f"Forwarded approval response for query_id {query_id}: "
+                            f"action={approval_data.get('action')}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Received unknown message type from WebSocket: {data.get('type')}"
+                        )
+
+                except WebSocketDisconnect:
+                    logger.info(f"WebSocket disconnected for query_id: {query_id}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error receiving WebSocket message: {e}")
+                    break
+
+        # Run both listeners concurrently
+        redis_task = asyncio.create_task(listen_redis())
+        ws_task = asyncio.create_task(listen_websocket())
+
+        # Wait for either task to complete (usually WebSocket disconnect)
+        done, pending = await asyncio.wait(
+            [redis_task, ws_task], return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # Cancel pending tasks
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for query_id: {query_id}")

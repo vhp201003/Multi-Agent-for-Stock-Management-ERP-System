@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
+from src.typing.mcp.base import HITLMetadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,9 @@ class MCPClient:
         self._session: Optional[ClientSession] = None
         self._exit_stack = None
 
+        # HITL: Store tool metadata including annotations
+        self._tools_hitl_metadata: Dict[str, HITLMetadata] = {}
+
     def _ensure_connected(self):
         if not self._session:
             raise RuntimeError("Client not connected. Use 'async with' pattern.")
@@ -28,7 +33,43 @@ class MCPClient:
         self._ensure_connected()
         async with asyncio.timeout(self.timeout):
             result = await self._session.list_tools()
-            return [tool.model_dump() for tool in result.tools]
+            tools = []
+            for tool in result.tools:
+                tool_dict = tool.model_dump()
+                tools.append(tool_dict)
+
+                # Parse HITL metadata from annotations
+                annotations = getattr(tool, "annotations", None)
+                if annotations:
+                    # Convert annotations to dict if it's a model
+                    if hasattr(annotations, "model_dump"):
+                        annotations_dict = annotations.model_dump()
+                    else:
+                        annotations_dict = dict(annotations) if annotations else {}
+
+                    hitl = HITLMetadata.from_annotations(annotations_dict)
+                    if hitl.requires_approval:
+                        self._tools_hitl_metadata[tool.name] = hitl
+                        logger.debug(
+                            f"Tool '{tool.name}' requires HITL approval: "
+                            f"level={hitl.approval_level.value}"
+                        )
+
+            return tools
+
+    def get_tool_hitl_metadata(self, tool_name: str) -> Optional[HITLMetadata]:
+        """
+        Get HITL metadata for a tool.
+
+        Returns None if tool doesn't require approval.
+        Must call list_tools() first to populate metadata.
+        """
+        return self._tools_hitl_metadata.get(tool_name)
+
+    def tool_requires_approval(self, tool_name: str) -> bool:
+        """Check if a tool requires human approval before execution."""
+        hitl = self._tools_hitl_metadata.get(tool_name)
+        return hitl.requires_approval if hitl else False
 
     async def call_tool(
         self, tool_name: str, parameters: Dict[str, Any]

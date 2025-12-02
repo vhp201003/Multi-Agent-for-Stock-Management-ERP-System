@@ -19,6 +19,9 @@ class RedisChannels:
     # Real-time updates for specific query_id
     QUERY_UPDATES = "query:updates:{}"
 
+    # HITL: Approval response channel (frontend → agent)
+    APPROVAL_RESPONSE = "approval:response:{}"
+
     @classmethod
     def get_command_channel(cls, agent_type: str) -> str:
         return cls.COMMAND_CHANNEL.format(agent_type)
@@ -30,6 +33,11 @@ class RedisChannels:
     @classmethod
     def get_query_updates_channel(cls, query_id: str) -> str:
         return cls.QUERY_UPDATES.format(query_id)
+
+    @classmethod
+    def get_approval_response_channel(cls, query_id: str) -> str:
+        """Channel for frontend to send approval responses back to agent"""
+        return cls.APPROVAL_RESPONSE.format(query_id)
 
 
 class RedisKeys:
@@ -68,6 +76,7 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     ERROR = "error"
     PROCESSING = "processing"
+    PENDING_APPROVAL = "pending_approval"  # HITL: Waiting for user approval
 
 
 class MessageType(str, Enum):
@@ -76,6 +85,9 @@ class MessageType(str, Enum):
     THINKING = "thinking"
     TASK_UPDATE = "task_update"
     ERROR = "error"
+    # HITL: Approval workflow messages
+    APPROVAL_REQUIRED = "approval_required"
+    APPROVAL_RESOLVED = "approval_resolved"
 
 
 class BroadcastMessage(BaseModel):

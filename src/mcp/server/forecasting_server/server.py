@@ -8,6 +8,7 @@ from src.mcp.server.forecasting_server.forecast_api_v2 import predict_sales_fore
 from src.mcp.server.forecasting_server.inventory_forecast_api_v3 import (
     predict_inventory_v3,
 )
+from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 from src.typing.mcp.forecasting import (
     ForecastFilters,
     ForecastOutput,
@@ -113,11 +114,25 @@ class ForecastingMCPServer(BaseMCPServer):
             self.predict_sales_forecast,
             name="predict_sales_forecast",
             description="Predict sales forecast for a specific item using V2 model",
+            hitl=HITLMetadata(
+                requires_approval=True,
+                approval_level=ApprovalLevel.REVIEW,
+                modifiable_fields=["item_code", "months"],
+                approval_message="Vui lòng review tham số dự báo doanh số",
+                timeout_seconds=60,
+            ),
         )
         self.add_tool(
             self.predict_inventory_forecast,
             name="predict_inventory_forecast",
             description="Predict inventory levels for specific items and warehouses using V3 model",
+            hitl=HITLMetadata(
+                requires_approval=True,
+                approval_level=ApprovalLevel.REVIEW,
+                modifiable_fields=["item_code", "warehouse", "months"],
+                approval_message="Vui lòng review tham số dự báo tồn kho",
+                timeout_seconds=60,
+            ),
         )
 
     async def _resolve_item_identifier(

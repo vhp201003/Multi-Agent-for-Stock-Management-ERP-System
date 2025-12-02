@@ -5,7 +5,10 @@ export type MessageType =
   | 'tool_execution'
   | 'thinking'
   | 'task_update'
-  | 'error';
+  | 'error'
+  // HITL: Approval workflow messages
+  | 'approval_required'
+  | 'approval_resolved';
 
 export interface WebSocketMessage {
   type: MessageType;
@@ -66,6 +69,24 @@ export class WebSocketService {
     this.queryId = null;
   }
 
+  // HITL: Send message to backend
+  send(message: any): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('WebSocket not connected, cannot send message');
+    }
+  }
+
+  // HITL: Send approval response
+  sendApprovalResponse(response: any): void {
+    this.send({
+      type: 'approval_response',
+      data: response,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   onMessage(handler: MessageHandler): void {
     this.messageHandlers.push(handler);
   }
@@ -86,6 +107,10 @@ export class WebSocketService {
 
   isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  getQueryId(): string | null {
+    return this.queryId;
   }
 }
 

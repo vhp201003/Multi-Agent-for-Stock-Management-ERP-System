@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -10,7 +11,9 @@ from pydantic import ValidationError
 from config.settings import get_agent_config
 from src.communication import get_async_redis_connection, get_groq_client
 from src.typing import BaseMessage, BaseSchema
-from src.typing.redis.constants import RedisChannels
+from src.typing.approval import ApprovalAction, ApprovalRequest, ApprovalResponse
+from src.typing.mcp.base import HITLMetadata
+from src.typing.redis.constants import MessageType, RedisChannels
 
 load_dotenv()
 
@@ -33,6 +36,127 @@ class BaseAgent(ABC):
 
         self._llm_manager = get_groq_client()
         self.llm = self._llm_manager.get_client()
+
+        # HITL: Store tool approval configs (populated by subclasses)
+        self._tools_hitl_metadata: Dict[str, HITLMetadata] = {}
+
+    # ============= HITL: Approval Methods =============
+
+    def register_tool_hitl(self, tool_name: str, hitl: HITLMetadata) -> None:
+        """Register HITL metadata for a tool (called during init)."""
+        self._tools_hitl_metadata[tool_name] = hitl
+
+    def get_tool_hitl(self, tool_name: str) -> Optional[HITLMetadata]:
+        """Get HITL metadata for a tool."""
+        return self._tools_hitl_metadata.get(tool_name)
+
+    def tool_requires_approval(self, tool_name: str) -> bool:
+        """Check if a tool requires human approval."""
+        hitl = self._tools_hitl_metadata.get(tool_name)
+        return hitl.requires_approval if hitl else False
+
+    async def request_approval(
+        self,
+        query_id: str,
+        tool_name: str,
+        proposed_params: Dict[str, Any],
+        task_id: Optional[str] = None,
+    ) -> ApprovalResponse:
+        """
+        Request human approval for a tool execution.
+
+        Publishes approval request to frontend and waits for response.
+        Blocks until user responds or timeout.
+
+        Returns:
+            ApprovalResponse with user's decision (approve/modify/reject)
+        """
+        hitl = self.get_tool_hitl(tool_name)
+        if not hitl or not hitl.requires_approval:
+            # No approval needed - auto approve
+            return ApprovalResponse(
+                approval_id="auto",
+                query_id=query_id,
+                action=ApprovalAction.APPROVE,
+            )
+
+        # Build approval request
+        approval_request = ApprovalRequest(
+            query_id=query_id,
+            task_id=task_id,
+            agent_type=self.agent_type,
+            tool_name=tool_name,
+            proposed_params=proposed_params,
+            title=hitl.approval_message or f"Approve {tool_name}?",
+            description=f"Tool '{tool_name}' requires your approval before execution.",
+            modifiable_fields=hitl.modifiable_fields,
+            timeout_seconds=hitl.timeout_seconds,
+        )
+
+        # Broadcast to frontend
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.APPROVAL_REQUIRED,
+            approval_request.model_dump(),
+        )
+
+        logger.info(
+            f"{self.agent_type}: Waiting for approval on '{tool_name}' "
+            f"(approval_id: {approval_request.approval_id}, timeout: {hitl.timeout_seconds}s)"
+        )
+
+        # Subscribe and wait for response
+        response_channel = RedisChannels.get_approval_response_channel(query_id)
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(response_channel)
+
+        try:
+            async with asyncio.timeout(hitl.timeout_seconds):
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+
+                    try:
+                        response = ApprovalResponse.model_validate_json(message["data"])
+
+                        # Match approval_id to handle multiple pending approvals
+                        if response.approval_id == approval_request.approval_id:
+                            logger.info(
+                                f"{self.agent_type}: Received approval response: "
+                                f"{response.action.value} for '{tool_name}'"
+                            )
+
+                            # Broadcast resolution
+                            await self.publish_broadcast(
+                                RedisChannels.get_query_updates_channel(query_id),
+                                MessageType.APPROVAL_RESOLVED,
+                                {
+                                    "approval_id": approval_request.approval_id,
+                                    "action": response.action.value,
+                                    "tool_name": tool_name,
+                                },
+                            )
+
+                            return response
+                    except Exception as e:
+                        logger.warning(f"Invalid approval response: {e}")
+                        continue
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"{self.agent_type}: Approval timeout for '{tool_name}' "
+                f"after {hitl.timeout_seconds}s"
+            )
+            return ApprovalResponse(
+                approval_id=approval_request.approval_id,
+                query_id=query_id,
+                action=ApprovalAction.REJECT,
+                reason="Approval timeout - no response received",
+            )
+        finally:
+            await pubsub.unsubscribe(response_channel)
+
+    # ============= Debug & LLM Methods =============
 
     def _save_llm_response_debug(
         self, query_id: str, response_data: Dict[str, Any]

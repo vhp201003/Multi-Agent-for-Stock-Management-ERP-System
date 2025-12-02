@@ -5,6 +5,7 @@ from pydantic import Field
 
 from src.communication import get_erpnext_connection
 from src.mcp.server.base_server import BaseMCPServer, ServerConfig
+from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 from src.typing.mcp.inventory import (
     CheckStockOutput,
     InventoryHealthOutput,
@@ -62,6 +63,13 @@ class InventoryMCPServer(BaseMCPServer):
             name="propose_transfer",
             description="Propose stock transfers between warehouses based on availability",
             structured_output=True,
+            hitl=HITLMetadata(
+                requires_approval=True,
+                approval_level=ApprovalLevel.REVIEW,
+                modifiable_fields=["item_code", "to_warehouse", "from_warehouses"],
+                approval_message="Vui lòng review đề xuất chuyển kho trước khi thực hiện",
+                timeout_seconds=120,
+            ),
         )
 
         self.add_tool(

@@ -7,6 +7,13 @@ export const generateId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 };
 
+// HITL Mode types
+export type HITLMode = 'review' | 'auto';
+
+export interface UserSettings {
+  hitl_mode: HITLMode;
+}
+
 export interface QueryRequest {
   query_id: string;  // Frontend tạo và gửi
   query: string;
@@ -103,6 +110,20 @@ class ApiService {
 
   async checkHealth(): Promise<{ status: string }> {
     const response = await this.client.get<{ status: string }>('/health');
+    return response.data;
+  }
+
+  async getUserSettings(token: string): Promise<UserSettings> {
+    const response = await this.client.get<UserSettings>('/auth/settings', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return response.data;
+  }
+
+  async updateUserSettings(token: string, settings: Partial<UserSettings>): Promise<UserSettings> {
+    const response = await this.client.patch<UserSettings>('/auth/settings', settings, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     return response.data;
   }
 }

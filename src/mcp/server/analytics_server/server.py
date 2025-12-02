@@ -12,6 +12,7 @@ from src.typing.mcp.analytics import (
     StockCoverageOutput,
     TopPerformersOutput,
 )
+from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,13 @@ class AnalyticsMCPServer(BaseMCPServer):
             name="analyze_slow_movers",
             description="Identify slow-moving items with sell-through rate, GMROI, and actionable suggestions",
             structured_output=True,
+            hitl=HITLMetadata(
+                requires_approval=True,
+                approval_level=ApprovalLevel.REVIEW,
+                modifiable_fields=["from_date", "to_date", "top_n", "min_days_on_sale"],
+                approval_message="Vui lòng review các tham số phân tích slow movers",
+                timeout_seconds=90,
+            ),
         )
 
         self.add_tool(
