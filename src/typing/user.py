@@ -6,15 +6,16 @@ from pydantic import BaseModel, EmailStr, Field
 
 class HITLMode(str, Enum):
     """Human-in-the-loop mode for tool approvals."""
-    REVIEW = "review"        # User must approve each tool call
-    AUTO_APPROVE = "auto"    # Automatically approve all tool calls
+
+    REVIEW = "review"  # User must approve each tool call
+    AUTO_APPROVE = "auto"  # Automatically approve all tool calls
 
 
 class UserSettings(BaseModel):
     """User preferences and settings."""
+
     hitl_mode: HITLMode = Field(
-        default=HITLMode.REVIEW,
-        description="How to handle tool approval requests"
+        default=HITLMode.REVIEW, description="How to handle tool approval requests"
     )
 
 
@@ -43,6 +44,7 @@ class User(UserBase):
 
 class UserSettingsUpdate(BaseModel):
     """Partial update for user settings."""
+
     hitl_mode: Optional[HITLMode] = None
 
 
