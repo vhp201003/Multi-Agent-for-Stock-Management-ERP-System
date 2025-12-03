@@ -3,7 +3,7 @@
   flex-direction: column;
   height: 100vh;
   flex: 1;
-  background: #0a0a0a;
+  background: var(--bg-primary);
 }
 
 .chat-header {
@@ -19,23 +19,23 @@
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
-  color: #e8e8e8;
+  color: var(--text-primary);
 }
 
 .conversation-id {
   font-size: 0.7rem;
-  color: #666666;
+  color: var(--text-muted);
   background: transparent;
   padding: 0.4rem 0.8rem;
   border-radius: 6px;
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--border-primary);
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
   padding: 0 2rem 2rem 2rem;
-  background: #0a0a0a;
+  background: var(--bg-primary);
   width: 100%;
 }
 
@@ -52,7 +52,7 @@
   content: '';
   display: block;
   height: 1px;
-  background: linear-gradient(to right, transparent, #1a1a1a, transparent);
+  background: linear-gradient(to right, transparent, var(--border-primary), transparent);
   margin-bottom: 1.5rem;
   width: 100%;
 }
@@ -61,7 +61,7 @@
   content: '';
   display: block;
   height: 1px;
-  background: linear-gradient(to right, transparent, #1a1a1a, transparent);
+  background: linear-gradient(to right, transparent, var(--border-primary), transparent);
   margin-bottom: 1.5rem;
   width: 100%;
 }
@@ -86,11 +86,11 @@
   display: inline-block;
   max-width: 75%;
   padding: 1rem 1.3rem;
-  background: #2a2a2a;
-  color: #e8e8e8;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   border: none;
   border-radius: 24px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 
 /* Assistant Message - Full Width, Centered, Flat */
@@ -105,7 +105,7 @@
   padding: 0 0 1.5rem 0;
   margin: 0;
   background: transparent;
-  color: #e8e8e8;
+  color: var(--text-primary);
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -151,7 +151,7 @@
   list-style: none;
   width: 100%;
   box-sizing: border-box;
-  border-bottom: 1px solid #1a1a1a;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .thinking-header::-webkit-details-marker {
@@ -168,7 +168,7 @@
 
 .thinking-title {
   font-weight: 400;
-  color: #8a8a8a;
+  color: var(--text-tertiary);
   font-size: 0.8rem;
   flex: 1;
   text-transform: uppercase;
@@ -177,13 +177,13 @@
 
 .thinking-count {
   font-size: 0.75rem;
-  color: #666666;
+  color: var(--text-muted);
   font-weight: 400;
 }
 
 .thinking-toggle {
   font-size: 0.9rem;
-  color: #666666;
+  color: var(--text-muted);
   transition: transform 0.2s;
   width: 16px;
   text-align: center;
@@ -208,12 +208,12 @@
   border: none;
   border-radius: 0;
   transition: all 0.2s;
-  border-bottom: 1px solid #0f0f0f;
+  border-bottom: 1px solid var(--bg-secondary);
 }
 
 .thinking-step:hover {
   background: transparent;
-  border-color: #1a1a1a;
+  border-color: var(--border-primary);
 }
 
 .thinking-step:last-child {
@@ -246,13 +246,13 @@
 
 .step-agent {
   font-weight: 500;
-  color: #9a9a9a;
+  color: var(--text-secondary);
   font-size: 0.8rem;
   text-transform: capitalize;
 }
 
 .step-name {
-  color: #6a6a6a;
+  color: var(--text-tertiary);
   font-size: 0.75rem;
   padding: 0;
   background: transparent;
@@ -262,7 +262,7 @@
 .step-status {
   margin-left: auto;
   font-size: 0.8rem;
-  color: #666666;
+  color: var(--text-muted);
   font-weight: 500;
 }
 
@@ -274,13 +274,13 @@
   border: none;
   border-radius: 0;
   line-height: 1.4;
-  color: #a8a8a8;
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
 .step-message strong,
 .step-query strong {
-  color: #8a8a8a;
+  color: var(--text-tertiary);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -454,7 +454,7 @@
 
 .chat-input-container {
   padding: 1.5rem 2rem 2rem 2rem;
-  background: #0a0a0a;
+  background: var(--bg-primary);
   border-top: none;
   width: 100%;
   display: flex;
@@ -465,8 +465,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 28px;
   padding: 0.6rem 0.8rem;
   transition: all 0.2s;
@@ -476,9 +476,9 @@
 }
 
 .input-wrapper:focus-within {
-  border-color: #3a3a3a;
-  background: #1e1e1e;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.05);
+  border-color: var(--border-secondary);
+  background: var(--bg-tertiary);
+  box-shadow: 0 0 8px var(--shadow);
 }
 
 .chat-input {
@@ -488,12 +488,12 @@
   border: none;
   font-size: 0.9rem;
   outline: none;
-  color: #e8e8e8;
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .chat-input::placeholder {
-  color: #666666;
+  color: var(--text-muted);
 }
 
 .chat-input:disabled {
@@ -504,8 +504,8 @@
 .chat-send-button {
   width: 36px;
   height: 36px;
-  background: #e8e8e8;
-  color: #0a0a0a;
+  background: var(--accent-primary);
+  color: var(--bg-primary);
   border: none;
   border-radius: 50%;
   font-size: 0.95rem;
@@ -518,14 +518,14 @@
 }
 
 .chat-send-button:hover:not(:disabled) {
-  background: #ffffff;
+  background: var(--accent-hover);
   transform: scale(1.05);
 }
 
 .chat-send-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  background: #4a4a4a;
+  background: var(--text-muted);
   transform: none;
 }
 
@@ -555,9 +555,9 @@
 .layout-section-break {
   margin: 2rem 0;
   padding: 0.75rem 0;
-  border-top: 1px solid #2a2a2a;
+  border-top: 1px solid var(--border-primary);
   text-align: left;
-  color: #666666;
+  color: var(--text-muted);
   font-size: 0.8rem;
   font-weight: 400;
   letter-spacing: 0.3px;
@@ -565,13 +565,13 @@
 
 .layout-section-break h3 {
   margin: 0 0 0.25rem 0;
-  color: #ffffff;
+  color: var(--accent-primary);
   font-size: 1.1rem;
 }
 
 .layout-section-break p {
   margin: 0;
-  color: #b3b3b3;
+  color: var(--text-secondary);
   font-size: 0.9rem;
 }
 
@@ -585,13 +585,13 @@
 }
 
 .layout-markdown strong {
-  color: #ffffff;
+  color: var(--accent-primary);
   font-weight: 600;
 }
 
 .layout-markdown p {
   margin: 0.75rem 0;
-  color: #e8e8e8;
+  color: var(--text-primary);
   font-size: 0.95rem;
 }
 
@@ -603,7 +603,7 @@
 
 .layout-markdown li {
   margin: 0.5rem 0;
-  color: #e8e8e8;
+  color: var(--text-primary);
   font-size: 0.95rem;
 }
 
@@ -638,7 +638,7 @@
 
 .layout-table h4 {
   margin: 0 0 0.75rem 0;
-  color: #ffffff;
+  color: var(--accent-primary);
   font-size: 1.1rem;
   font-weight: 600;
 }
@@ -649,13 +649,13 @@
   background: transparent;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--border-primary);
 }
 
 .layout-table thead {
-  background: #1a1a1a;
-  color: #a8a8a8;
-  border-bottom: 1px solid #2a2a2a;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .layout-table th {
@@ -664,19 +664,19 @@
   font-weight: 500;
   font-size: 0.85rem;
   white-space: nowrap;
-  color: #a8a8a8;
+  color: var(--text-secondary);
   text-transform: capitalize;
 }
 
 .layout-table td {
   padding: 0.9rem 1rem;
-  border-bottom: 1px solid #1a1a1a;
+  border-bottom: 1px solid var(--border-primary);
   font-size: 0.9rem;
-  color: #e8e8e8;
+  color: var(--text-primary);
 }
 
 .layout-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-hover);
 }
 
 .layout-table tbody tr:last-child td {
@@ -688,24 +688,24 @@
   margin: 1.5rem 0;
   padding: 1.5rem;
   background: transparent;
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
 }
 
 .layout-graph h4 {
   margin: 0 0 1rem 0;
-  color: #e8e8e8;
+  color: var(--text-primary);
   font-size: 0.95rem;
   font-weight: 500;
 }
 
 /* Chart Tooltip */
 .chart-tooltip {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
   padding: 0.75rem 1rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 4px 12px var(--shadow);
 }
 
 .chart-tooltip p {
@@ -716,7 +716,7 @@
 }
 
 .chart-tooltip .tooltip-label {
-  color: #a8a8a8;
+  color: var(--text-secondary);
   text-transform: capitalize;
   font-weight: 500;
 }

@@ -2,8 +2,8 @@
 .sidebar {
   width: 320px;
   height: 100vh;
-  background: #0a0a0a;
-  border-right: 1px solid #1a1a1a;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -16,21 +16,21 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 1.5rem 1.25rem;
-  border-bottom: 1px solid #1a1a1a;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .sidebar-logo {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
-  color: #e8e8e8;
+  color: var(--text-primary);
   letter-spacing: 0.2px;
 }
 
 .new-chat-btn {
   background: transparent;
-  border: 1px solid #2a2a2a;
-  color: #e8e8e8;
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
   padding: 0.55rem 1rem;
   border-radius: 20px;
   font-size: 0.8rem;
@@ -44,15 +44,36 @@
 }
 
 .new-chat-btn:hover {
-  background: #1a1a1a;
-  border-color: #3a3a3a;
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+  padding: 0.5rem;
+  border-radius: 50%;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  width: 36px;
+  height: 36px;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
 }
 
 /* Search Bar */
 .sidebar-search {
   position: relative;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #1a1a1a;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .search-icon {
@@ -61,17 +82,17 @@
   top: 50%;
   transform: translateY(-50%);
   font-size: 1rem;
-  color: #666666;
+  color: var(--text-muted);
   pointer-events: none;
 }
 
 .search-input {
   width: 100%;
   padding: 0.6rem 1rem;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 20px;
-  color: #e8e8e8;
+  color: var(--text-primary);
   font-size: 0.85rem;
   outline: none;
   transition: all 0.2s;
@@ -79,12 +100,12 @@
 }
 
 .search-input:focus {
-  border-color: #3a3a3a;
-  background: #1e1e1e;
+  border-color: var(--border-secondary);
+  background: var(--bg-tertiary);
 }
 
 .search-input::placeholder {
-  color: #666666;
+  color: var(--text-muted);
 }
 
 /* Search Input Wrapper */
@@ -100,7 +121,7 @@
   right: 0.75rem;
   background: none;
   border: none;
-  color: #666666;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 0.9rem;
   padding: 0.3rem 0.4rem;
@@ -112,8 +133,8 @@
 }
 
 .clear-search-btn:hover {
-  color: #a8a8a8;
-  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-secondary);
+  background: var(--bg-hover);
 }
 
 /* Conversations Header */
@@ -127,7 +148,7 @@
 .clear-all-btn {
   background: transparent;
   border: none;
-  color: #666666;
+  color: var(--text-muted);
   font-size: 0.7rem;
   cursor: pointer;
   padding: 0.25rem 0.5rem;
@@ -138,8 +159,8 @@
 }
 
 .clear-all-btn:hover {
-  background: #1a1a1a;
-  color: #a8a8a8;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
 }
 
 /* Conversations List */
@@ -158,18 +179,18 @@
 }
 
 .conversations-list::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
+  background: var(--border-primary);
   border-radius: 3px;
 }
 
 .conversations-list::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: var(--border-secondary);
 }
 
 .empty-state {
   text-align: center;
   padding: 3rem 1.5rem;
-  color: #666666;
+  color: var(--text-muted);
 }
 
 .empty-state p {
@@ -179,7 +200,7 @@
 
 .empty-hint {
   font-size: 0.75rem;
-  color: #555555;
+  color: var(--text-tertiary);
 }
 
 /* Conversation Groups */
@@ -189,7 +210,7 @@
 
 .group-title {
   font-size: 0.65rem;
-  color: #666666;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.3px;
   font-weight: 500;
@@ -212,13 +233,13 @@
 }
 
 .conversation-item:hover {
-  background: #1a1a1a;
-  border-color: #2a2a2a;
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
 }
 
 .conversation-item.active {
-  background: #1a1a1a;
-  border-color: #3a3a3a;
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
 }
 
 .conversation-content {
@@ -230,7 +251,7 @@
   margin: 0 0 0.25rem 0;
   font-size: 0.85rem;
   font-weight: 500;
-  color: #e8e8e8;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -239,7 +260,7 @@
 .conversation-preview {
   margin: 0;
   font-size: 0.75rem;
-  color: #666666;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -248,7 +269,7 @@
 .delete-btn {
   background: transparent;
   border: none;
-  color: #666666;
+  color: var(--text-muted);
   font-size: 0.9rem;
   cursor: pointer;
   padding: 0.3rem 0.5rem;
@@ -269,15 +290,15 @@
 
 /* Sidebar Footer */
 .sidebar-footer {
-  border-top: 1px solid #1a1a1a;
+  border-top: 1px solid var(--border-primary);
   padding: 1rem;
 }
 
 .sidebar-footer-btn {
   width: 100%;
   background: transparent;
-  border: 1px solid #2a2a2a;
-  color: #a8a8a8;
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
   padding: 0.7rem 1rem;
   border-radius: 8px;
   font-size: 0.85rem;
@@ -291,9 +312,9 @@
 }
 
 .sidebar-footer-btn:hover {
-  background: #1a1a1a;
-  border-color: #3a3a3a;
-  color: #e8e8e8;
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+  color: var(--text-primary);
 }
 
 .user-profile {
@@ -301,15 +322,15 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.7rem 1rem;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   transition: all 0.2s;
 }
 
 .user-profile:hover {
-  background: #1e1e1e;
-  border-color: #3a3a3a;
+  background: var(--bg-tertiary);
+  border-color: var(--border-secondary);
 }
 
 .user-avatar {
@@ -335,7 +356,7 @@
 .user-name {
   font-size: 0.85rem;
   font-weight: 500;
-  color: #e8e8e8;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -344,7 +365,7 @@
 
 .user-email {
   font-size: 0.7rem;
-  color: #666666;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -352,8 +373,8 @@
 
 .logout-btn {
   background: transparent;
-  border: 1px solid #2a2a2a;
-  color: #666666;
+  border: 1px solid var(--border-primary);
+  color: var(--text-muted);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 0.4rem 0.6rem;
@@ -415,7 +436,7 @@
   .sidebar {
     width: 240px;
     border-right: none;
-    border-bottom: 1px solid #1a1a1a;
+    border-bottom: 1px solid var(--border-primary);
     height: auto;
     flex-direction: row;
     flex-wrap: wrap;
@@ -425,7 +446,7 @@
     width: 100%;
     padding: 1rem;
     border-bottom: none;
-    border-right: 1px solid #1a1a1a;
+    border-right: 1px solid var(--border-primary);
   }
 
   .sidebar-search {
@@ -434,7 +455,7 @@
     min-width: 150px;
     padding: 1rem 0.8rem;
     border-bottom: none;
-    border-right: 1px solid #1a1a1a;
+    border-right: 1px solid var(--border-primary);
   }
 
   .conversations-list {
@@ -444,7 +465,7 @@
 
   .sidebar-footer {
     width: 100%;
-    border-top: 1px solid #1a1a1a;
+    border-top: 1px solid var(--border-primary);
   }
 }
 

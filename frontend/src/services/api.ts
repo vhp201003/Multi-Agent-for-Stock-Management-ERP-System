@@ -10,8 +10,12 @@ export const generateId = (): string => {
 // HITL Mode types
 export type HITLMode = 'review' | 'auto';
 
+// Theme Mode types
+export type ThemeMode = 'dark' | 'light';
+
 export interface UserSettings {
   hitl_mode: HITLMode;
+  theme: ThemeMode;
 }
 
 export interface QueryRequest {

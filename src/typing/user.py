@@ -11,11 +11,21 @@ class HITLMode(str, Enum):
     AUTO_APPROVE = "auto"  # Automatically approve all tool calls
 
 
+class ThemeMode(str, Enum):
+    """UI theme mode."""
+
+    DARK = "dark"
+    LIGHT = "light"
+
+
 class UserSettings(BaseModel):
     """User preferences and settings."""
 
     hitl_mode: HITLMode = Field(
         default=HITLMode.REVIEW, description="How to handle tool approval requests"
+    )
+    theme: ThemeMode = Field(
+        default=ThemeMode.DARK, description="UI theme (dark/light)"
     )
 
 
@@ -46,6 +56,7 @@ class UserSettingsUpdate(BaseModel):
     """Partial update for user settings."""
 
     hitl_mode: Optional[HITLMode] = None
+    theme: Optional[ThemeMode] = None
 
 
 class Token(BaseModel):

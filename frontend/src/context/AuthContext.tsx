@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { HITLMode, UserSettings } from '../services/api';
+import type { HITLMode, ThemeMode, UserSettings } from '../services/api';
 import { apiService } from '../services/api';
 
 interface User {
@@ -17,6 +17,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   hitlMode: HITLMode;
   toggleHitlMode: () => Promise<void>;
+  theme: ThemeMode;
+  toggleTheme: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -25,6 +27,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [hitlMode, setHitlMode] = useState<HITLMode>('review');
+  const [theme, setTheme] = useState<ThemeMode>('dark');
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     if (token) {
@@ -35,6 +43,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Set HITL mode from user settings
           if (userData.settings?.hitl_mode) {
             setHitlMode(userData.settings.hitl_mode);
+          }
+          // Set theme from user settings
+          if (userData.settings?.theme) {
+            setTheme(userData.settings.theme);
           }
         })
         .catch(() => logout());
@@ -51,6 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     setUser(null);
     setHitlMode('review');
+    setTheme('dark');
   };
 
   const toggleHitlMode = useCallback(async () => {
@@ -72,6 +85,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [token, hitlMode, user]);
 
+  const toggleTheme = useCallback(async () => {
+    const newTheme: ThemeMode = theme === 'dark' ? 'light' : 'dark';
+    
+    // Apply immediately for instant feedback
+    setTheme(newTheme);
+    
+    if (!token) return;
+    
+    try {
+      // Sync with server
+      const updatedSettings = await apiService.updateUserSettings(token, { theme: newTheme });
+      
+      // Update local user state
+      if (user) {
+        setUser({ ...user, settings: updatedSettings });
+      }
+    } catch (error) {
+      console.error('Failed to update theme:', error);
+      // Revert on error
+      setTheme(theme);
+    }
+  }, [token, theme, user]);
+
   return (
     <AuthContext.Provider value={{ 
       user, 
@@ -80,7 +116,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout, 
       isAuthenticated: !!token,
       hitlMode,
-      toggleHitlMode
+      toggleHitlMode,
+      theme,
+      toggleTheme
     }}>
       {children}
     </AuthContext.Provider>

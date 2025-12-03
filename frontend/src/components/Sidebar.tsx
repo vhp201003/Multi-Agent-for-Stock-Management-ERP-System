@@ -27,7 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [useBackend] = useState(true); // Toggle backend vs localStorage
-  const { user, logout } = useAuth();
+  const { user, logout, theme, toggleTheme } = useAuth();
 
   const loadFromLocalStorage = () => {
     try {
@@ -180,10 +180,17 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="sidebar">
-      {/* Header with New Chat Button */}
+      {/* Header with New Chat Button and Theme Toggle */}
       <div className="sidebar-header">
         <button className="new-chat-btn" onClick={onNewConversation} title="New chat">
           ✚ New chat
+        </button>
+        <button 
+          className="theme-toggle-btn" 
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
         </button>
       </div>
 
