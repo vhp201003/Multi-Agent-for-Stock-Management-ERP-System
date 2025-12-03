@@ -7,6 +7,7 @@ import { Login } from './pages/Login'
 import { Register } from './pages/Register'
 import AdminLayout from './layouts/AdminLayout'
 import Dashboard from './pages/Dashboard'
+import { Analytics, Integrations, Users, Settings } from './pages/admin'
 import './App.css'
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -55,11 +56,10 @@ function App() {
             </PrivateRoute>
           }>
             <Route index element={<Dashboard />} />
-            {/* Add other admin routes here as placeholders */}
-            <Route path="users" element={<div>Users Page (Coming Soon)</div>} />
-            <Route path="settings" element={<div>Settings Page (Coming Soon)</div>} />
-            <Route path="analytics" element={<div>Analytics Page (Coming Soon)</div>} />
-            <Route path="integrations" element={<div>Integrations Page (Coming Soon)</div>} />
+            <Route path="users" element={<Users />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="integrations" element={<Integrations />} />
           </Route>
         </Routes>
       </Router>
