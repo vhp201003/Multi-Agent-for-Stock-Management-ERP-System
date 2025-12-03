@@ -9,10 +9,12 @@ from src.agents.chat_agent import ChatAgent
 from src.agents.forecasting_agent import ForecastingAgent
 from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
+from src.agents.ordering_agent import OrderingAgent
 from src.agents.summary_agent import SummaryAgent
 from src.managers.analytics_manager import AnalyticsManager
 from src.managers.forecasting_manager import ForecastingManager
 from src.managers.inventory_manager import InventoryManager
+from src.managers.ordering_manager import OrderingManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,8 @@ class AgentManager:
         self.analytics_agent: AnalyticsAgent = None
         self.analytics_manager: AnalyticsManager = None
         self.forecasting_manager: ForecastingManager = None
+        self.ordering_agent: OrderingAgent = None
+        self.ordering_manager: OrderingManager = None
         self.tasks: list[asyncio.Task] = []
         self.redis_client = None
 
@@ -44,6 +48,8 @@ class AgentManager:
             self.analytics_agent = AnalyticsAgent()
             self.analytics_manager = AnalyticsManager()
             self.forecasting_manager = ForecastingManager()
+            self.ordering_agent = OrderingAgent()
+            self.ordering_manager = OrderingManager()
             self.redis_client = self.orchestrator.redis
 
             self.tasks = [
@@ -71,6 +77,11 @@ class AgentManager:
                 asyncio.create_task(
                     self.forecasting_agent.start(), name="forecasting_agent"
                 ),
+                # Ordering
+                asyncio.create_task(
+                    self.ordering_manager.start(), name="ordering_manager"
+                ),
+                asyncio.create_task(self.ordering_agent.start(), name="ordering_agent"),
                 # Chat
                 asyncio.create_task(self.chat_agent.start(), name="chat_agent"),
                 # Summary
