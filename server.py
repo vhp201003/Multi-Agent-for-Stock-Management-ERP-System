@@ -15,18 +15,17 @@ from config.settings import (
     get_server_host,
     get_server_port,
 )
-from src.api import auth_endpoints, conversation_endpoints, endpoints, admin_endpoints
+from src.api import admin_endpoints, auth_endpoints, conversation_endpoints, endpoints
 from src.api.lifespan import lifespan
 from src.typing import Request
+from src.utils.colored_logging import setup_colored_logging
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+# Setup colored logging
+setup_colored_logging(level=logging.INFO)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Multi Agent Stock Management System", lifespan=lifespan)
 

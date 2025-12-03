@@ -5,8 +5,10 @@ from pydantic import BaseModel
 
 from .constants import TaskStatus
 
+
 class BaseMessage(BaseModel):
     pass
+
 
 class QueryTask(BaseMessage):
     query_id: str

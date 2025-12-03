@@ -256,6 +256,7 @@ class BaseAgent(ABC):
                         },
                     )
 
+                # If LLM wants to call tools, execute them and continue the loop
                 if tool_calls and tools and tool_executor:
                     assistant_msg = {
                         "role": "assistant",
@@ -272,8 +273,17 @@ class BaseAgent(ABC):
                         messages.append(tool_result)
 
                     call_kwargs["messages"] = messages
+                    # Continue loop - let LLM process tool results
                     continue
 
+                # Only break when LLM is done (finish_reason == "stop")
+                if choice.finish_reason == "stop":
+                    break
+
+                # For other finish reasons (length, etc.), also break but log warning
+                logger.warning(
+                    f"LLM finished with reason: {choice.finish_reason}, breaking loop"
+                )
                 break
 
             result = content
