@@ -15,6 +15,7 @@ from config.settings import (
     get_forecasting_server_port,
     get_inventory_server_port,
     get_low_stock_threshold,
+    get_ordering_server_port,
     get_pareto_cutoff,
 )
 from src.mcp.server.analytics_server import AnalyticsMCPServer, AnalyticsServerConfig
@@ -24,6 +25,7 @@ from src.mcp.server.forecasting_server.server import (
     ForecastingServerConfig,
 )
 from src.mcp.server.inventory_server import InventoryMCPServer, InventoryServerConfig
+from src.mcp.server.ordering_server import OrderingMCPServer, OrderingServerConfig
 
 load_dotenv()
 
@@ -152,6 +154,26 @@ def create_forecasting_server(
     return ForecastingMCPServer(config)
 
 
+def create_ordering_server(
+    port: int | None = None,
+    erpnext_url: str | None = None,
+    erpnext_api_key: str | None = None,
+    erpnext_api_secret: str | None = None,
+    default_lookback_days: int | None = None,
+) -> OrderingMCPServer:
+    config = OrderingServerConfig(
+        name="OrderingMCPServer",
+        host="0.0.0.0",
+        port=port or get_ordering_server_port(),
+        debug=True,
+        erpnext_url=erpnext_url or get_erpnext_url(),
+        erpnext_api_key=erpnext_api_key or get_erpnext_api_key(),
+        erpnext_api_secret=erpnext_api_secret or get_erpnext_api_secret(),
+        default_lookback_days=default_lookback_days or get_default_lookback_days(),
+    )
+    return OrderingMCPServer(config)
+
+
 async def run_server() -> None:
     manager = MCPServerManager()
 
@@ -167,6 +189,10 @@ async def run_server() -> None:
         logger.info("🔧 Configuring Forecasting MCP Server...")
         forecasting_server = create_forecasting_server()
         manager.add_server("forecasting", forecasting_server)
+
+        logger.info("🔧 Configuring Ordering MCP Server...")
+        ordering_server = create_ordering_server()
+        manager.add_server("ordering", ordering_server)
 
         await manager.start_all()
         await manager.wait_until_stopped()

@@ -154,6 +154,10 @@ def get_forecasting_server_port() -> int:
     return get_env_int("FORECASTING_SERVER_PORT", 8013)
 
 
+def get_ordering_server_port() -> int:
+    return get_env_int("ORDERING_SERVER_PORT", 8014)
+
+
 def get_low_stock_threshold() -> int:
     return get_env_int("LOW_STOCK_THRESHOLD", 10)
 
