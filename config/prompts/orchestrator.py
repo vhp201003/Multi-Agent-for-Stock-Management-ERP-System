@@ -1,6 +1,83 @@
 import json
 from string import Template
 
+# ============================================================================
+# PHASE 1: Chain of Thought Reasoning Prompt (Free-form analysis)
+# ============================================================================
+COT_REASONING_PROMPT = """
+You are the Orchestrator reasoning engine. Your job is to THINK STEP-BY-STEP about how to handle this user query.
+
+Available Agents and Their Tools:
+$agent_descriptions
+
+## YOUR TASK:
+Analyze the user query and reason through the decision process. Think out loud.
+
+## STEP-BY-STEP ANALYSIS:
+
+1. **UNDERSTAND THE QUERY:**
+   - What is the user asking for?
+   - What type of request is this? (data retrieval, action, conversation, etc.)
+   - Are there multiple parts to this request?
+
+2. **IDENTIFY KEYWORDS & INTENT:**
+   - List key terms/concepts in the query
+   - Match these to agent capabilities
+   - Note any ambiguities
+
+3. **EVALUATE EACH AGENT:**
+   - For each potentially relevant agent, explain WHY it matches or doesn't match
+   - Be specific about which TOOLS would be used
+   - Consider if the query needs domain-specific data or just conversation
+
+4. **DETERMINE AGENT REQUIREMENTS:**
+   - If NO specialized agents needed (greetings, general chat, "who are you", etc.):
+     → Conclude: "This is a CONVERSATIONAL query, no agents needed"
+   - If specialized agents ARE needed:
+     → List which agents and why
+     → Define dependencies (does agent B need data from agent A first?)
+
+5. **FINAL DECISION:**
+   - State your final routing decision clearly
+   - If agents needed: specify agent types, sub-queries, and task order
+   - If no agents: confirm this is for ChatAgent
+
+Provide your reasoning in plain text. Be thorough but concise.
+"""
+
+# ============================================================================
+# PHASE 2: Structured Decision Prompt (JSON output from reasoning)
+# ============================================================================
+COT_DECISION_PROMPT = """
+Based on the reasoning analysis below, generate a structured JSON decision.
+
+## REASONING ANALYSIS:
+$reasoning
+
+## OUTPUT REQUIREMENTS:
+- Return ONLY a valid JSON object (no text, no markdown, no explanations)
+- The JSON must match this exact schema: $schema
+- If no agents needed (conversational query), return: {"agents_needed": [], "task_dependency": {}}
+- If error, return: {"error": "description"}
+
+## TASK STRUCTURE (when agents are needed):
+- task_id: Unique identifier (e.g., "agent_type_1")
+- agent_type: Name of the agent (must match available agents)
+- sub_query: Clear instruction for what the agent should do
+- dependencies: List of task_ids that must complete first
+
+## Example:
+{
+  "agents_needed": ["inventory", "analytics"],
+  "task_dependency": {
+    "inventory": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Get stock levels", "dependencies": []}],
+    "analytics": [{"task_id": "analytics_1", "agent_type": "analytics", "sub_query": "Analyze trends", "dependencies": ["inventory_1"]}]
+  }
+}
+
+Generate the JSON now:
+"""
+
 ORCHESTRATOR_PROMPT = """
 You are the Orchestrator. Your job is to analyze user queries and determine the best execution path by matching query requirements to available agent tools.
 
@@ -154,3 +231,61 @@ def _minimize_schema_for_prompt(schema: dict) -> dict:
         }
 
     return minimal
+
+
+# ============================================================================
+# Chain of Thought Prompt Builders
+# ============================================================================
+def build_cot_reasoning_prompt() -> str:
+    """Build Phase 1 prompt: Free-form reasoning about the query."""
+    try:
+        with open("config/agents.json", "r") as f:
+            agents_info = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        agents_info = {}
+
+    agents_desc = []
+    for name, info in agents_info.items():
+        if name != "orchestrator":
+            desc = info.get("description", "No description")
+            tools = info.get("tools", [])
+            tools_str = ""
+            if tools:
+                if isinstance(tools[0], dict):
+                    tools_str = "Tools: " + "; ".join(
+                        f"{t['name']} ({t['description']})" for t in tools
+                    )
+                else:
+                    tools_str = "Tools: " + ", ".join(tools)
+            agents_desc.append(
+                f"- **{name}**: {desc}\n  {tools_str}"
+                if tools_str
+                else f"- **{name}**: {desc}"
+            )
+
+    agent_descriptions = "\n".join(agents_desc)
+    prompt_template = Template(COT_REASONING_PROMPT)
+    return prompt_template.safe_substitute(agent_descriptions=agent_descriptions)
+
+
+def build_cot_decision_prompt(reasoning: str, schema_model) -> str:
+    """Build Phase 2 prompt: Convert reasoning to structured JSON."""
+    try:
+        if hasattr(schema_model, "model_json_schema"):
+            schema = schema_model.model_json_schema()
+            schema = _minimize_schema_for_prompt(schema)
+        else:
+            schema = schema_model
+    except Exception:
+        schema = {
+            "type": "object",
+            "properties": {
+                "agents_needed": {"type": "array", "items": {"type": "string"}},
+                "task_dependency": {"type": "object"},
+            },
+            "required": ["agents_needed", "task_dependency"],
+        }
+
+    schema_str = json.dumps(schema, indent=1, separators=(",", ":"))
+    prompt_template = Template(COT_DECISION_PROMPT)
+    return prompt_template.safe_substitute(reasoning=reasoning, schema=schema_str)

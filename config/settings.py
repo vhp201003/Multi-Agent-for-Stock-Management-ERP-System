@@ -13,37 +13,46 @@ class AgentConfig(BaseModel):
 
     LLM parameters (model, temperature, top_p, etc.) are defined here and can be
     unpacked directly into LLM API calls using **config.get_llm_params().
+
+    Supports extra LLM params via model_config extra="allow" - any additional
+    fields in profile JSON will be captured and passed to LLM API.
     """
 
+    model_config = {"extra": "allow"}  # Allow extra fields from profile JSON
+
+    # Required
     model: str
+
+    # Non-LLM fields (won't be passed to LLM API)
     mcp_server_url: Optional[str] = None
-    temperature: float = 0.7
-    max_tokens: Optional[int] = None
-    top_p: Optional[float] = None
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
     messages: List[Dict[str, str]] = Field(default_factory=list)
 
-    def get_llm_params(self) -> Dict[str, Any]:
-        """Extract LLM parameters for API calls.
+    # Common LLM params with defaults
+    temperature: float = 0.7
+    max_tokens: Optional[int] = None
 
-        Returns dict with: model, temperature, top_p, max_tokens, frequency_penalty, presence_penalty
-        (excludes None values and non-LLM fields like mcp_server_url, messages)
+    # Fields that should NOT be passed to LLM
+    _non_llm_fields: set = {"mcp_server_url", "messages"}
+
+    def get_llm_params(self) -> Dict[str, Any]:
+        """Extract ALL LLM parameters for API calls.
+
+        Automatically includes any extra fields from profile (top_p, reasoning_format, etc.)
+        Excludes None values and non-LLM fields (mcp_server_url, messages).
 
         Usage: **config.get_llm_params() in _call_llm()
         """
-        params = {
-            "model": self.model,
-            "temperature": self.temperature,
-        }
-        if self.max_tokens is not None:
-            params["max_tokens"] = self.max_tokens
-        if self.top_p is not None:
-            params["top_p"] = self.top_p
-        if self.frequency_penalty is not None:
-            params["frequency_penalty"] = self.frequency_penalty
-        if self.presence_penalty is not None:
-            params["presence_penalty"] = self.presence_penalty
+        params = {}
+
+        # Get all fields (including extras from model_config extra="allow")
+        all_fields = self.model_dump()
+
+        for key, value in all_fields.items():
+            # Skip non-LLM fields and None values
+            if key in self._non_llm_fields or value is None:
+                continue
+            params[key] = value
+
         return params
 
 
