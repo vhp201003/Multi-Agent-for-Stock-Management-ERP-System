@@ -142,3 +142,38 @@ class SharedData(BaseModel):
     def get_result_by_id(self, result_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve full tool result by its ID"""
         return self.result_references.get(result_id)
+
+    def get_dependency_results(self, task_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Get results from completed dependency tasks for a given task_id.
+
+        Args:
+            task_id: The task_id to get dependency results for
+
+        Returns:
+            List of dependency results with task info, or None if no dependencies
+        """
+        if not task_id or task_id not in self.tasks:
+            return None
+
+        current_task = self.tasks[task_id]
+        if not current_task.task.dependencies:
+            return None
+
+        dep_results = []
+        for dep_id in current_task.task.dependencies:
+            dep_task = self.tasks.get(dep_id)
+            if (
+                dep_task
+                and dep_task.status == TaskStatus.COMPLETED
+                and dep_task.result is not None
+            ):
+                dep_results.append(
+                    {
+                        "task_id": dep_id,
+                        "agent_type": dep_task.task.agent_type,
+                        "sub_query": dep_task.task.sub_query,
+                        "result": dep_task.result,
+                    }
+                )
+
+        return dep_results if dep_results else None

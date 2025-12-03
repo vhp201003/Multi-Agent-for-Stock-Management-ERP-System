@@ -71,6 +71,11 @@ class WorkerAgent(BaseAgent):
         # Get conversation summary
         summary = await get_summary_conversation(self.redis, conversation_id)
 
+        # Get dependency results from SharedData
+        dependency_context = await self._get_dependency_context(
+            command_message.query_id, self._current_task_id
+        )
+
         messages = [
             {
                 "role": "system",
@@ -82,11 +87,23 @@ class WorkerAgent(BaseAgent):
                 if summary
                 else "Conversation Summary: No prior context",
             },
+        ]
+
+        # Inject dependency results if available
+        if dependency_context:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Previous task results (use this data for your analysis):\n{dependency_context}",
+                }
+            )
+
+        messages.append(
             {
                 "role": "user",
                 "content": sub_query,
-            },
-        ]
+            }
+        )
 
         ### Phase 2: Call LLM to get tool calls from Groq tool_calls
         groq_tools = None
@@ -415,6 +432,28 @@ class WorkerAgent(BaseAgent):
             return None
         except Exception as e:
             logger.error(f"Task ID resolution failed: {e}")
+            return None
+
+    async def _get_dependency_context(
+        self, query_id: str, task_id: Optional[str]
+    ) -> Optional[str]:
+        """Load results from completed dependency tasks and format for LLM context."""
+        if not task_id:
+            return None
+
+        try:
+            shared = await get_shared_data(self.redis, query_id)
+            if not shared:
+                return None
+
+            dep_results = shared.get_dependency_results(task_id)
+            if not dep_results:
+                return None
+
+            return json.dumps(dep_results, indent=2, default=str, ensure_ascii=False)
+
+        except Exception as e:
+            logger.error(f"{self.agent_type}: Failed to load dependency results: {e}")
             return None
 
     async def get_mcp_client(self) -> MCPClient:
