@@ -10,5 +10,4 @@ wheels/
 .venv
 .env
 *.python-version
-config/profiles
 debug_llm_responses/
