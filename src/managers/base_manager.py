@@ -1,7 +1,7 @@
+import asyncio
 import json
 import logging
 
-from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
 from src.communication import get_async_redis_connection
 from src.typing.redis import (
     AgentStatus,
@@ -17,10 +17,14 @@ from src.utils import get_shared_data
 
 logger = logging.getLogger(__name__)
 
+# BLPOP timeout in seconds (0 = block forever, but we use finite for graceful shutdown)
+BLPOP_TIMEOUT = 5
+
 
 class BaseManager:
     def __init__(self, agent_type: str):
         self.agent_type = agent_type
+        self._running = False
 
         self._redis_manager = get_async_redis_connection()
         self.redis = self._redis_manager.client
@@ -28,14 +32,30 @@ class BaseManager:
     async def get_sub_channels(self) -> list[str]:
         return [RedisChannels.QUERY_CHANNEL, RedisChannels.TASK_UPDATES]
 
-    async def listen_channels(self):
-        while True:
+    async def start(self):
+        """Start the manager with pub/sub + blocking queue consumer."""
+        self._running = True
+
+        await asyncio.gather(
+            self._listen_channels(),  # Pub/sub for query routing & task updates
+            self._consume_queue(),  # BLPOP for task execution
+        )
+
+    async def stop(self):
+        """Stop the manager gracefully."""
+        self._running = False
+
+    async def _listen_channels(self):
+        """Listen for query assignments and task updates via pub/sub."""
+        while self._running:
             pubsub = self.redis.pubsub()
             channels = await self.get_sub_channels()
             await pubsub.subscribe(*channels)
 
             try:
                 async for message in pubsub.listen():
+                    if not self._running:
+                        break
                     if message["type"] == "message":
                         channel = message["channel"]
                         if channel == RedisChannels.QUERY_CHANNEL:
@@ -50,9 +70,87 @@ class BaseManager:
                 logger.error(
                     f"Manager {self.agent_type}: Error in listen_channels: {e}"
                 )
+                await asyncio.sleep(1)
             finally:
                 await pubsub.unsubscribe(*channels)
                 await pubsub.aclose()
+
+    async def _consume_queue(self):
+        """Consume tasks from active queue using BLPOP (blocking).
+
+        BLPOP is the optimal solution:
+        - Zero CPU when idle (blocks waiting for data)
+        - Instant reaction when task arrives
+        - No polling overhead
+        - Built-in timeout for graceful shutdown
+        """
+        logger.info(f"Manager {self.agent_type}: Starting queue consumer (BLPOP)")
+        queue_key = RedisKeys.get_agent_queue(self.agent_type)
+
+        while self._running:
+            try:
+                # Check if agent is idle
+                status_value = await self.redis.hget(
+                    RedisKeys.AGENT_STATUS, self.agent_type
+                )
+                agent_status = (
+                    AgentStatus(status_value) if status_value else AgentStatus.IDLE
+                )
+
+                if agent_status == AgentStatus.ERROR:
+                    await self.redis.hset(
+                        RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+                    )
+                    logger.info(f"Manager {self.agent_type}: Reset from ERROR state")
+                    continue
+
+                if agent_status != AgentStatus.IDLE:
+                    # Agent is busy, wait a bit and check again
+                    await asyncio.sleep(0.5)
+                    continue
+
+                # BLPOP: Block until task available or timeout
+                # Returns (key, value) tuple or None on timeout
+                result = await self.redis.blpop(queue_key, timeout=BLPOP_TIMEOUT)
+
+                if result is None:
+                    # Timeout - no task, loop continues (allows shutdown check)
+                    continue
+
+                _, task_data = result
+                await self._dispatch_task(task_data)
+
+            except Exception as e:
+                logger.error(f"Manager {self.agent_type}: Queue consumer error: {e}")
+                await asyncio.sleep(1)
+
+    async def _dispatch_task(self, task_data: str):
+        """Dispatch a task to the worker agent."""
+        try:
+            task = TaskQueueItem.model_validate_json(task_data)
+
+            shared_data: SharedData = await get_shared_data(self.redis, task.query_id)
+            if not shared_data:
+                logger.error(
+                    f"Manager {self.agent_type}: No shared data for query {task.query_id}"
+                )
+                return
+
+            channel = RedisChannels.get_command_channel(self.agent_type)
+            message = CommandMessage(
+                agent_type=self.agent_type,
+                command="execute",
+                query_id=task.query_id,
+                conversation_id=shared_data.conversation_id,
+                sub_query=task.sub_query,
+            )
+            await self.redis.publish(channel, json.dumps(message.model_dump()))
+            logger.info(
+                f"Manager {self.agent_type}: Dispatched task: {task.sub_query[:50]}..."
+            )
+
+        except Exception as e:
+            logger.error(f"Manager {self.agent_type}: Failed to dispatch task: {e}")
 
     async def _process_query_message(self, data: QueryTask):
         logger.info(
@@ -100,25 +198,22 @@ class BaseManager:
 
             await self.redis.rpush(queue_key, task_item.model_dump_json())
 
-        await self._execute_next_available_task()
+        # Note: _consume_queue will pick up tasks via BLPOP
 
     async def _process_task_update(self, task_update: TaskUpdate):
+        """Handle task completion events - move dependent tasks to active queue."""
         query_id = task_update.query_id
         if not query_id:
-            logger.error("Missing query_id in task update")
             return
 
-        if not task_update.agent_type or not isinstance(task_update.agent_type, str):
-            logger.error(f"Invalid agent_type in task update: {task_update.agent_type}")
-            return
+        # Small delay to ensure Orchestrator has updated SharedData
+        await asyncio.sleep(0.05)
 
-        if task_update.agent_type == self.agent_type:
-            await self._execute_next_available_task()
-            await self._update_pending_tasks(query_id)
-        elif task_update.agent_type != CHAT_AGENT_TYPE:  # ChatAgent is final
-            await self._update_pending_tasks(query_id)
+        # Check and move any pending tasks that are now ready
+        await self._check_and_move_pending_tasks()
 
-    async def _update_pending_tasks(self, query_id: str):
+    async def _check_and_move_pending_tasks(self):
+        """Check all pending tasks and move those with satisfied dependencies to active queue."""
         try:
             pending_queue_key = RedisKeys.get_agent_pending_queue(self.agent_type)
             active_queue_key = RedisKeys.get_agent_queue(self.agent_type)
@@ -127,54 +222,47 @@ class BaseManager:
             if not pending_tasks_raw:
                 return
 
-            shared_data_raw = await self.redis.json().get(
-                RedisKeys.get_shared_data_key(query_id)
-            )
-            if not shared_data_raw:
-                logger.warning(f"No shared data for query {query_id}")
-                return
-
-            shared_data = SharedData(**shared_data_raw)
             ready_tasks = []
             still_pending = []
 
             for task_raw in pending_tasks_raw:
                 task = TaskQueueItem(**json.loads(task_raw))
 
-                if task.query_id != query_id:
+                # Get fresh SharedData for this task's query
+                shared_data_raw = await self.redis.json().get(
+                    RedisKeys.get_shared_data_key(task.query_id)
+                )
+                if not shared_data_raw:
                     still_pending.append(task_raw)
                     continue
 
-                task_id = getattr(task, "task_id", None)
-                if not task_id:
-                    agent_tasks = shared_data.get_tasks_for_agent(self.agent_type)
-                    for t in agent_tasks:
-                        if t.sub_query == task.sub_query:
-                            task_id = t.task_id
-                            break
+                shared_data = SharedData(**shared_data_raw)
 
-                if not task_id:
-                    logger.warning(
-                        f"Could not find task_id for sub_query: {task.sub_query}"
-                    )
-                    still_pending.append(task_raw)
-                    continue
-
+                # Find task node
                 task_node = next(
                     (
                         t
                         for t in shared_data.get_tasks_for_agent(self.agent_type)
-                        if t.task_id == task_id
+                        if t.task_id == task.task_id
                     ),
                     None,
                 )
-                dependencies_satisfied = self._check_dependencies(
-                    task_node, shared_data
-                )
-                if dependencies_satisfied:
+
+                if not task_node:
+                    # Try to find by sub_query as fallback
+                    task_node = next(
+                        (
+                            t
+                            for t in shared_data.get_tasks_for_agent(self.agent_type)
+                            if t.sub_query == task.sub_query
+                        ),
+                        None,
+                    )
+
+                if task_node and self._check_dependencies(task_node, shared_data):
                     ready_tasks.append(task_raw)
                     logger.info(
-                        f"Task {task_id} dependencies satisfied, moving to active"
+                        f"Manager {self.agent_type}: Task {task.task_id} dependencies satisfied"
                     )
                 else:
                     still_pending.append(task_raw)
@@ -188,72 +276,48 @@ class BaseManager:
                 await pipeline.execute()
 
                 logger.info(
-                    f"Moved {len(ready_tasks)} tasks to active, {len(still_pending)} remain pending"
+                    f"Manager {self.agent_type}: Moved {len(ready_tasks)} tasks to active, "
+                    f"{len(still_pending)} remain pending"
                 )
-                await self._execute_next_available_task()
+                # Note: BLPOP in _consume_queue will pick these up automatically
 
         except Exception as e:
-            logger.error(f"Failed to update pending tasks for {self.agent_type}: {e}")
+            logger.error(
+                f"Manager {self.agent_type}: Failed to check pending tasks: {e}"
+            )
 
     def _check_dependencies(self, task_node, shared_data: SharedData) -> bool:
+        """Check if all dependencies of a task are completed.
+
+        Supports both cross-agent and same-agent dependencies.
+        E.g., inventory_2 depending on inventory_1 (same agent type)
+        """
         if not task_node or not hasattr(task_node, "dependencies"):
             logger.warning(f"Invalid task_node provided: {task_node}")
             return False
 
-        for dep_id in getattr(task_node, "dependencies", []):
+        dependencies = getattr(task_node, "dependencies", [])
+        if not dependencies:
+            return True  # No dependencies = ready to execute
+
+        for dep_id in dependencies:
             dep_exec = shared_data.tasks.get(dep_id)
-            if (
-                not dep_exec
-                or dep_exec.status
-                != shared_data.tasks[dep_id].status.__class__.COMPLETED
-            ):
+            if not dep_exec:
+                logger.debug(f"Dependency {dep_id} not found in shared_data")
                 return False
+
+            # Use TaskStatus from shared_data (COMPLETED) not constants (DONE)
+            from src.typing.redis.shared_data import TaskStatus
+
+            if dep_exec.status != TaskStatus.COMPLETED:
+                logger.debug(
+                    f"Dependency {dep_id} not completed (status: {dep_exec.status})"
+                )
+                return False
+
         return True
 
+    # Backward compatibility
     async def _execute_next_available_task(self):
-        try:
-            status_value = await self.redis.hget(
-                RedisKeys.AGENT_STATUS, self.agent_type
-            )
-            agent_status = (
-                AgentStatus(status_value) if status_value else AgentStatus.IDLE
-            )
-
-            if agent_status == AgentStatus.ERROR:
-                await self.redis.hset(
-                    RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-                )
-
-            queue_key = RedisKeys.get_agent_queue(self.agent_type)
-            task_data = await self.redis.lpop(queue_key)
-            logger.info(
-                f"Manager {self.agent_type}: Checking queue {queue_key}, task_data: {task_data is not None}"
-            )
-            if task_data:
-                task = TaskQueueItem.model_validate_json(task_data)
-
-                shared_data: SharedData = await get_shared_data(
-                    self.redis, task.query_id
-                )
-                conversation_id = shared_data.conversation_id
-
-                channel = RedisChannels.get_command_channel(self.agent_type)
-                message = CommandMessage(
-                    agent_type=self.agent_type,
-                    command="execute",
-                    query_id=task.query_id,
-                    conversation_id=conversation_id,
-                    sub_query=task.sub_query,
-                )
-                await self.redis.publish(channel, json.dumps(message.model_dump()))
-                logger.info(
-                    f"Manager {self.agent_type}: Executing task on {self.agent_type}: {task.sub_query}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"Manager {self.agent_type}: Failed to execute next task for {self.agent_type}: {e}"
-            )
-
-    async def start(self):
-        await self.listen_channels()
+        """Deprecated: Tasks are now consumed via BLPOP in _consume_queue."""
+        pass
