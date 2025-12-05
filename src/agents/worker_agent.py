@@ -457,11 +457,55 @@ class WorkerAgent(BaseAgent):
             if not dep_results:
                 return None
 
-            return json.dumps(dep_results, indent=2, default=str, ensure_ascii=False)
+            # Truncate dependency results to prevent context overflow
+            truncated_results = self._truncate_dependency_results(dep_results)
+
+            return json.dumps(
+                truncated_results, indent=2, default=str, ensure_ascii=False
+            )
 
         except Exception as e:
             logger.error(f"{self.agent_type}: Failed to load dependency results: {e}")
             return None
+
+    def _truncate_dependency_results(
+        self, results: Dict[str, Any], max_items: int = 20, max_str_len: int = 500
+    ) -> Dict[str, Any]:
+        """Truncate dependency results to prevent LLM context overflow.
+
+        Args:
+            results: Raw dependency results
+            max_items: Max items per list
+            max_str_len: Max string length
+        """
+
+        def truncate_value(val: Any, depth: int = 0) -> Any:
+            if depth > 3:  # Prevent deep recursion
+                return "[truncated - too deep]"
+
+            if isinstance(val, str):
+                if len(val) > max_str_len:
+                    return (
+                        val[:max_str_len]
+                        + f"... [truncated {len(val) - max_str_len} chars]"
+                    )
+                return val
+            elif isinstance(val, list):
+                if len(val) > max_items:
+                    truncated = [
+                        truncate_value(item, depth + 1) for item in val[:max_items]
+                    ]
+                    truncated.append(
+                        f"... [truncated {len(val) - max_items} more items]"
+                    )
+                    return truncated
+                return [truncate_value(item, depth + 1) for item in val]
+            elif isinstance(val, dict):
+                return {k: truncate_value(v, depth + 1) for k, v in val.items()}
+            else:
+                return val
+
+        return truncate_value(results)
 
     async def get_mcp_client(self) -> MCPClient:
         if not self.mcp_server_url:

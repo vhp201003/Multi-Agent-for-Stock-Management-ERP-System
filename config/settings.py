@@ -29,7 +29,9 @@ class AgentConfig(BaseModel):
 
     # Common LLM params with defaults
     temperature: float = 0.7
-    max_tokens: Optional[int] = None
+    max_completion_tokens: Optional[int] = (
+        None  # Groq API uses this instead of max_tokens
+    )
 
     # Fields that should NOT be passed to LLM
     _non_llm_fields: set = {"mcp_server_url", "messages"}

@@ -28,15 +28,27 @@ export interface LayoutField {
   };
 }
 
+// Reasoning step from orchestrator CoT
+export interface ReasoningStep {
+  step: string;
+  explanation: string;
+  conclusion: string;
+}
+
 export interface TaskUpdate {
   agent_type: string;
   step?: string;
   status: 'processing' | 'done' | 'failed' | 'pending_approval' | 'auto_approved';
-  type?: 'approval_required';
+  type?: 'approval_required' | 'reasoning_step';
   approval?: any;
   message?: string;
   sub_query?: string;
   result?: any;
+  // Reasoning step data (orchestrator CoT)
+  step_number?: number;
+  total_steps?: number;
+  explanation?: string;
+  conclusion?: string;
   llm_usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;

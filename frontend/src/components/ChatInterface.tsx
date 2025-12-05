@@ -380,13 +380,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
             };
             break;
           case 'thinking':
-            uiUpdate = {
-              agent_type: message.data.agent_type || 'worker',
-              status: 'processing',
-              message: message.data.reasoning,
-              timestamp: message.timestamp
-            };
-            break;
+            // Check if this is orchestrator reasoning step (has step + explanation + conclusion)
+            { const isOrchestratorReasoning = message.data.step !== undefined && message.data.explanation !== undefined && message.data.conclusion !== undefined;
+            if (isOrchestratorReasoning) {
+              uiUpdate = {
+                agent_type: message.data.agent_type || 'orchestrator',
+                type: 'reasoning_step',
+                status: 'processing',
+                step: message.data.step,
+                explanation: message.data.explanation,
+                conclusion: message.data.conclusion,
+                timestamp: message.timestamp
+              };
+            } else {
+              // Regular thinking message (worker agents)
+              uiUpdate = {
+                agent_type: message.data.agent_type || 'worker',
+                status: 'processing',
+                message: message.data.reasoning,
+                timestamp: message.timestamp
+              };
+            }
+            break; }
           case 'task_update':
             uiUpdate = message.data;
             break;
@@ -840,8 +855,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
 
             {/* Hiển thị thinking process (task updates) - Collapsible */}
             {message.updates && message.updates.length > 0 && (
-              <details className="thinking-process" open={message.isThinkingExpanded}>
-                <summary className="thinking-header">
+              <details 
+                className="thinking-process" 
+                open={message.isThinkingExpanded}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <summary className="thinking-header" onClick={(e) => e.stopPropagation()}>
                   <span className="thinking-title">Thinking Process</span>
                   <span className="thinking-count">{message.updates.length} steps</span>
                   <span className="thinking-toggle">›</span>
@@ -872,6 +891,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
                   
                   const isWorker = update.agent_type && !['orchestrator'].includes(update.agent_type);
                   const isOrchestrator = update.agent_type === 'orchestrator';
+                  const isReasoningStep = (update as any).type === 'reasoning_step';
+                  
+                  // Reasoning step - render like normal step
+                  if (isReasoningStep) {
+                    return (
+                      <div key={index} className="thinking-step processing">
+                        <div className="step-header">
+                          <span className="step-agent">{agentName}</span>
+                          <span className="step-name">{update.step}</span>
+                          <span className="step-status processing">...</span>
+                        </div>
+                        {(update as any).explanation && (
+                          <div className="step-message">
+                            {(update as any).explanation}
+                          </div>
+                        )}
+                        {(update as any).conclusion && (
+                          <div className="step-query">
+                            → {(update as any).conclusion}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
                   
                   return (
                     <div key={index} className={`thinking-step ${update.status}`}>

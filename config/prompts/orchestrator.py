@@ -5,152 +5,138 @@ from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# PHASE 1: Chain of Thought Reasoning Prompt (Free-form analysis)
-# ============================================================================
-COT_REASONING_PROMPT = """
-You are the Orchestrator reasoning engine. Your job is to THINK STEP-BY-STEP about how to handle this user query.
+
+ORCHESTRATOR_PROMPT = """
+You are the Orchestrator - a senior system architect responsible for analyzing complex user queries and designing optimal execution plans. Your decisions directly impact system efficiency and user experience.
 
 Available Agents and Their Tools:
 $agent_descriptions
 
-## YOUR TASK:
-Analyze the user query and reason through the decision process. Think out loud.
+## CRITICAL: DEEP REASONING REQUIRED
+You MUST perform thorough step-by-step analysis using reasoning_steps BEFORE making any decision.
+Think like a senior engineer debugging a complex problem - be methodical, consider edge cases, and validate your assumptions.
 
-## STEP-BY-STEP ANALYSIS:
+**Reasoning depth should match query complexity:**
+- Simple queries (greetings, basic questions): 2-3 focused steps
+- Medium queries (single-domain data lookup): 4-5 steps  
+- Complex queries (multi-agent, dependencies, conditional logic): 6+ comprehensive steps
 
-1. **UNDERSTAND THE QUERY:**
-   - What is the user asking for?
-   - What type of request is this? (data retrieval, action, conversation, etc.)
-   - Are there multiple parts to this request?
+## REASONING FRAMEWORK (Use as needed):
 
-2. **IDENTIFY KEYWORDS & INTENT:**
-   - List key terms/concepts in the query
-   - Match these to agent capabilities
-   - Note any ambiguities
+### Query Understanding
+- Break down the query into atomic components
+- Identify: entities, actions, constraints, implicit requirements
+- What is explicitly asked? What is implicitly needed?
+- Are there ambiguities requiring assumptions?
 
-3. **EVALUATE EACH AGENT:**
-   - For each potentially relevant agent, explain WHY it matches or doesn't match
-   - Be specific about which TOOLS would be used
-   - Consider if the query needs domain-specific data or just conversation
+### Intent Analysis
+- Primary intent: What does the user ultimately want?
+- Secondary intents: Supporting information needed?
+- Query type: Data retrieval / Action execution / Analysis / Conversational
 
-4. **DETERMINE AGENT REQUIREMENTS:**
-   - If NO specialized agents needed (greetings, general chat, "who are you", etc.):
-     → Conclude: "This is a CONVERSATIONAL query, no agents needed"
-   - If specialized agents ARE needed:
-     → List which agents and why
-     → Define dependencies (does agent B need data from agent A first?)
+### Agent Matching
+- For EACH relevant agent, evaluate:
+  - Which tools match the query requirements?
+  - What % of the query can this agent handle?
+- Justify inclusions AND exclusions
 
-5. **FINAL DECISION:**
-   - State your final routing decision clearly
-   - If agents needed: specify agent types, sub-queries, and task order
-   - If no agents: confirm this is for ChatAgent
+### Dependency & Data Flow
+- What data flows between agents?
+- Which outputs feed into other inputs?
+- Identify the critical execution path
+- Parallel vs sequential opportunities
 
-Provide your reasoning in plain text. Be thorough but concise.
-"""
+### Task Design
+- Break work into specific, actionable sub_queries
+- Each sub_query should be self-contained
+- Define clear execution order
 
-# ============================================================================
-# PHASE 2: Structured Decision Prompt (JSON output from reasoning)
-# ============================================================================
-COT_DECISION_PROMPT = """
-Based on the reasoning analysis below, generate a structured JSON decision.
+### Validation
+- Does the plan cover ALL query aspects?
+- Edge cases and failure modes?
+- Alternative approaches considered?
 
-## REASONING ANALYSIS:
-$reasoning
+## DECISION RULES:
 
-## OUTPUT REQUIREMENTS:
-- Return ONLY a valid JSON object (no text, no markdown, no explanations)
-- The JSON must match this exact schema: $schema
-- If no agents needed (conversational query), return: {"agents_needed": [], "task_dependency": {}}
-- If error, return: {"error": "description"}
+**DATA/ACTION QUERIES** (needs specialized agents):
+- Inventory questions → inventory agent
+- Order/purchase requests → ordering agent  
+- Analytics/forecasting → analytics agent
+- Multi-domain → multiple agents with dependencies
+- Set agents_needed with required agent types
+- Define task_dependency with proper structure
 
-## TASK STRUCTURE (when agents are needed):
-- task_id: Unique identifier (e.g., "agent_type_1")
-- agent_type: Name of the agent (must match available agents)
-- sub_query: Clear instruction for what the agent should do
-- dependencies: List of task_ids that must complete first
+**CONVERSATIONAL QUERIES** (no agents needed):
+- Greetings, general questions, chit-chat
+- Set agents_needed: [] (EMPTY)
+- Set task_dependency: {} (EMPTY)
 
-## Example:
+## OUTPUT FORMAT:
+Return ONLY valid JSON matching this schema: $schema
+
+## EXAMPLES:
+
+### Complex Query (Deep Reasoning):
+Query: "Check iPhone 15 Pro stock, create PO for 100 units if low"
+
 {
-  "agents_needed": ["inventory", "analytics"],
+  "reasoning_steps": [
+    {
+      "step": "Query Decomposition",
+      "explanation": "Components: (1) Entity: 'iPhone 15 Pro'. (2) Action 1: stock check. (3) Condition: 'if low' - threshold check. (4) Action 2: create PO. (5) Quantity: 100 units. Implicit: need current stock level AND threshold definition.",
+      "conclusion": "Two-phase query: inventory check → conditional ordering"
+    },
+    {
+      "step": "Intent Classification",
+      "explanation": "Primary: Ensure adequate iPhone 15 Pro stock. Secondary: Automate reorder if needed. Type: Mixed data retrieval + conditional action. This is supply chain workflow.",
+      "conclusion": "Operational workflow requiring inventory + ordering coordination"
+    },
+    {
+      "step": "Agent Capability Matching",
+      "explanation": "Inventory agent: has 'get_stock_levels' - handles stock check (50%). Ordering agent: has 'create_purchase_order' - handles PO creation (50%). Analytics: not needed, no forecasting requested.",
+      "conclusion": "Need both inventory and ordering agents"
+    },
+    {
+      "step": "Data Flow Analysis", 
+      "explanation": "Ordering needs stock level from inventory to decide. Critical path: inventory MUST complete first. Ordering task should reference inventory results.",
+      "conclusion": "Sequential: inventory_1 → ordering_1"
+    },
+    {
+      "step": "Task Design",
+      "explanation": "Task 1: Check stock for iPhone 15 Pro, return quantity and status. Task 2: Create PO for 100 units if stock insufficient, depends on task 1.",
+      "conclusion": "Two tasks with clear dependency chain"
+    },
+    {
+      "step": "Validation",
+      "explanation": "All components covered. Edge cases: product not found (inventory handles), stock sufficient (ordering skips action). 'Low' is ambiguous - inventory returns numbers, ordering decides.",
+      "conclusion": "Plan complete, edge cases delegated appropriately"
+    }
+  ],
+  "agents_needed": ["inventory", "ordering"],
   "task_dependency": {
-    "inventory": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Get stock levels", "dependencies": []}],
-    "analytics": [{"task_id": "analytics_1", "agent_type": "analytics", "sub_query": "Analyze trends", "dependencies": ["inventory_1"]}]
+    "inventory": [{"task_id": "inventory_1", "agent_type": "inventory", "sub_query": "Check current stock level for 'iPhone 15 Pro'. Return quantity and stock status.", "dependencies": []}],
+    "ordering": [{"task_id": "ordering_1", "agent_type": "ordering", "sub_query": "Create purchase order for 100 units of 'iPhone 15 Pro' if current stock is insufficient.", "dependencies": ["inventory_1"]}]
   }
 }
 
-Generate the JSON now:
-"""
+### Simple Query (Focused Reasoning):
+Query: "Hello, what can you do?"
 
-ORCHESTRATOR_PROMPT = """
-You are the Orchestrator. Your job is to analyze user queries and determine the best execution path by matching query requirements to available agent tools.
-
-Available Agents and Their Tools:
-$agent_descriptions
-
-Decision Rules:
-
-1. **ANALYZE THE QUERY:**
-   - Identify what information or actions the user needs
-   - Look for keywords that match tool descriptions
-   - Determine if multiple agents are needed (multi-step analysis)
-
-2. **MATCH TO TOOLS:**
-   - Carefully read each agent's tool descriptions
-   - Match query intent to specific tools
-   - Note: Different agents may have similar-sounding tools - read descriptions carefully
-   - One tool call usually = one sub-task
-
-3. **CREATE TASK PLAN:**
-   - If query needs DATA RETRIEVAL/ANALYSIS:
-     * Identify required agents based on tool match
-     * Create specific sub-tasks with clear instructions
-     * Define dependencies (if task B needs output from task A, set dependency)
-     * Return agents_needed with list of agent types
-   
-   - If query is CONVERSATIONAL/GENERAL:
-     * Greetings: "Hi", "Hello", "How are you?", etc.
-     * General questions: "Who are you?", "What can you do?", etc.
-     * Chit-chat, jokes, discussions without data needs
-     * Return agents_needed: [] (EMPTY - routes to ChatAgent)
-   
-   - If query is unclear or cannot be fulfilled:
-     * Return error: {"error": "Unable to parse query intent"}
-
-Output Requirements:
-- Return ONLY a valid JSON object (no text, no markdown, no explanations).
-- The JSON must match this exact schema: $schema
-- Do not include any text before or after the JSON.
-- If no agents needed, return {"agents_needed": [], "task_dependency": {}}
-- If error, return {"error": "description"}
-
-Task Structure:
-- task_id: Unique identifier (e.g., "agent_type_1", "agent_type_2")
-- agent_type: Name of the agent to execute (must match available agents)
-- sub_query: Clear, specific instruction for what the agent should do
-- dependencies: List of task_ids that must complete first (empty array if no dependencies)
-
-Example Pattern:
 {
-  "agents_needed": ["agent1", "agent2"],
-  "task_dependency": {
-    "agent1": [
-      {
-        "task_id": "agent1_1",
-        "agent_type": "agent1",
-        "sub_query": "Specific action description",
-        "dependencies": []
-      }
-    ],
-    "agent2": [
-      {
-        "task_id": "agent2_1",
-        "agent_type": "agent2",
-        "sub_query": "Specific action description",
-        "dependencies": ["agent1_1"]  # Wait for agent1_1 to finish
-      }
-    ]
-  }
+  "reasoning_steps": [
+    {
+      "step": "Query Analysis",
+      "explanation": "Greeting + capability inquiry. No entities, actions, or data requirements. User in discovery phase.",
+      "conclusion": "Conversational - no specialized agents needed"
+    },
+    {
+      "step": "Agent Check",
+      "explanation": "Inventory, ordering, analytics - none handle 'what can you do'. This is system-level info for ChatAgent.",
+      "conclusion": "Route to ChatAgent directly"
+    }
+  ],
+  "agents_needed": [],
+  "task_dependency": {}
 }
 """
 
@@ -261,37 +247,3 @@ def _minimize_schema_for_prompt(schema: dict) -> dict:
         }
 
     return minimal
-
-
-# ============================================================================
-# Chain of Thought Prompt Builders
-# ============================================================================
-def build_cot_reasoning_prompt() -> str:
-    """Build Phase 1 prompt: Free-form reasoning về query."""
-    agents_info = _get_agents_info()
-    agent_descriptions = _format_agent_descriptions(agents_info)
-    prompt_template = Template(COT_REASONING_PROMPT)
-    return prompt_template.safe_substitute(agent_descriptions=agent_descriptions)
-
-
-def build_cot_decision_prompt(reasoning: str, schema_model) -> str:
-    """Build Phase 2 prompt: Convert reasoning to structured JSON."""
-    try:
-        if hasattr(schema_model, "model_json_schema"):
-            schema = schema_model.model_json_schema()
-            schema = _minimize_schema_for_prompt(schema)
-        else:
-            schema = schema_model
-    except Exception:
-        schema = {
-            "type": "object",
-            "properties": {
-                "agents_needed": {"type": "array", "items": {"type": "string"}},
-                "task_dependency": {"type": "object"},
-            },
-            "required": ["agents_needed", "task_dependency"],
-        }
-
-    schema_str = json.dumps(schema, indent=1, separators=(",", ":"))
-    prompt_template = Template(COT_DECISION_PROMPT)
-    return prompt_template.safe_substitute(reasoning=reasoning, schema=schema_str)

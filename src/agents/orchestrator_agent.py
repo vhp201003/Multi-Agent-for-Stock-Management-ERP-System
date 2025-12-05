@@ -1,13 +1,10 @@
 import json
 import logging
 from datetime import datetime
+from time import sleep
 from typing import Any, Dict, List, Optional
 
-from config.prompts import (
-    build_cot_decision_prompt,
-    build_cot_reasoning_prompt,
-    build_orchestrator_prompt,
-)
+from config.prompts import build_orchestrator_prompt
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
 from src.agents.summary_agent import AGENT_TYPE as SUMMARY_AGENT_TYPE
 from src.typing.llm_response import OrchestratorResponse
@@ -21,6 +18,7 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
+from src.typing.redis.constants import MessageType
 from src.typing.request import ChatRequest, Request
 from src.typing.schema import OrchestratorSchema
 from src.utils import get_shared_data, save_shared_data
@@ -40,7 +38,6 @@ class OrchestratorAgent(BaseAgent):
     def __init__(self):
         super().__init__(agent_type=AGENT_TYPE)
         # Prompts sẽ được build lại mỗi request, lấy dynamic từ registry
-        self.use_cot = True  # Enable Two-phase CoT by default
 
     async def get_pub_channels(self) -> List[str]:
         return [RedisChannels.QUERY_CHANNEL]
@@ -162,27 +159,17 @@ class OrchestratorAgent(BaseAgent):
     async def _run_llm_orchestration(
         self, request: Request, messages: List[Dict[str, Any]]
     ) -> OrchestratorResponse:
-        """Run LLM orchestration with optional Two-phase Chain of Thought."""
-        if self.use_cot:
-            try:
-                return await self._run_llm_orchestration_with_cot(request, messages)
-            except Exception as e:
-                logger.warning(
-                    f"CoT orchestration failed, falling back to single-phase: {e}"
-                )
-                return await self._run_llm_orchestration_single_phase(request, messages)
-        else:
-            return await self._run_llm_orchestration_single_phase(request, messages)
-
-    async def _run_llm_orchestration_single_phase(
-        self, request: Request, messages: List[Dict[str, Any]]
-    ) -> OrchestratorResponse:
-        """Original single-phase orchestration (fallback)."""
         result, llm_usage, llm_reasoning = await self._call_llm(
             query_id=request.query_id,
             messages=messages,
             response_schema=OrchestratorSchema,
         )
+
+        # Broadcast reasoning steps as THINKING messages
+        if result and hasattr(result, "reasoning_steps") and result.reasoning_steps:
+            await self._broadcast_reasoning_steps(
+                request.query_id, result.reasoning_steps
+            )
 
         return OrchestratorResponse(
             query_id=request.query_id,
@@ -192,76 +179,38 @@ class OrchestratorAgent(BaseAgent):
             llm_reasoning=llm_reasoning,
         )
 
-    async def _run_llm_orchestration_with_cot(
-        self, request: Request, messages: List[Dict[str, Any]]
-    ) -> OrchestratorResponse:
-        """Two-phase Chain of Thought orchestration for better reasoning.
+    async def _broadcast_reasoning_steps(
+        self, query_id: str, reasoning_steps: List[Any]
+    ) -> None:
+        """Broadcast each reasoning step to frontend via MessageType.THINKING."""
+        for i, step in enumerate(reasoning_steps):
+            try:
+                step_data = {
+                    "step_number": i + 1,
+                    "total_steps": len(reasoning_steps),
+                    "step": step.step if hasattr(step, "step") else str(step),
+                    "explanation": step.explanation
+                    if hasattr(step, "explanation")
+                    else "",
+                    "conclusion": step.conclusion
+                    if hasattr(step, "conclusion")
+                    else "",
+                    "agent_type": self.agent_type,
+                }
 
-        Phase 1: Free-form reasoning about the query (no schema constraint)
-        Phase 2: Convert reasoning to structured JSON decision
-        """
-        # Extract conversation history from messages (skip system prompt)
-        history = [m for m in messages if m["role"] != "system"]
+                sleep(0.3)  # Thêm độ trễ nhỏ để tránh gửi quá nhanh
 
-        # ========== PHASE 1: Reasoning ==========
-        # Build prompt mỗi lần - lấy dynamic từ registry
-        cot_reasoning_prompt = build_cot_reasoning_prompt()
-        phase1_messages = [
-            {"role": "system", "content": cot_reasoning_prompt},
-            *history,
-        ]
+                await self.publish_broadcast(
+                    RedisChannels.get_query_updates_channel(query_id),
+                    MessageType.THINKING,
+                    step_data,
+                )
 
-        # Call LLM without schema for free-form reasoning
-        reasoning_text, phase1_usage, _ = await self._call_llm(
-            query_id=f"{request.query_id}_cot_phase1",
-            messages=phase1_messages,
-            response_schema=None,  # No schema = free-form text output
-        )
-
-        logger.info(
-            f"CoT Phase 1 reasoning for {request.query_id}: {reasoning_text[:200]}..."
-        )
-
-        # ========== PHASE 2: Structured Decision ==========
-        phase2_prompt = build_cot_decision_prompt(reasoning_text, OrchestratorSchema)
-        phase2_messages = [
-            {"role": "system", "content": phase2_prompt},
-            {
-                "role": "user",
-                "content": f"Query: {request.query}\n\nGenerate the JSON decision based on the reasoning above.",
-            },
-        ]
-
-        result, phase2_usage, _ = await self._call_llm(
-            query_id=f"{request.query_id}_cot_phase2",
-            messages=phase2_messages,
-            response_schema=OrchestratorSchema,
-        )
-
-        # Combine usage from both phases
-        combined_usage = {
-            "prompt_tokens": (
-                phase1_usage.get("prompt_tokens", 0)
-                + phase2_usage.get("prompt_tokens", 0)
-            ),
-            "completion_tokens": (
-                phase1_usage.get("completion_tokens", 0)
-                + phase2_usage.get("completion_tokens", 0)
-            ),
-            "total_tokens": (
-                phase1_usage.get("total_tokens", 0)
-                + phase2_usage.get("total_tokens", 0)
-            ),
-            "model": phase2_usage.get("model", phase1_usage.get("model")),
-        }
-
-        return OrchestratorResponse(
-            query_id=request.query_id,
-            conversation_id=request.conversation_id,
-            result=result,
-            llm_usage=combined_usage,
-            llm_reasoning=reasoning_text,  # Store full reasoning for debugging
-        )
+                logger.debug(
+                    f"Broadcast reasoning step {i + 1}/{len(reasoning_steps)}: {step.step}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to broadcast reasoning step {i + 1}: {e}")
 
     def _validate_orchestration_result(
         self, orchestration_result: OrchestratorResponse
@@ -294,6 +243,17 @@ class OrchestratorAgent(BaseAgent):
             logger.info(
                 f"Routing simple query {request.query_id} to ChatAgent (no agents needed)"
             )
+
+            # ✅ CRITICAL: Create minimal SharedData so ChatAgent can process
+            # Without this, ChatAgent returns fallback and doesn't publish completion
+            minimal_shared_data = SharedData(
+                original_query=request.query,
+                query_id=request.query_id,
+                agents_needed=[],  # No specialized agents
+                status="processing",
+                conversation_id=request.conversation_id,
+            )
+            await save_shared_data(self.redis, request.query_id, minimal_shared_data)
 
             # Create minimal context for ChatAgent - just the original query
             empty_context = {

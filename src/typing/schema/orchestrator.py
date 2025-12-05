@@ -5,6 +5,21 @@ from pydantic import BaseModel, Field, field_validator
 from .base_schema import BaseSchema
 
 
+class ReasoningStep(BaseModel):
+    step: str = Field(
+        ...,
+        description="Brief label for this reasoning step (e.g., 'Analyze Query', 'Match Agents')",
+    )
+    explanation: str = Field(
+        ...,
+        description="Detailed explanation of the reasoning in this step",
+    )
+    conclusion: str = Field(
+        ...,
+        description="Brief conclusion or output of this step",
+    )
+
+
 class TaskNode(BaseModel):
     task_id: str = Field(
         ...,
@@ -31,9 +46,13 @@ class TaskNode(BaseModel):
 
 
 class OrchestratorSchema(BaseSchema):
+    reasoning_steps: List[ReasoningStep] = Field(
+        default_factory=list,
+        description="Step-by-step reasoning process before making the final decision",
+    )
     agents_needed: List[str] = Field(
         ...,
-        description="List of agent types required to complete the request",
+        description="List of agent types required to complete the request (empty if conversational query)",
     )
     task_dependency: Dict[str, List[TaskNode]] = Field(
         default_factory=dict,
