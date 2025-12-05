@@ -77,34 +77,22 @@ class ProposeTransferItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     from_warehouse: str = Field(..., description="Source warehouse")
     to_warehouse: str = Field(..., description="Target warehouse")
-    transfer_quantity: float = Field(
-        ..., description="Proposed transfer quantity"
-    )
+    transfer_quantity: float = Field(..., description="Proposed transfer quantity")
     available_quantity: float = Field(
         ..., description="Available quantity in source warehouse"
     )
 
 
 class ProposeTransferFilters(BaseModel):
-    item_code: str = ""
+    item_code: str | None = Field(None, description="Item code searched")
     item_name: str | None = Field(None, description="Item name pattern for LIKE search")
-    to_warehouse: str = ""
-    from_warehouses: str | None = None
 
 
 class ProposeTransferSummary(BaseModel):
-    total_quantity: float = Field(
-        ..., description="Total proposed transfer quantity"
-    )
-    median_quantity: float = Field(
-        ..., description="Median proposed transfer quantity"
-    )
-    max_quantity: float = Field(
-        ..., description="Maximum proposed transfer quantity"
-    )
-    min_quantity: float = Field(
-        ..., description="Minimum proposed transfer quantity"
-    )
+    total_quantity: float = Field(..., description="Total proposed transfer quantity")
+    median_quantity: float = Field(..., description="Median proposed transfer quantity")
+    max_quantity: float = Field(..., description="Maximum proposed transfer quantity")
+    min_quantity: float = Field(..., description="Minimum proposed transfer quantity")
 
 
 class ProposeTransferOutput(MCPToolOutputSchema):
@@ -113,33 +101,38 @@ class ProposeTransferOutput(MCPToolOutputSchema):
     filters_applied: ProposeTransferFilters
 
 
-# ------------------------------- Inventory Health ------------------------------- #
-class InventoryHealthItem(BaseModel):
-    item_group: str = Field(..., description="Item group name")
-    stock_quantity: float = Field(..., description="Total stock quantity")
-    stock_value: float = Field(..., description="Total stock value")
-    avg_doc_days: float = Field(..., description="Average Days of Cover")
+# ------------------------------- Create Stock Transfer ------------------------------- #
+class StockTransferItemResult(BaseModel):
+    item_code: str = Field(..., description="ERPNext item code")
+    item_name: str = Field(..., description="Item name")
+    qty: float = Field(..., description="Transferred quantity")
+    from_warehouse: str = Field(..., description="Source warehouse")
+    to_warehouse: str = Field(..., description="Target warehouse")
+    valuation_rate: float = Field(0.0, description="Valuation rate at transfer")
+    amount: float = Field(0.0, description="Total value transferred")
 
 
-class InventoryHealthFilters(BaseModel):
-    warehouses: list[str] = []
-    item_groups: list[str] | None = None
-    horizon_days: int = Field(30, ge=1, le=365)
-
-
-class InventoryHealthSummary(BaseModel):
-    total_stock_value: float = Field(
-        ..., description="Total stock value across all groups"
+class StockTransferFilters(BaseModel):
+    item_code: str | None = Field(None, description="Item code for exact search")
+    item_name: str | None = Field(None, description="Item name pattern for LIKE search")
+    from_warehouse: str = ""
+    to_warehouse: str = ""
+    qty: float | None = Field(None, description="Exact quantity transferred")
+    auto_submit: bool = Field(
+        False, description="Whether the stock entry was auto-submitted"
     )
-    items_under_min: int = Field(
-        ..., description="Number of items below min_quantity"
-    )
-    avg_doc_days: float = Field(
-        ..., description="Average Days of Cover across all groups"
-    )
+    remarks: str | None = Field(None, description="Remarks pattern for LIKE search")
 
 
-class InventoryHealthOutput(MCPToolOutputSchema):
-    items: list[InventoryHealthItem]
-    summary: InventoryHealthSummary
-    filters_applied: InventoryHealthFilters
+class StockTransferSummary(BaseModel):
+    stock_entry_name: str = Field(..., description="Created Stock Entry document name")
+    status: str = Field(..., description="Document status (Draft/Submitted)")
+    total_qty: float = Field(..., description="Total quantity transferred")
+    total_value: float = Field(..., description="Total value of transfer")
+    posting_date: str = Field(..., description="Posting date of the transfer")
+
+
+class StockTransferOutput(MCPToolOutputSchema):
+    items: list[StockTransferItemResult]
+    summary: StockTransferSummary
+    filters_applied: StockTransferFilters

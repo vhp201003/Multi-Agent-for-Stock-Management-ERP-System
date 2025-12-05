@@ -1,5 +1,9 @@
 import json
+import logging
 from string import Template
+from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PHASE 1: Chain of Thought Reasoning Prompt (Free-form analysis)
@@ -151,38 +155,64 @@ Example Pattern:
 """
 
 
-def build_orchestrator_prompt(schema_model) -> str:
-    try:
-        with open("config/agents.json", "r") as f:
-            agents_info = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        agents_info = {}
-
+def _format_agent_descriptions(agents_info: Dict[str, Any]) -> str:
+    """Format agent info dict into prompt-friendly string."""
     agents_desc = []
     for name, info in agents_info.items():
-        if name != "orchestrator":
-            desc = info.get("description", "No description")
+        if name == "orchestrator":
+            continue
 
-            # ✨ NEW: Include tools with descriptions
-            tools = info.get("tools", [])
-            tools_str = ""
-            if tools:
-                if isinstance(tools[0], dict):
-                    # New format with descriptions
-                    tools_str = "Tools: " + "; ".join(
-                        f"{t['name']} ({t['description']})" for t in tools
-                    )
-                else:
-                    # Old format (backward compat)
-                    tools_str = "Tools: " + ", ".join(tools)
+        desc = info.get("description", "No description")
 
-            agents_desc.append(
-                f"- **{name}**: {desc}\n  {tools_str}"
-                if tools_str
-                else f"- **{name}**: {desc}"
-            )
+        # Include tools with descriptions
+        tools = info.get("tools", [])
+        tools_str = ""
+        if tools:
+            if isinstance(tools[0], dict):
+                # Format: tool_name (description)
+                tools_str = "Tools: " + "; ".join(
+                    f"{t.get('name', 'unknown')} ({t.get('description', 'no desc')})"
+                    for t in tools
+                )
+            else:
+                # Old format (backward compat)
+                tools_str = "Tools: " + ", ".join(str(t) for t in tools)
 
-    agent_descriptions = "\n".join(agents_desc)
+        agents_desc.append(
+            f"- **{name}**: {desc}\n  {tools_str}"
+            if tools_str
+            else f"- **{name}**: {desc}"
+        )
+
+    return "\n".join(agents_desc)
+
+
+def _get_agents_info() -> Dict[str, Any]:
+    """Lấy agents info: ưu tiên registry, fallback về file."""
+    # Thử lấy từ registry trước
+    try:
+        from src.agents.registry import get_all_agents
+
+        agents = get_all_agents()
+        if agents:
+            return agents
+    except ImportError:
+        pass
+
+    # Fallback: đọc từ file
+    try:
+        with open("config/agents.json", "r") as f:
+            logger.info("Using agents.json fallback (registry empty)")
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to read agents.json: {e}")
+        return {}
+
+
+def build_orchestrator_prompt(schema_model) -> str:
+    """Build orchestrator system prompt với agent descriptions từ registry."""
+    agents_info = _get_agents_info()
+    agent_descriptions = _format_agent_descriptions(agents_info)
 
     try:
         if hasattr(schema_model, "model_json_schema"):
@@ -237,33 +267,9 @@ def _minimize_schema_for_prompt(schema: dict) -> dict:
 # Chain of Thought Prompt Builders
 # ============================================================================
 def build_cot_reasoning_prompt() -> str:
-    """Build Phase 1 prompt: Free-form reasoning about the query."""
-    try:
-        with open("config/agents.json", "r") as f:
-            agents_info = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        agents_info = {}
-
-    agents_desc = []
-    for name, info in agents_info.items():
-        if name != "orchestrator":
-            desc = info.get("description", "No description")
-            tools = info.get("tools", [])
-            tools_str = ""
-            if tools:
-                if isinstance(tools[0], dict):
-                    tools_str = "Tools: " + "; ".join(
-                        f"{t['name']} ({t['description']})" for t in tools
-                    )
-                else:
-                    tools_str = "Tools: " + ", ".join(tools)
-            agents_desc.append(
-                f"- **{name}**: {desc}\n  {tools_str}"
-                if tools_str
-                else f"- **{name}**: {desc}"
-            )
-
-    agent_descriptions = "\n".join(agents_desc)
+    """Build Phase 1 prompt: Free-form reasoning về query."""
+    agents_info = _get_agents_info()
+    agent_descriptions = _format_agent_descriptions(agents_info)
     prompt_template = Template(COT_REASONING_PROMPT)
     return prompt_template.safe_substitute(agent_descriptions=agent_descriptions)
 

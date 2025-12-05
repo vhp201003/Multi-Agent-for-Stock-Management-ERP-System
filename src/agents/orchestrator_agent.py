@@ -39,8 +39,7 @@ AGENT_TYPE = "orchestrator"
 class OrchestratorAgent(BaseAgent):
     def __init__(self):
         super().__init__(agent_type=AGENT_TYPE)
-        self.prompt = build_orchestrator_prompt(OrchestratorSchema)
-        self.cot_reasoning_prompt = build_cot_reasoning_prompt()
+        # Prompts sẽ được build lại mỗi request, lấy dynamic từ registry
         self.use_cot = True  # Enable Two-phase CoT by default
 
     async def get_pub_channels(self) -> List[str]:
@@ -152,8 +151,10 @@ class OrchestratorAgent(BaseAgent):
     def _compose_llm_messages(
         self, request: Request, history: List[Any]
     ) -> List[Dict[str, Any]]:
+        # Build prompt mỗi request - lấy dynamic từ registry
+        prompt = build_orchestrator_prompt(OrchestratorSchema)
         return [
-            {"role": "system", "content": self.prompt},
+            {"role": "system", "content": prompt},
             *history,
             {"role": "user", "content": request.query},
         ]
@@ -203,8 +204,10 @@ class OrchestratorAgent(BaseAgent):
         history = [m for m in messages if m["role"] != "system"]
 
         # ========== PHASE 1: Reasoning ==========
+        # Build prompt mỗi lần - lấy dynamic từ registry
+        cot_reasoning_prompt = build_cot_reasoning_prompt()
         phase1_messages = [
-            {"role": "system", "content": self.cot_reasoning_prompt},
+            {"role": "system", "content": cot_reasoning_prompt},
             *history,
         ]
 

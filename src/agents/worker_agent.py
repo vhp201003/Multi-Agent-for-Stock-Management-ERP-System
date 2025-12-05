@@ -7,6 +7,7 @@ from toon import encode
 
 from config.prompts.worker import build_worker_agent_prompt
 from config.settings import get_agent_config
+from src.agents.registry import register_agent, unregister_agent
 from src.mcp.client import MCPClient
 from src.typing import (
     ResourceCallResponse,
@@ -212,8 +213,14 @@ class WorkerAgent(BaseAgent):
                     tool_name, parameters
                 )
 
-                if isinstance(tool_result, str):
-                    tool_result = json.loads(tool_result)
+                # Parse string result to dict
+                if tool_result is None:
+                    tool_result = {"status": "success", "message": "No result returned"}
+                elif isinstance(tool_result, str):
+                    if not tool_result.strip():
+                        tool_result = {"status": "success", "message": "Empty response"}
+                    else:
+                        tool_result = json.loads(tool_result)
 
                 tools_result_accumulator.append(
                     ToolCallResultResponse(
@@ -538,6 +545,13 @@ class WorkerAgent(BaseAgent):
                 examples=self.examples,
             )
 
+            # Đăng ký agent vào registry
+            register_agent(
+                agent_type=self.agent_type,
+                description=self.agent_description,
+                tools=tools_dicts,
+            )
+
             logger.info(
                 f"{self.agent_type}: Initialized with {len(self._mcp_tools_for_groq)} Groq tools, "
                 f"{len(self._tools_hitl_metadata)} require approval"
@@ -553,6 +567,9 @@ class WorkerAgent(BaseAgent):
 
     async def stop(self):
         logger.info(f"{self.agent_type}: Stopping worker agent")
+
+        # Xóa khỏi registry
+        unregister_agent(self.agent_type)
 
         if self.mcp_client:
             try:

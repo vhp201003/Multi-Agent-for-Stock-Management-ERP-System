@@ -1,5 +1,5 @@
 import logging
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -8,9 +8,9 @@ from src.mcp.server.base_server import BaseMCPServer, ServerConfig
 from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 from src.typing.mcp.inventory import (
     CheckStockOutput,
-    InventoryHealthOutput,
     ProposeTransferOutput,
     StockHistoryOutput,
+    StockTransferOutput,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,20 +63,26 @@ class InventoryMCPServer(BaseMCPServer):
             name="propose_transfer",
             description="Propose stock transfers between warehouses based on availability",
             structured_output=True,
-            hitl=HITLMetadata(
-                requires_approval=True,
-                approval_level=ApprovalLevel.REVIEW,
-                modifiable_fields=["item_code", "to_warehouse", "from_warehouses"],
-                approval_message="Vui lòng review đề xuất chuyển kho trước khi thực hiện",
-                timeout_seconds=120,
-            ),
         )
 
         self.add_tool(
-            self.inventory_health,
-            name="inventory_health",
-            description="Analyze inventory health metrics including stock value and Days of Cover",
+            self.create_stock_transfer,
+            name="create_stock_transfer",
+            description="Create and optionally submit stock transfer document(s). RECOMMENDED: Call propose_transfer first to get transfer suggestions before creating",
             structured_output=True,
+            hitl=HITLMetadata(
+                requires_approval=True,
+                approval_level=ApprovalLevel.REVIEW,
+                modifiable_fields=[
+                    "item_code",
+                    "qty",
+                    "from_warehouse",
+                    "to_warehouse",
+                    "remarks",
+                ],
+                approval_message="Please review the stock transfer details before approval.",
+                timeout_seconds=300,
+            ),
         )
 
         self.logger.info("✅ All inventory tools registered successfully")
@@ -137,19 +143,15 @@ class InventoryMCPServer(BaseMCPServer):
 
     async def propose_transfer(
         self,
-        item_code: str = Field(None, description="ERPNext item code (required)"),
-        to_warehouse: str = Field(None, description="Target warehouse for transfer"),
-        from_warehouses: Optional[str] = Field(
-            None, description="Source warehouses (comma-separated)"
+        item_code: Optional[str] = Field(
+            None, description="ERPNext item code (required)"
         ),
         item_name: Optional[str] = Field(
             None, description="Item name (alternative to item_code)"
         ),
     ) -> ProposeTransferOutput:
         try:
-            response = await self._calculate_transfers(
-                item_code, item_name, to_warehouse, from_warehouses
-            )
+            response = await self._propose_stock_transfer(item_code, item_name)
 
             return ProposeTransferOutput(**response)
 
@@ -157,34 +159,26 @@ class InventoryMCPServer(BaseMCPServer):
             self.logger.error(f"Error in propose_transfer: {e}", exc_info=True)
             raise
 
-    async def inventory_health(
+    async def create_stock_transfer(
         self,
-        warehouses: List[str] = Field(
-            default_factory=list,
-            description="List of warehouse names to analyze. Leave empty to analyze all warehouses.",
+        item_code: str = Field(..., description="ERPNext item code"),
+        qty: float = Field(..., description="Quantity to transfer"),
+        from_warehouse: str = Field(..., description="Source warehouse"),
+        to_warehouse: str = Field(..., description="Target warehouse"),
+        remarks: Optional[str] = Field(None, description="Transfer remarks/notes"),
+        auto_submit: bool = Field(
+            False, description="Auto-submit the stock entry after creation"
         ),
-        item_groups: Optional[List[str]] = Field(
-            None, description="Optional list of item groups to filter by"
-        ),
-        horizon_days: int = Field(
-            default=30,
-            ge=1,
-            le=365,
-            description="Horizon for Days of Cover calculation (1-365)",
-        ),
-    ) -> InventoryHealthOutput:
+    ) -> StockTransferOutput:
         try:
-            warehouses_str = ",".join(warehouses) if warehouses else ""
-            item_groups_str = ",".join(item_groups) if item_groups else None
-
-            response = await self._analyze_health(
-                warehouses_str, item_groups_str, horizon_days
+            response = await self._create_stock_transfer_doc(
+                item_code, qty, from_warehouse, to_warehouse, remarks, auto_submit
             )
 
-            return InventoryHealthOutput(**response)
+            return StockTransferOutput(**response)
 
         except Exception as e:
-            self.logger.error(f"Error in inventory_health: {e}", exc_info=True)
+            self.logger.error(f"Error in create_stock_transfer: {e}", exc_info=True)
             raise
 
     async def _fetch_stock_levels(
@@ -257,18 +251,14 @@ class InventoryMCPServer(BaseMCPServer):
             self.logger.error(f"Error in retrieve_stock_history: {e}")
             raise
 
-    async def _calculate_transfers(
+    async def _propose_stock_transfer(
         self,
         item_code: str,
         item_name: Optional[str],
-        to_warehouse: str,
-        from_warehouses: Optional[str],
     ) -> dict:
         params = {
             "item_code": item_code,
             "item_name": item_name,
-            "to_warehouse": to_warehouse,
-            "from_warehouses": from_warehouses,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -292,37 +282,72 @@ class InventoryMCPServer(BaseMCPServer):
             self.logger.error(f"Error in propose_stock_transfer: {e}")
             raise
 
-    async def _analyze_health(
+    async def _create_stock_transfer_doc(
         self,
-        warehouses: str,
-        item_groups: Optional[str],
-        horizon_days: int,
+        item_code: str,
+        qty: float,
+        from_warehouse: str,
+        to_warehouse: str,
+        remarks: Optional[str],
+        auto_submit: bool,
     ) -> dict:
-        params = {
-            "warehouses": warehouses,
-            "item_groups": item_groups,
-            "horizon_days": horizon_days,
+        body = {
+            "item_code": item_code,
+            "qty": qty,
+            "from_warehouse": from_warehouse,
+            "to_warehouse": to_warehouse,
+            "remarks": remarks,
+            "auto_submit": auto_submit,
         }
-        params = {k: v for k, v in params.items() if v is not None}
+        body = {k: v for k, v in body.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
-                "agent_stock_system.controller.inventory.analyze_inventory_health",
-                method="GET",
-                params=params,
+                "agent_stock_system.controller.inventory.create_stock_transfer",
+                method="POST",
+                body=body,  # POST cần gửi qua body, không phải params
             )
+
+            self.logger.info(f"create_stock_transfer raw result: {result}")
 
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error')}")
 
-            required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
+            # Wrap result nếu chưa có format chuẩn
+            if not isinstance(result, dict):
+                result = {"raw_result": result}
+
+            # Đảm bảo có đủ keys cho StockTransferOutput
+            if "items" not in result:
+                result["items"] = [
+                    {
+                        "item_code": item_code,
+                        "qty": qty,
+                        "from_warehouse": from_warehouse,
+                        "to_warehouse": to_warehouse,
+                        "status": result.get("status", "created"),
+                        "stock_entry_name": result.get(
+                            "name", result.get("stock_entry_name", "")
+                        ),
+                    }
+                ]
+            if "summary" not in result:
+                result["summary"] = {
+                    "total_transfers": 1,
+                    "total_qty": qty,
+                    "total_value": 0.0,
+                    "posting_date": result.get("posting_date", ""),
+                }
+            if "filters_applied" not in result:
+                result["filters_applied"] = {
+                    "item_code": item_code,
+                    "from_warehouse": from_warehouse,
+                    "to_warehouse": to_warehouse,
+                }
 
             return result
         except Exception as e:
-            self.logger.error(f"Error in analyze_inventory_health: {e}")
+            self.logger.error(f"Error in create_stock_transfer: {e}")
             raise
 
     async def cleanup(self) -> None:

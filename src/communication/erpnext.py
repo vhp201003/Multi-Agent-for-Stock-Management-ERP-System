@@ -139,15 +139,22 @@ class ERPNextConnectionManager:
         body: Optional[Dict[str, Any]] = None,
     ) -> Any:
         try:
-            params = params or {}
-            body = body or {}
             request_kwargs = {
                 "method": method,
                 "url": f"/api/method/{method_url}",
-                "params": params,
             }
-            if method.upper() != "GET":
-                request_kwargs["json"] = body
+
+            # GET dùng params, POST/PUT dùng body
+            if method.upper() == "GET":
+                if params:
+                    request_kwargs["params"] = params
+            else:
+                if body:
+                    request_kwargs["json"] = body
+
+            logger.debug(
+                f"call_method: {method} {method_url} - kwargs: {request_kwargs}"
+            )
 
             response = await self.client.request(**request_kwargs)
             response.raise_for_status()
