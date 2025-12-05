@@ -9,7 +9,6 @@ from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 from src.typing.mcp.ordering import (
     BestSupplierOutput,
     ConsolidatedPOOutput,
-    InternalTransferOutput,
     OptimalQuantityOutput,
     PriceVarianceOutput,
     ReplenishmentNeedsOutput,
@@ -62,22 +61,7 @@ class OrderingMCPServer(BaseMCPServer):
             structured_output=True,
         )
 
-        # Tool 3: Propose internal transfer first
-        self.add_tool(
-            self.propose_internal_transfer_first,
-            name="propose_internal_transfer_first",
-            description="Check if internal warehouse transfer can fulfill needs before purchasing externally",
-            structured_output=True,
-            hitl=HITLMetadata(
-                requires_approval=True,
-                approval_level=ApprovalLevel.CONFIRM,
-                modifiable_fields=["target_warehouse", "needed_qty"],
-                approval_message="Xác nhận đề xuất chuyển kho nội bộ",
-                timeout_seconds=120,
-            ),
-        )
-
-        # Tool 4: Select best supplier
+        # Tool 3: Select best supplier
         self.add_tool(
             self.select_best_supplier,
             name="select_best_supplier",
@@ -85,7 +69,7 @@ class OrderingMCPServer(BaseMCPServer):
             structured_output=True,
         )
 
-        # Tool 5: Create consolidated PO
+        # Tool 4: Create consolidated PO
         self.add_tool(
             self.create_consolidated_po,
             name="create_consolidated_po",
@@ -182,38 +166,6 @@ class OrderingMCPServer(BaseMCPServer):
         except Exception as e:
             self.logger.error(
                 f"Error in calculate_optimal_quantity: {e}", exc_info=True
-            )
-            raise
-
-    async def propose_internal_transfer_first(
-        self,
-        item_code: Optional[str] = Field(
-            None, description="ERPNext item code (required if item_name not provided)"
-        ),
-        item_name: Optional[str] = Field(
-            None, description="Item name for fuzzy search"
-        ),
-        target_warehouse: str = Field(
-            ..., description="Warehouse that needs the stock (required)"
-        ),
-        needed_qty: float = Field(
-            ..., gt=0, description="Quantity needed at target warehouse (required, >0)"
-        ),
-        min_source_doc_days: float = Field(
-            default=14.0,
-            ge=0,
-            description="Minimum Days of Cover to keep at source warehouses",
-        ),
-    ) -> InternalTransferOutput:
-        try:
-            response = await self._propose_internal_transfer(
-                item_code, item_name, target_warehouse, needed_qty, min_source_doc_days
-            )
-            return InternalTransferOutput(**response)
-
-        except Exception as e:
-            self.logger.error(
-                f"Error in propose_internal_transfer_first: {e}", exc_info=True
             )
             raise
 
@@ -327,7 +279,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:
@@ -362,7 +314,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:
@@ -395,7 +347,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:
@@ -430,7 +382,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:
@@ -459,7 +411,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:
@@ -493,7 +445,7 @@ class OrderingMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             return result
         except Exception as e:

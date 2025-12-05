@@ -37,9 +37,9 @@ class CheckStockSummary(BaseModel):
 
 
 class CheckStockOutput(MCPToolOutputSchema):
-    items: list[CheckStockItem]
-    summary: CheckStockSummary
-    filters_applied: CheckStockFilters
+    items: list[CheckStockItem] | None = None
+    summary: CheckStockSummary | None = None
+    filters_applied: CheckStockFilters | None = None
 
 
 # ------------------------------- Retrieve Stock History ------------------------------- #
@@ -67,9 +67,11 @@ class StockHistorySummary(BaseModel):
 
 
 class StockHistoryOutput(MCPToolOutputSchema):
-    items: list[StockHistoryItem] = Field(..., description="Chartable stock movements")
-    summary: StockHistorySummary
-    filters_applied: StockHistoryFilters
+    items: list[StockHistoryItem] | None = Field(
+        None, description="Chartable stock movements"
+    )
+    summary: StockHistorySummary | None = None
+    filters_applied: StockHistoryFilters | None = None
 
 
 # ------------------------------- Propose Transfer ------------------------------- #
@@ -84,8 +86,10 @@ class ProposeTransferItem(BaseModel):
 
 
 class ProposeTransferFilters(BaseModel):
-    item_code: str | None = Field(None, description="Item code searched")
+    item_code: str = ""
     item_name: str | None = Field(None, description="Item name pattern for LIKE search")
+    to_warehouse: str = ""
+    from_warehouses: str | None = None
 
 
 class ProposeTransferSummary(BaseModel):
@@ -96,9 +100,9 @@ class ProposeTransferSummary(BaseModel):
 
 
 class ProposeTransferOutput(MCPToolOutputSchema):
-    items: list[ProposeTransferItem]
-    summary: ProposeTransferSummary
-    filters_applied: ProposeTransferFilters
+    items: list[ProposeTransferItem] | None = None
+    summary: ProposeTransferSummary | None = None
+    filters_applied: ProposeTransferFilters | None = None
 
 
 # ------------------------------- Create Stock Transfer ------------------------------- #
@@ -133,6 +137,6 @@ class StockTransferSummary(BaseModel):
 
 
 class StockTransferOutput(MCPToolOutputSchema):
-    items: list[StockTransferItemResult]
-    summary: StockTransferSummary
-    filters_applied: StockTransferFilters
+    items: list[StockTransferItemResult] | None = None
+    summary: StockTransferSummary | None = None
+    filters_applied: StockTransferFilters | None = None

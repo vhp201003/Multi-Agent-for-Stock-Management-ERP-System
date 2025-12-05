@@ -204,7 +204,7 @@ class InventoryMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"items", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -239,7 +239,7 @@ class InventoryMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"items", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -270,7 +270,7 @@ class InventoryMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"items", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -311,7 +311,7 @@ class InventoryMCPServer(BaseMCPServer):
             self.logger.info(f"create_stock_transfer raw result: {result}")
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             # Wrap result nếu chưa có format chuẩn
             if not isinstance(result, dict):

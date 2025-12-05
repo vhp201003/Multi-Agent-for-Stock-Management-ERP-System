@@ -13,10 +13,10 @@ class ApprovalLevel(str, Enum):
 
 
 class MCPToolOutputSchema(BaseModel):
-    """Base output schema for MCP tools"""
-
-    success: bool = True
-    error: str | None = None
+    success: bool = Field(..., description="Indicates if the operation was successful")
+    error_message: str | None = Field(
+        None, description="Error message if the operation failed"
+    )
 
 
 class HITLMetadata(BaseModel):

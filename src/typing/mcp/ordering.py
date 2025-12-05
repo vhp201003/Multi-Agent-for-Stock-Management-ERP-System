@@ -62,11 +62,11 @@ class ReplenishmentNeedsSummary(BaseModel):
 class ReplenishmentNeedsOutput(MCPToolOutputSchema):
     """Schema for check_replenishment_needs tool output."""
 
-    items: list[ReplenishmentNeedItem] = Field(
-        ..., description="List of items needing replenishment"
+    items: list[ReplenishmentNeedItem] | None = Field(
+        None, description="List of items needing replenishment"
     )
-    summary: ReplenishmentNeedsSummary
-    filters_applied: ReplenishmentNeedsFilters
+    summary: ReplenishmentNeedsSummary | None = None
+    filters_applied: ReplenishmentNeedsFilters | None = None
 
 
 # ============================== Tool 2: calculate_optimal_quantity ============================== #
@@ -127,79 +127,14 @@ class OptimalQuantitySummary(BaseModel):
 class OptimalQuantityOutput(MCPToolOutputSchema):
     """Schema for calculate_optimal_quantity tool output."""
 
-    item: OptimalQuantityItem = Field(
-        ..., description="Optimal quantity calculation result"
+    item: OptimalQuantityItem | None = Field(
+        None, description="Optimal quantity calculation result"
     )
-    summary: OptimalQuantitySummary
-    filters_applied: OptimalQuantityFilters
+    summary: OptimalQuantitySummary | None = None
+    filters_applied: OptimalQuantityFilters | None = None
 
 
-# ============================== Tool 3: propose_internal_transfer_first ============================== #
-class InternalTransferSource(BaseModel):
-    """Schema for transfer source warehouse."""
-
-    from_warehouse: str = Field(..., description="Source warehouse name")
-    available_qty: float = Field(..., description="Available quantity for transfer")
-    transfer_qty: float = Field(..., description="Recommended transfer quantity")
-    doc_days_after: float = Field(..., description="DoC at source after transfer")
-
-
-class InternalTransferItem(BaseModel):
-    """Schema for individual item in propose_internal_transfer_first output."""
-
-    item_code: str = Field(..., description="ERPNext item code")
-    item_name: str = Field(..., description="Item name")
-    target_warehouse: str = Field(..., description="Target warehouse needing stock")
-    needed_qty: float = Field(..., description="Quantity needed at target")
-    total_transferable: float = Field(
-        ..., description="Total quantity that can be transferred"
-    )
-    remaining_to_purchase: float = Field(
-        ..., description="Quantity still needed after transfer"
-    )
-    sources: list[InternalTransferSource] = Field(
-        ..., description="List of source warehouses"
-    )
-    can_fulfill_internally: bool = Field(
-        ..., description="Whether need can be fully met internally"
-    )
-
-
-class InternalTransferFilters(BaseModel):
-    """Schema for filters_applied in propose_internal_transfer_first."""
-
-    item_code: str = Field(..., description="Item code analyzed")
-    target_warehouse: str = Field(..., description="Target warehouse")
-    needed_qty: float = Field(..., description="Quantity needed")
-    min_source_doc_days: float = Field(..., description="Minimum DoC to keep at source")
-
-
-class InternalTransferSummary(BaseModel):
-    """Schema for summary in propose_internal_transfer_first."""
-
-    total_transferable: float = Field(
-        ..., description="Total quantity that can be transferred"
-    )
-    total_sources: int = Field(..., description="Number of source warehouses available")
-    savings_estimate: float = Field(
-        ..., description="Estimated savings vs purchasing new"
-    )
-    fulfillment_pct: float = Field(
-        ..., description="Percentage of need that can be fulfilled internally"
-    )
-
-
-class InternalTransferOutput(MCPToolOutputSchema):
-    """Schema for propose_internal_transfer_first tool output."""
-
-    transfer_proposal: InternalTransferItem = Field(
-        ..., description="Transfer proposal details"
-    )
-    summary: InternalTransferSummary
-    filters_applied: InternalTransferFilters
-
-
-# ============================== Tool 4: select_best_supplier ============================== #
+# ============================== Tool 3: select_best_supplier ============================== #
 class SupplierScore(BaseModel):
     """Schema for supplier scoring breakdown."""
 
@@ -257,15 +192,15 @@ class BestSupplierSummary(BaseModel):
 class BestSupplierOutput(MCPToolOutputSchema):
     """Schema for select_best_supplier tool output."""
 
-    suppliers: list[SupplierOption] = Field(
-        ..., description="List of supplier options ranked"
+    suppliers: list[SupplierOption] | None = Field(
+        None, description="List of supplier options ranked"
     )
     recommended: SupplierOption | None = Field(None, description="Recommended supplier")
-    summary: BestSupplierSummary
-    filters_applied: BestSupplierFilters
+    summary: BestSupplierSummary | None = None
+    filters_applied: BestSupplierFilters | None = None
 
 
-# ============================== Tool 5: create_consolidated_po ============================== #
+# ============================== Tool 4: create_consolidated_po ============================== #
 class POLineItem(BaseModel):
     """Schema for individual line item in PO."""
 
@@ -291,15 +226,6 @@ class CreatedPO(BaseModel):
     auto_submitted: bool = Field(..., description="Whether PO was auto-submitted")
 
 
-class POItemInput(BaseModel):
-    """Schema for input item when creating PO."""
-
-    item_code: str = Field(..., description="ERPNext item code")
-    qty: float = Field(..., description="Quantity to order")
-    warehouse: str = Field(..., description="Target warehouse")
-    rate: float | None = Field(None, description="Optional rate override")
-
-
 class ConsolidatedPOFilters(BaseModel):
     """Schema for filters_applied in create_consolidated_po."""
 
@@ -322,14 +248,14 @@ class ConsolidatedPOSummary(BaseModel):
 class ConsolidatedPOOutput(MCPToolOutputSchema):
     """Schema for create_consolidated_po tool output."""
 
-    purchase_orders: list[CreatedPO] = Field(
-        ..., description="List of created Purchase Orders"
+    purchase_orders: list[CreatedPO] | None = Field(
+        None, description="List of created Purchase Orders"
     )
-    summary: ConsolidatedPOSummary
-    filters_applied: ConsolidatedPOFilters
+    summary: ConsolidatedPOSummary | None = None
+    filters_applied: ConsolidatedPOFilters | None = None
 
 
-# ============================== Tool 6: monitor_price_variance ============================== #
+# ============================== Tool 5: monitor_price_variance ============================== #
 class PriceHistoryPoint(BaseModel):
     """Schema for historical price point."""
 
@@ -386,6 +312,8 @@ class PriceVarianceSummary(BaseModel):
 class PriceVarianceOutput(MCPToolOutputSchema):
     """Schema for monitor_price_variance tool output."""
 
-    analysis: PriceVarianceItem = Field(..., description="Price variance analysis")
-    summary: PriceVarianceSummary
-    filters_applied: PriceVarianceFilters
+    analysis: PriceVarianceItem | None = Field(
+        None, description="Price variance analysis"
+    )
+    summary: PriceVarianceSummary | None = None
+    filters_applied: PriceVarianceFilters | None = None

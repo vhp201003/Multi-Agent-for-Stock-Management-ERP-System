@@ -271,7 +271,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"ranking", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -309,7 +309,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"slow_movers", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -345,7 +345,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"movers", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -374,7 +374,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"pareto", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):
@@ -415,7 +415,7 @@ class AnalyticsMCPServer(BaseMCPServer):
             )
 
             if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error')}")
+                raise ValueError(f"Backend error: {result.get('error_message')}")
 
             required_keys = {"stock_coverage", "summary", "filters_applied"}
             if not all(key in result for key in required_keys):

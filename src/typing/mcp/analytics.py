@@ -47,11 +47,9 @@ class TopPerformersSummary(BaseModel):
 class TopPerformersOutput(MCPToolOutputSchema):
     """Schema for analyze_top_performers tool output."""
 
-    ranking: list[TopPerformersItem] = Field(
-        ..., description="Chartable list of top-performing items"
-    )
-    summary: TopPerformersSummary
-    filters_applied: TopPerformersFilters
+    items: list[TopPerformersItem] | None
+    summary: TopPerformersSummary | None
+    filters_applied: TopPerformersFilters | None
 
 
 # Tool 2: analyze_slow_movers
@@ -107,11 +105,9 @@ class SlowMoversSummary(BaseModel):
 class SlowMoversOutput(MCPToolOutputSchema):
     """Schema for analyze_slow_movers tool output."""
 
-    slow_movers: list[SlowMoversItem] = Field(
-        ..., description="Chartable list of slow-moving items"
-    )
-    summary: SlowMoversSummary
-    filters_applied: SlowMoversFilters
+    items: list[SlowMoversItem] | None
+    summary: SlowMoversSummary | None
+    filters_applied: SlowMoversFilters | None
 
 
 # Tool 3: track_movers_shakers
@@ -157,11 +153,9 @@ class MoversShakersSummary(BaseModel):
 class MoversShakersOutput(MCPToolOutputSchema):
     """Schema for track_movers_shakers tool output."""
 
-    movers: list[MoversShakersItem] = Field(
-        ..., description="Chartable list of movers and shakers"
-    )
-    summary: MoversShakersSummary
-    filters_applied: MoversShakersFilters
+    items: list[MoversShakersItem] | None
+    summary: MoversShakersSummary | None
+    filters_applied: MoversShakersFilters | None
 
 
 # Tool 4: perform_pareto_analysis
@@ -195,11 +189,9 @@ class ParetoAnalysisSummary(BaseModel):
 class ParetoAnalysisOutput(MCPToolOutputSchema):
     """Schema for perform_pareto_analysis tool output."""
 
-    pareto: list[ParetoAnalysisItem] = Field(
-        ..., description="Chartable Pareto analysis data"
-    )
-    summary: ParetoAnalysisSummary
-    filters_applied: ParetoAnalysisFilters
+    items: list[ParetoAnalysisItem] | None
+    summary: ParetoAnalysisSummary | None
+    filters_applied: ParetoAnalysisFilters | None
 
 
 # Tool 5: analyze_stock_coverage
@@ -263,8 +255,6 @@ class StockCoverageSummary(BaseModel):
 class StockCoverageOutput(MCPToolOutputSchema):
     """Schema for analyze_stock_coverage tool output."""
 
-    stock_coverage: list[StockCoverageItem] = Field(
-        ..., description="Chartable stock coverage data"
-    )
-    summary: StockCoverageSummary
-    filters_applied: StockCoverageFilters
+    items: list[StockCoverageItem] | None
+    summary: StockCoverageSummary | None
+    filters_applied: StockCoverageFilters | None
