@@ -41,7 +41,7 @@ async def handle_query(request: Request):
 
     try:
         # Backend chỉ xử lý query, không tạo query_id hay conversation_id
-        orchestrator = agent_manager.orchestrator
+        orchestrator = agent_manager.agents.get("orchestrator")
         result = await orchestrator.process_query(request)
         return result
     except Exception as e:

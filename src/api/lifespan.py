@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from typing import Dict, List, Tuple, Type
 
 from fastapi import FastAPI
 
@@ -11,84 +12,56 @@ from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.agents.ordering_agent import OrderingAgent
 from src.agents.summary_agent import SummaryAgent
-from src.managers.analytics_manager import AnalyticsManager
-from src.managers.forecasting_manager import ForecastingManager
-from src.managers.inventory_manager import InventoryManager
-from src.managers.ordering_manager import OrderingManager
+from src.managers import create_manager
 
 logger = logging.getLogger(__name__)
+
+# Agent configuration: (name, AgentClass, needs_manager)
+AGENT_CONFIGS: List[Tuple[str, Type, bool]] = [
+    ("orchestrator", OrchestratorAgent, False),
+    ("inventory", InventoryAgent, True),
+    ("analytics", AnalyticsAgent, True),
+    ("forecasting", ForecastingAgent, True),
+    ("ordering", OrderingAgent, True),
+    ("chat", ChatAgent, False),
+    ("summary", SummaryAgent, False),
+]
 
 
 class AgentManager:
     def __init__(self):
-        self.orchestrator: OrchestratorAgent = None
-        self.inventory_agent: InventoryAgent = None
-        self.chat_agent: ChatAgent = None
-        self.forecasting_agent: ForecastingAgent = None
-        self.summary_agent: SummaryAgent = None
-        self.inventory_manager: InventoryManager = None
-        self.analytics_agent: AnalyticsAgent = None
-        self.analytics_manager: AnalyticsManager = None
-        self.forecasting_manager: ForecastingManager = None
-        self.ordering_agent: OrderingAgent = None
-        self.ordering_manager: OrderingManager = None
-        self.tasks: list[asyncio.Task] = []
+        self.agents: Dict[str, object] = {}
+        self.managers: Dict[str, object] = {}
+        self.tasks: List[asyncio.Task] = []
         self.redis_client = None
 
     async def start(self):
         try:
             logger.info("Starting all agents and managers...")
 
-            self.orchestrator = OrchestratorAgent()
-            self.inventory_agent = InventoryAgent()
-            self.chat_agent = ChatAgent()
-            self.forecasting_agent = ForecastingAgent()
-            self.summary_agent = SummaryAgent()
-            self.inventory_manager = InventoryManager()
-            self.analytics_agent = AnalyticsAgent()
-            self.analytics_manager = AnalyticsManager()
-            self.forecasting_manager = ForecastingManager()
-            self.ordering_agent = OrderingAgent()
-            self.ordering_manager = OrderingManager()
-            self.redis_client = self.orchestrator.redis
+            # Initialize and start agents/managers from config
+            for name, AgentClass, needs_manager in AGENT_CONFIGS:
+                # Create and store agent
+                agent = AgentClass()
+                self.agents[name] = agent
+                self.tasks.append(
+                    asyncio.create_task(agent.start(), name=f"{name}_agent")
+                )
 
-            self.tasks = [
-                # Orchestrator
-                asyncio.create_task(self.orchestrator.start(), name="orchestrator"),
-                # Inventory
-                asyncio.create_task(
-                    self.inventory_manager.start(), name="inventory_manager"
-                ),
-                asyncio.create_task(
-                    self.inventory_agent.start(), name="inventory_agent"
-                ),
-                # Analytics
-                asyncio.create_task(
-                    self.analytics_agent.start(), name="analytics_agent"
-                ),
-                asyncio.create_task(
-                    self.analytics_manager.start(),
-                    name="analytics_manager",
-                ),
-                # Forecasting
-                asyncio.create_task(
-                    self.forecasting_manager.start(), name="forecasting_manager"
-                ),
-                asyncio.create_task(
-                    self.forecasting_agent.start(), name="forecasting_agent"
-                ),
-                # Ordering
-                asyncio.create_task(
-                    self.ordering_manager.start(), name="ordering_manager"
-                ),
-                asyncio.create_task(self.ordering_agent.start(), name="ordering_agent"),
-                # Chat
-                asyncio.create_task(self.chat_agent.start(), name="chat_agent"),
-                # Summary
-                asyncio.create_task(self.summary_agent.start(), name="summary_agent"),
-            ]
+                # Create manager if needed
+                if needs_manager:
+                    manager = create_manager(name)
+                    self.managers[name] = manager
+                    self.tasks.append(
+                        asyncio.create_task(manager.start(), name=f"{name}_manager")
+                    )
 
-            logger.info("All agents and managers started successfully")
+            # Store redis client from orchestrator
+            self.redis_client = self.agents["orchestrator"].redis
+
+            logger.info(
+                f"Started {len(self.agents)} agents and {len(self.managers)} managers"
+            )
 
         except Exception as e:
             logger.error(f"Failed to start agents: {e}")

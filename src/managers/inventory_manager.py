@@ -1,7 +1,0 @@
-from src.agents.inventory_agent import AGENT_TYPE
-from src.managers.base_manager import BaseManager
-
-
-class InventoryManager(BaseManager):
-    def __init__(self):
-        super().__init__(AGENT_TYPE)
