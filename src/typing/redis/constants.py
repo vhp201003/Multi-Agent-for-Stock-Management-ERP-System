@@ -72,10 +72,13 @@ class RedisKeys:
 
 
 class TaskStatus(str, Enum):
-    DONE = "done"
+    # Task lifecycle states
     PENDING = "pending"
-    ERROR = "error"
     PROCESSING = "processing"
+    DONE = "done"  # Used in TaskUpdate broadcasts
+    COMPLETED = "completed"  # Used in SharedData internal state
+    ERROR = "error"
+    FAILED = "failed"  # Alias for ERROR in SharedData context
     PENDING_APPROVAL = "pending_approval"  # HITL: Waiting for user approval
 
 

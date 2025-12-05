@@ -11,6 +11,7 @@ from src.typing.redis import (
     RedisKeys,
     SharedData,
     TaskQueueItem,
+    TaskStatus,
     TaskUpdate,
 )
 from src.utils import get_shared_data
@@ -305,9 +306,6 @@ class BaseManager:
             if not dep_exec:
                 logger.debug(f"Dependency {dep_id} not found in shared_data")
                 return False
-
-            # Use TaskStatus from shared_data (COMPLETED) not constants (DONE)
-            from src.typing.redis.shared_data import TaskStatus
 
             if dep_exec.status != TaskStatus.COMPLETED:
                 logger.debug(

@@ -1,15 +1,9 @@
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from src.typing.redis.constants import TaskStatus
 from src.typing.schema.orchestrator import TaskNode
-
-
-class TaskStatus(str, Enum):
-    PENDING = "pending"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class LLMUsage(BaseModel):
