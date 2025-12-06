@@ -15,14 +15,14 @@ from src.managers import create_manager
 
 logger = logging.getLogger(__name__)
 
-# Agent configuration: (name, AgentClass, needs_manager)
-AGENT_CONFIGS: List[Tuple[str, Type, bool]] = [
-    ("orchestrator", OrchestratorAgent, False),
-    ("inventory", InventoryAgent, True),
-    ("analytics", AnalyticsAgent, True),
-    ("forecasting", ForecastingAgent, True),
-    ("ordering", OrderingAgent, True),
-    ("chat", ChatAgent, False),
+# Agent configuration: (name, AgentClass, needs_manager, num_workers)
+AGENT_CONFIGS: List[Tuple[str, Type, bool, int]] = [
+    ("orchestrator", OrchestratorAgent, False, 1),
+    ("inventory", InventoryAgent, True, 3),  # 3 worker instances
+    ("analytics", AnalyticsAgent, True, 2),  # 2 worker instances
+    ("forecasting", ForecastingAgent, True, 2),  # 2 worker instances
+    ("ordering", OrderingAgent, True, 3),  # 3 worker instances
+    ("chat", ChatAgent, False, 1),
 ]
 
 
@@ -38,15 +38,8 @@ class AgentManager:
             logger.info("Starting all agents and managers...")
 
             # Initialize and start agents/managers from config
-            for name, AgentClass, needs_manager in AGENT_CONFIGS:
-                # Create and store agent
-                agent = AgentClass()
-                self.agents[name] = agent
-                self.tasks.append(
-                    asyncio.create_task(agent.start(), name=f"{name}_agent")
-                )
-
-                # Create manager if needed
+            for name, AgentClass, needs_manager, num_workers in AGENT_CONFIGS:
+                # Create manager if needed (1 per agent type)
                 if needs_manager:
                     manager = create_manager(name)
                     self.managers[name] = manager
@@ -54,11 +47,28 @@ class AgentManager:
                         asyncio.create_task(manager.start(), name=f"{name}_manager")
                     )
 
-            # Store redis client from orchestrator
-            self.redis_client = self.agents["orchestrator"].redis
+                # Create worker instances
+                for i in range(num_workers):
+                    if num_workers == 1:
+                        # Single instance: no instance_id needed
+                        agent = AgentClass()
+                        agent_key = name
+                    else:
+                        # Multiple instances: add instance_id
+                        instance_id = f"{name}_{i + 1}"
+                        agent = AgentClass(instance_id=instance_id)
+                        agent_key = instance_id
+
+                    self.agents[agent_key] = agent
+                    self.tasks.append(
+                        asyncio.create_task(agent.start(), name=f"{agent_key}_agent")
+                    )
+
+            # Store redis client from first available agent
+            self.redis_client = list(self.agents.values())[0].redis
 
             logger.info(
-                f"Started {len(self.agents)} agents and {len(self.managers)} managers"
+                f"Started {len(self.agents)} agent instances and {len(self.managers)} managers"
             )
 
         except Exception as e:

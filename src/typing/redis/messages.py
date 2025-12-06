@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .constants import TaskStatus
 
@@ -17,8 +17,8 @@ class QueryTask(BaseMessage):
 
 
 class TaskUpdate(BaseMessage):
-    timestamp: datetime = datetime.now()
-    task_id: str = None
+    timestamp: datetime = Field(default_factory=datetime.now)
+    task_id: Optional[str] = None
     query_id: str
     sub_query: str
     status: TaskStatus
@@ -27,6 +27,7 @@ class TaskUpdate(BaseMessage):
     llm_usage: Dict[str, Any]
     llm_reasoning: Optional[str] = None
     agent_type: Optional[str] = None  # The agent type that sent this update
+    instance_id: Optional[str] = None  # Worker instance that processed this task
 
 
 class CommandMessage(BaseMessage):
@@ -35,4 +36,4 @@ class CommandMessage(BaseMessage):
     agent_type: str
     sub_query: Optional[str] = None
     command: str
-    timestamp: str = datetime.now().isoformat()
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from toon import encode
@@ -42,11 +43,13 @@ class WorkerAgent(BaseAgent):
         self,
         agent_type: str,
         agent_description: str,
+        instance_id: Optional[str] = None,
         mcp_timeout: float = 30.0,
         examples: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(agent_type, **kwargs)
+        self.instance_id = instance_id or str(uuid.uuid4())[:8]
         self.agent_description = agent_description
         self.mcp_server_url = get_agent_config(agent_type).mcp_server_url
         self.mcp_timeout = mcp_timeout
@@ -326,7 +329,12 @@ class WorkerAgent(BaseAgent):
                     )
                     await self.handle_command_message(command_message)
             except Exception as e:
-                logger.error(f"{self.agent_type}: Redis error, reconnecting: {e}")
+                logger.error(
+                    f"{self.agent_type}[{self.instance_id}]: Redis error, reconnecting: {e}"
+                )
+                # Reset state to prevent stale query_id issues
+                self._current_query_id = None
+                self._current_task_id = None
                 await asyncio.sleep(1)
             finally:
                 try:
@@ -336,25 +344,48 @@ class WorkerAgent(BaseAgent):
                     pass
 
     async def handle_command_message(self, command_message: CommandMessage):
-        """Handle incoming command from Manager."""
+        """Handle incoming command from Manager with distributed lock."""
         if command_message.command != "execute":
             return
 
         if not command_message.query_id or not command_message.sub_query:
-            logger.error(f"{self.agent_type}: Missing query_id or sub_query")
+            logger.error(
+                f"{self.agent_type}[{self.instance_id}]: Missing query_id or sub_query"
+            )
             return
 
-        await self.process_task_with_timeout(command_message)
+        # Distributed lock to prevent duplicate processing by multiple workers
+        lock_key = f"task_lock:{command_message.query_id}:{command_message.sub_query}"
+        lock_acquired = await self.redis.set(
+            lock_key,
+            self.instance_id,
+            nx=True,  # Only set if not exists
+            ex=310,  # Slightly longer than task timeout
+        )
+
+        if not lock_acquired:
+            logger.debug(
+                f"{self.agent_type}[{self.instance_id}]: Task already claimed by another worker"
+            )
+            return
+
+        try:
+            await self.process_task_with_timeout(command_message)
+        finally:
+            await self.redis.delete(lock_key)
 
     async def process_task_with_timeout(self, command_message: CommandMessage):
         """Process task with timeout and proper status management."""
+        status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
+
+        # Set THIS instance to PROCESSING
         await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value
+            status_key, self.instance_id, AgentStatus.PROCESSING.value
         )
 
         try:
             logger.info(
-                f"{self.agent_type}: Processing '{command_message.sub_query[:50]}...' "
+                f"{self.agent_type}[{self.instance_id}]: Processing '{command_message.sub_query[:50]}...' "
                 f"for query_id: {command_message.query_id}"
             )
 
@@ -363,14 +394,14 @@ class WorkerAgent(BaseAgent):
                 await self.publish_task_completion(command_message, response)
 
         except asyncio.TimeoutError:
-            logger.error(f"{self.agent_type}: Task timeout after 300s")
-        except Exception as e:
-            logger.error(f"{self.agent_type}: Task error: {e}")
-        finally:
-            # Always reset to IDLE
-            await self.redis.hset(
-                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
+            logger.error(
+                f"{self.agent_type}[{self.instance_id}]: Task timeout after 300s"
             )
+        except Exception as e:
+            logger.error(f"{self.agent_type}[{self.instance_id}]: Task error: {e}")
+        finally:
+            # Always reset THIS instance to IDLE
+            await self.redis.hset(status_key, self.instance_id, AgentStatus.IDLE.value)
 
     async def publish_task_completion(
         self, command_message: CommandMessage, response: WorkerAgentProcessResponse
@@ -407,6 +438,7 @@ class WorkerAgent(BaseAgent):
             llm_usage=response.llm_usage or {},
             llm_reasoning=response.llm_reasoning,
             agent_type=self.agent_type,
+            instance_id=self.instance_id,
         )
 
         await self.publish_channel(RedisChannels.TASK_UPDATES, task_update, TaskUpdate)
@@ -439,11 +471,10 @@ class WorkerAgent(BaseAgent):
         return await client.read_resource(uri)
 
     async def start(self):
-        logger.info(f"{self.agent_type}: Starting worker agent")
+        logger.info(f"{self.agent_type}[{self.instance_id}]: Starting worker agent")
 
-        await self.redis.hset(
-            RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-        )
+        status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
+        await self.redis.hset(status_key, self.instance_id, AgentStatus.IDLE.value)
 
         await self.init_prompt()
 
@@ -514,7 +545,15 @@ class WorkerAgent(BaseAgent):
             )
 
     async def stop(self):
-        logger.info(f"{self.agent_type}: Stopping worker agent")
+        logger.info(f"{self.agent_type}[{self.instance_id}]: Stopping worker agent")
+
+        # Cleanup instance registration and status
+        try:
+            await self.redis.delete(f"worker:{self.agent_type}:{self.instance_id}")
+            status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
+            await self.redis.hdel(status_key, self.instance_id)
+        except Exception:
+            pass
 
         # Xóa khỏi registry
         unregister_agent(self.agent_type)
@@ -522,9 +561,13 @@ class WorkerAgent(BaseAgent):
         if self.mcp_client:
             try:
                 await self.mcp_client.__aexit__(None, None, None)
-                logger.info(f"{self.agent_type}: MCP connection closed")
+                logger.info(
+                    f"{self.agent_type}[{self.instance_id}]: MCP connection closed"
+                )
             except Exception as e:
-                logger.error(f"{self.agent_type}: MCP cleanup error: {e}")
+                logger.error(
+                    f"{self.agent_type}[{self.instance_id}]: MCP cleanup error: {e}"
+                )
             finally:
                 self.mcp_client = None
 
