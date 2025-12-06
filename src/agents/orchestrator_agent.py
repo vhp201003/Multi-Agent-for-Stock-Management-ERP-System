@@ -6,10 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from config.prompts import build_orchestrator_prompt
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
-from src.agents.summary_agent import AGENT_TYPE as SUMMARY_AGENT_TYPE
 from src.typing.llm_response import OrchestratorResponse
 from src.typing.redis import (
-    CommandMessage,
     CompletionResponse,
     LLMUsage,
     QueryTask,
@@ -25,7 +23,9 @@ from src.utils import get_shared_data, save_shared_data
 from src.utils.converstation import (
     load_or_create_conversation,
     save_conversation_message,
+    summarize_conversation,
 )
+from src.utils.shared_data_utils import truncate_results
 
 from .base_agent import BaseAgent
 
@@ -77,7 +77,6 @@ class OrchestratorAgent(BaseAgent):
             if error:
                 raise ValueError(error)
 
-            # ✅ NEW: Check if orchestration returned no agents (simple query)
             if (
                 not orchestration_result.result.agents_needed
                 or len(orchestration_result.result.agents_needed) == 0
@@ -90,7 +89,6 @@ class OrchestratorAgent(BaseAgent):
                 await self._route_to_chat_agent_directly(request)
                 return  # ← Exit early, don't do complex orchestration
 
-            # ✅ Complex orchestration flow (unchanged)
             await self._initialize_shared_state(request, orchestration_result)
             sub_query_dict = self._build_sub_query_dict(orchestration_result)
             if not sub_query_dict:
@@ -461,7 +459,7 @@ class OrchestratorAgent(BaseAgent):
             filtered_context = {
                 "original_query": shared_data.original_query,
                 "agents_completed": shared_data.agents_needed,
-                "results": self._filter_results_for_context(all_results),
+                "results": truncate_results(all_results),
             }
 
             chat_message = ChatRequest(
@@ -492,25 +490,6 @@ class OrchestratorAgent(BaseAgent):
             await self.publish_channel(
                 completion_channel, error_response, CompletionResponse
             )
-
-    async def _trigger_summary_agent(self, query_id: str, shared_data: SharedData):
-        try:
-            conversation_id = shared_data.conversation_id
-            if not conversation_id:
-                return
-
-            summary_message = CommandMessage(
-                query_id=query_id,
-                conversation_id=conversation_id,
-                agent_type=SUMMARY_AGENT_TYPE,
-                command="summarize",
-            )
-
-            summary_channel = RedisChannels.get_command_channel(SUMMARY_AGENT_TYPE)
-            await self.publish_channel(summary_channel, summary_message, CommandMessage)
-
-        except Exception as e:
-            logger.error(f"Failed to trigger SummaryAgent for {query_id}: {e}")
 
     async def _publish_final_completion(self, task_update_message: TaskUpdate):
         try:
@@ -556,8 +535,9 @@ class OrchestratorAgent(BaseAgent):
             await self._store_completion_metrics(
                 task_update_message, shared_data, completion_response
             )
-
-            await self._trigger_summary_agent(task_update_message.query_id, shared_data)
+            await summarize_conversation(
+                self.redis, self.llm, shared_data.conversation_id
+            )
 
         except Exception as e:
             logger.error(
@@ -648,70 +628,6 @@ class OrchestratorAgent(BaseAgent):
 
         except Exception as fallback_error:
             logger.error(f"Fallback completion failed: {fallback_error}")
-
-    def _filter_results_for_context(
-        self,
-        results: Dict[str, Any],
-        max_items: int = 10,
-        max_depth: int = 5,
-        _current_depth: int = 0,
-    ) -> Dict[str, Any]:
-        """
-        Recursively filter nested agent results for ChatAgent context.
-        - Dict: recurse into values (up to max_depth)
-        - List: take up to max_items elements, recurse if elements are dict/list
-        - Other types: include as-is
-        Security: Prevents memory exhaustion and stack overflow via size/depth limits.
-        """
-        if not results or not isinstance(results, dict):
-            return {}
-
-        if _current_depth > max_depth:
-            return {"_truncated": True}
-
-        filtered = {}
-        for key, value in results.items():
-            if isinstance(value, dict):
-                filtered[key] = self._filter_results_for_context(
-                    value,
-                    max_items=max_items,
-                    max_depth=max_depth,
-                    _current_depth=_current_depth + 1,
-                )
-            elif isinstance(value, list):
-                filtered_list = []
-                for item in value[:max_items]:
-                    if isinstance(item, (dict, list)):
-                        filtered_list.append(
-                            self._filter_results_for_context(
-                                item if isinstance(item, dict) else {"list": item},
-                                max_items=max_items,
-                                max_depth=max_depth,
-                                _current_depth=_current_depth + 1,
-                            )
-                            if isinstance(item, dict)
-                            else [
-                                self._filter_results_for_context(
-                                    {"list": subitem},
-                                    max_items=max_items,
-                                    max_depth=max_depth,
-                                    _current_depth=_current_depth + 1,
-                                )
-                                if isinstance(subitem, dict)
-                                else subitem
-                                for subitem in item
-                            ]
-                        )
-                    else:
-                        filtered_list.append(item)
-                filtered[key] = filtered_list
-                if len(value) > max_items:
-                    filtered[key].append(
-                        {"_truncated": True, "total_items": len(value)}
-                    )
-            else:
-                filtered[key] = value
-        return filtered
 
     async def start(self):
         logger.info("OrchestratorAgent: Starting workflow orchestration")

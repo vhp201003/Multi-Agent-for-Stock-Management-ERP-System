@@ -88,6 +88,68 @@ async def get_summary_conversation(redis_client, conversation_id: str) -> Option
         return None
 
 
+async def summarize_conversation(
+    redis_client,
+    llm_client,
+    conversation_id: str,
+) -> Optional[str]:
+    try:
+        conversation = await load_or_create_conversation(redis_client, conversation_id)
+        recent_messages = conversation.get_recent_messages(limit=10)
+
+        if not recent_messages:
+            logger.debug(f"No messages to summarize for {conversation_id}")
+            return None
+
+        # Format messages for LLM
+        messages_text = "\n".join(
+            [f"{msg['role'].upper()}: {msg['content']}" for msg in recent_messages]
+        )
+
+        # Build LLM request
+        system_prompt = """
+You are a conversation summarizer. Your task is to create a concise but comprehensive summary of the conversation.
+Focus on:
+- Key topics discussed
+- Important decisions or conclusions
+- Action items or next steps
+- User's main concerns or questions
+- Agent responses and recommendations
+
+Keep the summary under 200 words and make it natural to read.
+Always return valid SummaryAgentSchema JSON with 'summary' field only.
+"""
+
+        user_prompt = f"Summarize this conversation:\n\n{messages_text}"
+
+        response = await llm_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=300,
+        )
+
+        summary = response.choices[0].message.content.strip()
+
+        # Update conversation with summary
+        conversation.update_summary(summary)
+        conversation_key = RedisKeys.get_conversation_key(conversation_id)
+        await redis_client.json().set(
+            conversation_key,
+            "$",
+            json.loads(conversation.model_dump_json()),
+        )
+
+        logger.info(f"Generated summary for conversation {conversation_id}")
+        return summary
+
+    except Exception as e:
+        logger.error(f"Failed to summarize conversation {conversation_id}: {e}")
+        return None
+
+
 async def get_conversation(
     redis_client, conversation_id: str, user_id: Optional[str] = None
 ) -> Optional["Conversation"]:

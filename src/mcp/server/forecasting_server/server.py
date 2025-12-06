@@ -115,8 +115,8 @@ class ForecastingMCPServer(BaseMCPServer):
             name="predict_sales_forecast",
             description="Predict sales forecast for a specific item using V2 model",
             hitl=HITLMetadata(
-                requires_approval=True,
-                approval_level=ApprovalLevel.REVIEW,
+                requires_approval=False,
+                approval_level=ApprovalLevel.NONE,
                 modifiable_fields=["item_code", "months"],
                 approval_message="Vui lòng review tham số dự báo doanh số",
                 timeout_seconds=60,
@@ -127,8 +127,8 @@ class ForecastingMCPServer(BaseMCPServer):
             name="predict_inventory_forecast",
             description="Predict inventory levels for specific items and warehouses using V3 model",
             hitl=HITLMetadata(
-                requires_approval=True,
-                approval_level=ApprovalLevel.REVIEW,
+                requires_approval=False,
+                approval_level=ApprovalLevel.NONE,
                 modifiable_fields=["item_code", "warehouse", "months"],
                 approval_message="Vui lòng review tham số dự báo tồn kho",
                 timeout_seconds=60,

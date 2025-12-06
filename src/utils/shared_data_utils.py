@@ -1,8 +1,10 @@
+import json
 import logging
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
 from redis.commands.json.path import Path
+from toon import encode
 
 from src.typing.redis import SharedData
 from src.typing.redis.constants import RedisKeys
@@ -137,3 +139,124 @@ async def update_shared_data_field(
     except redis.RedisError as e:
         logger.error(f"Redis error updating field {json_path} for {query_id}: {e}")
         raise
+
+
+# ==================== TASK UTILITIES ====================
+
+
+async def find_task_id(
+    redis_client: redis.Redis,
+    query_id: str,
+    agent_type: str,
+    sub_query: str,
+) -> Optional[str]:
+    """Find task_id from SharedData by agent_type and sub_query."""
+    try:
+        shared = await get_shared_data(redis_client, query_id)
+        if not shared:
+            return None
+        return shared.get_task_id_by_sub_query(agent_type, sub_query)
+    except Exception as e:
+        logger.error(f"Task ID resolution failed for {query_id}: {e}")
+        return None
+
+
+async def get_dependency_context(
+    redis_client: redis.Redis,
+    query_id: str,
+    task_id: str,
+) -> Optional[str]:
+    """Load results from completed dependency tasks and format for LLM context."""
+    try:
+        shared = await get_shared_data(redis_client, query_id)
+        if not shared:
+            return None
+
+        dep_results = shared.get_dependency_results(task_id)
+        if not dep_results:
+            return None
+
+        truncated = truncate_results(dep_results)
+        tooned = encode(truncated)
+        logger.info(
+            f"Loaded {len(dep_results)} dependency results for task {task_id} (tooned size: {len(tooned)} bytes)"
+        )
+        return json.dumps(truncated, indent=2, default=str, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"Failed to load dependency results for {task_id}: {e}")
+        return None
+
+
+def truncate_results(
+    data: Any,
+    max_items: int = 10,
+    max_depth: int = 5,
+    _current_depth: int = 0,
+) -> Any:
+    """Recursively filter/truncate nested data for LLM context.
+
+    - Dict: recurse into values (up to max_depth)
+    - List: take up to max_items elements, recurse if elements are dict/list
+    - Other types: include as-is
+
+    Args:
+        data: Data to truncate (dict, list, or other)
+        max_items: Max items per list
+        max_depth: Max recursion depth
+        _current_depth: Internal depth tracker
+
+    Returns:
+        Truncated data safe for LLM context
+    """
+    if not data:
+        return {} if isinstance(data, dict) else data
+
+    if _current_depth > max_depth:
+        return {"_truncated": True}
+
+    if isinstance(data, dict):
+        filtered = {}
+        for key, value in data.items():
+            if isinstance(value, dict):
+                filtered[key] = truncate_results(
+                    value, max_items, max_depth, _current_depth + 1
+                )
+            elif isinstance(value, list):
+                filtered[key] = _truncate_list(
+                    value, max_items, max_depth, _current_depth
+                )
+            else:
+                filtered[key] = value
+        return filtered
+
+    if isinstance(data, list):
+        return _truncate_list(data, max_items, max_depth, _current_depth)
+
+    return data
+
+
+def _truncate_list(
+    items: list,
+    max_items: int,
+    max_depth: int,
+    current_depth: int,
+) -> list:
+    """Helper to truncate list items."""
+    filtered_list = []
+    for item in items[:max_items]:
+        if isinstance(item, dict):
+            filtered_list.append(
+                truncate_results(item, max_items, max_depth, current_depth + 1)
+            )
+        elif isinstance(item, list):
+            filtered_list.append(
+                _truncate_list(item, max_items, max_depth, current_depth + 1)
+            )
+        else:
+            filtered_list.append(item)
+
+    if len(items) > max_items:
+        filtered_list.append({"_truncated": True, "total_items": len(items)})
+
+    return filtered_list

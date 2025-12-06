@@ -11,7 +11,6 @@ from src.agents.forecasting_agent import ForecastingAgent
 from src.agents.inventory_agent import InventoryAgent
 from src.agents.orchestrator_agent import OrchestratorAgent
 from src.agents.ordering_agent import OrderingAgent
-from src.agents.summary_agent import SummaryAgent
 from src.managers import create_manager
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,6 @@ AGENT_CONFIGS: List[Tuple[str, Type, bool]] = [
     ("forecasting", ForecastingAgent, True),
     ("ordering", OrderingAgent, True),
     ("chat", ChatAgent, False),
-    ("summary", SummaryAgent, False),
 ]
 
 

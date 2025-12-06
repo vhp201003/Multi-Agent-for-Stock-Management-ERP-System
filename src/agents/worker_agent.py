@@ -20,12 +20,17 @@ from src.typing.redis import (
     CommandMessage,
     RedisChannels,
     RedisKeys,
-    SharedData,
     TaskStatus,
     TaskUpdate,
 )
+from src.typing.redis.constants import MessageType
 from src.utils.converstation import get_summary_conversation
-from src.utils.shared_data_utils import get_shared_data, update_shared_data
+from src.utils.shared_data_utils import (
+    find_task_id,
+    get_dependency_context,
+    get_shared_data,
+    update_shared_data,
+)
 
 from .base_agent import BaseAgent
 
@@ -65,17 +70,19 @@ class WorkerAgent(BaseAgent):
 
         # HITL: Store current query context for approval requests
         self._current_query_id = command_message.query_id
-        self._current_task_id = await self.find_task_id_by_query(
-            command_message.query_id, sub_query
+        self._current_task_id = await find_task_id(
+            self.redis, command_message.query_id, self.agent_type, sub_query
         )
 
         # Get conversation summary
         summary = await get_summary_conversation(self.redis, conversation_id)
 
         # Get dependency results from SharedData
-        dependency_context = await self._get_dependency_context(
-            command_message.query_id, self._current_task_id
-        )
+        dependency_context = None
+        if self._current_task_id:
+            dependency_context = await get_dependency_context(
+                self.redis, command_message.query_id, self._current_task_id
+            )
 
         messages = [
             {
@@ -146,234 +153,221 @@ class WorkerAgent(BaseAgent):
         tools_result_accumulator: List[ToolCallResultResponse],
         query_id: str,
     ) -> List[Dict[str, Any]]:
-        tool_results_messages = []
+        """Execute tool calls and return results for LLM context."""
+        results = []
         for tool_call in tool_calls:
-            try:
-                tool_name = tool_call.function.name
-                parameters_json = tool_call.function.arguments
-                if isinstance(parameters_json, str):
-                    parameters = json.loads(parameters_json)
-                else:
-                    parameters = parameters_json
+            result = await self._execute_single_tool(
+                tool_call, tools_result_accumulator, query_id
+            )
+            results.append(result)
+        return results
 
-                # ============= HITL: Check if tool requires approval =============
-                if self.tool_requires_approval(tool_name):
-                    logger.info(
-                        f"{self.agent_type}: Tool '{tool_name}' requires approval"
+    async def _execute_single_tool(
+        self,
+        tool_call: Any,
+        accumulator: List[ToolCallResultResponse],
+        query_id: str,
+    ) -> Dict[str, Any]:
+        """Execute a single tool call with HITL check."""
+        try:
+            tool_name = tool_call.function.name
+            parameters = (
+                json.loads(tool_call.function.arguments)
+                if isinstance(tool_call.function.arguments, str)
+                else tool_call.function.arguments
+            )
+
+            # HITL approval check
+            if self.tool_requires_approval(tool_name):
+                approval = await self.request_approval(
+                    query_id=query_id,
+                    tool_name=tool_name,
+                    proposed_params=parameters,
+                    task_id=self._current_task_id,
+                )
+
+                if approval.action == ApprovalAction.REJECT:
+                    return self._build_rejection_result(
+                        tool_call, tool_name, parameters, accumulator, approval.reason
                     )
 
-                    approval = await self.request_approval(
-                        query_id=query_id,
-                        tool_name=tool_name,
-                        proposed_params=parameters,
-                        task_id=self._current_task_id,
-                    )
+                if (
+                    approval.action == ApprovalAction.MODIFY
+                    and approval.modified_params
+                ):
+                    parameters = {**parameters, **approval.modified_params}
 
-                    if approval.action == ApprovalAction.REJECT:
-                        # Tool rejected - add rejection message to context
-                        rejection_msg = {
-                            "status": "rejected",
-                            "reason": approval.reason or "User rejected this action",
-                            "message": "The user has rejected this action. Please acknowledge and suggest alternatives if applicable.",
-                        }
+            # Execute tool
+            tool_result = await self.call_mcp_tool(tool_name, parameters)
+            tool_result = self._normalize_tool_result(tool_result)
 
-                        tools_result_accumulator.append(
-                            ToolCallResultResponse(
-                                tool_name=tool_name,
-                                parameters=parameters,
-                                tool_result=rejection_msg,
-                            )
-                        )
-
-                        tool_results_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps(rejection_msg),
-                            }
-                        )
-
-                        logger.info(
-                            f"{self.agent_type}: Tool '{tool_name}' was rejected by user"
-                        )
-                        continue
-
-                    elif approval.action == ApprovalAction.MODIFY:
-                        # User modified params - merge with original
-                        if approval.modified_params:
-                            parameters = {**parameters, **approval.modified_params}
-                            logger.info(
-                                f"{self.agent_type}: Tool '{tool_name}' params modified by user"
-                            )
-
-                    # APPROVE or MODIFY (with updated params) - continue to execute
-                # ============= End HITL =============
-
-                tool_result: Dict[str, Any] = await self.call_mcp_tool(
-                    tool_name, parameters
+            accumulator.append(
+                ToolCallResultResponse(
+                    tool_name=tool_name,
+                    parameters=parameters,
+                    tool_result=tool_result,
                 )
+            )
 
-                # Parse string result to dict
-                if tool_result is None:
-                    tool_result = {"status": "success", "message": "No result returned"}
-                elif isinstance(tool_result, str):
-                    if not tool_result.strip():
-                        tool_result = {"status": "success", "message": "Empty response"}
-                    else:
-                        tool_result = json.loads(tool_result)
+            # Broadcast and return
+            await self._broadcast_tool_result(
+                query_id, tool_name, parameters, tool_result
+            )
+            return self._build_tool_message(tool_call.id, tool_result)
 
-                tools_result_accumulator.append(
-                    ToolCallResultResponse(
-                        tool_name=tool_name,
-                        parameters=parameters,
-                        tool_result=tool_result,
-                    )
-                )
-                logger.debug(
-                    f"{self.agent_type}: Executed tool '{tool_name}' with result"
-                )
+        except Exception as e:
+            return await self._handle_tool_error(tool_call, accumulator, query_id, e)
 
-                # Truncate tool result for LLM context if too large
-                try:
-                    tool_result_str = encode(tool_result)
-                except Exception as e:
-                    logger.warning(f"Toon encoding failed, falling back to JSON: {e}")
-                    tool_result_str = json.dumps(tool_result)
+    def _normalize_tool_result(self, result: Any) -> Dict[str, Any]:
+        """Normalize tool result to dict."""
+        if result is None:
+            return {"status": "success", "message": "No result returned"}
+        if isinstance(result, str):
+            if not result.strip():
+                return {"status": "success", "message": "Empty response"}
+            return json.loads(result)
+        return result
 
-                if len(tool_result_str) > 20000:
-                    tool_result_str = (
-                        tool_result_str[:20000]
-                        + f"... (truncated {len(tool_result_str) - 20000} chars)"
-                    )
+    def _build_tool_message(
+        self, tool_call_id: str, result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build tool result message for LLM context."""
+        try:
+            content = encode(result)
+        except Exception:
+            content = json.dumps(result)
 
-                tool_results_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": tool_result_str,
-                    }
-                )
+        if len(content) > 20000:
+            content = content[:20000] + f"... (truncated {len(content) - 20000} chars)"
 
-                # Broadcast tool execution
-                from src.typing.redis.constants import MessageType
+        return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
-                await self.publish_broadcast(
-                    RedisChannels.get_query_updates_channel(query_id),
-                    MessageType.TOOL_EXECUTION,
-                    {
-                        "tool_name": tool_name,
-                        "parameters": parameters,
-                        "result": tool_result,  # Frontend can handle full result or we can truncate
-                        "agent_type": self.agent_type,
-                    },
-                )
+    def _build_rejection_result(
+        self,
+        tool_call: Any,
+        tool_name: str,
+        parameters: Dict,
+        accumulator: List,
+        reason: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build rejection result when user rejects tool."""
+        msg = {
+            "status": "rejected",
+            "reason": reason or "User rejected this action",
+            "message": "The user has rejected this action. Please acknowledge and suggest alternatives if applicable.",
+        }
+        accumulator.append(
+            ToolCallResultResponse(
+                tool_name=tool_name, parameters=parameters, tool_result=msg
+            )
+        )
+        logger.info(f"{self.agent_type}: Tool '{tool_name}' rejected by user")
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": json.dumps(msg),
+        }
 
-            except Exception as e:
-                logger.error(
-                    f"{self.agent_type}: Tool call failed for {tool_call}: {e}"
-                )
-                error_message = f"Tool call failed: {str(e)}"
+    async def _broadcast_tool_result(
+        self, query_id: str, tool_name: str, parameters: Dict, result: Dict
+    ):
+        """Broadcast tool execution to frontend."""
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.TOOL_EXECUTION,
+            {
+                "tool_name": tool_name,
+                "parameters": parameters,
+                "result": result,
+                "agent_type": self.agent_type,
+            },
+        )
 
-                tools_result_accumulator.append(
-                    ToolCallResultResponse(
-                        tool_name=getattr(tool_call.function, "name", "unknown"),
-                        parameters=json.loads(
-                            getattr(tool_call.function, "arguments", "{}")
-                        ),
-                        tool_result={"error": error_message},
-                    )
-                )
+    async def _handle_tool_error(
+        self, tool_call: Any, accumulator: List, query_id: str, error: Exception
+    ) -> Dict[str, Any]:
+        """Handle tool execution error."""
+        logger.error(f"{self.agent_type}: Tool call failed: {error}")
+        error_msg = f"Tool call failed: {str(error)}"
 
-                tool_results_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps({"error": error_message}),
-                    }
-                )
+        accumulator.append(
+            ToolCallResultResponse(
+                tool_name=getattr(tool_call.function, "name", "unknown"),
+                parameters=json.loads(getattr(tool_call.function, "arguments", "{}")),
+                tool_result={"error": error_msg},
+            )
+        )
 
-                # Broadcast error
-                from src.typing.redis.constants import MessageType
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.ERROR,
+            {"error": error_msg, "agent_type": self.agent_type},
+        )
 
-                await self.publish_broadcast(
-                    RedisChannels.get_query_updates_channel(query_id),
-                    MessageType.ERROR,
-                    {
-                        "error": error_message,
-                        "agent_type": self.agent_type,
-                    },
-                )
-
-        return tool_results_messages
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": json.dumps({"error": error_msg}),
+        }
 
     async def listen_channels(self):
-        pubsub = self.redis.pubsub()
+        """Listen for commands from Manager with reconnect logic."""
         channels = await self.get_sub_channels()
-        await pubsub.subscribe(*channels)
 
-        try:
-            async for message in pubsub.listen():
-                if message["type"] == "message":
+        while True:  # Reconnect loop
+            pubsub = self.redis.pubsub()
+            try:
+                await pubsub.subscribe(*channels)
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
                     command_message = CommandMessage.model_validate_json(
                         message["data"]
                     )
                     await self.handle_command_message(command_message)
-        except Exception as e:
-            logger.error(f"Redis error in listen_channels: {e}")
-        finally:
-            await pubsub.unsubscribe(*channels)
+            except Exception as e:
+                logger.error(f"{self.agent_type}: Redis error, reconnecting: {e}")
+                await asyncio.sleep(1)
+            finally:
+                try:
+                    await pubsub.unsubscribe(*channels)
+                    await pubsub.aclose()
+                except Exception:
+                    pass
 
     async def handle_command_message(self, command_message: CommandMessage):
-        try:
-            if command_message.command != "execute":
-                logger.debug(
-                    f"{self.agent_type}: Ignoring non-execute command: {command_message.command}"
-                )
-                return
+        """Handle incoming command from Manager."""
+        if command_message.command != "execute":
+            return
 
-            query_id = command_message.query_id
-            sub_query = command_message.sub_query
+        if not command_message.query_id or not command_message.sub_query:
+            logger.error(f"{self.agent_type}: Missing query_id or sub_query")
+            return
 
-            if not query_id or not sub_query:
-                logger.error(
-                    f"{self.agent_type}: Missing query_id or sub_query in execute command"
-                )
-                return
-
-            await self.process_task_with_timeout(command_message)
-
-        except Exception as e:
-            logger.error(f"{self.agent_type}: Command message processing failed: {e}")
+        await self.process_task_with_timeout(command_message)
 
     async def process_task_with_timeout(self, command_message: CommandMessage):
-        # Mark agent as processing
+        """Process task with timeout and proper status management."""
         await self.redis.hset(
             RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.PROCESSING.value
         )
 
         try:
             logger.info(
-                f"{self.agent_type}: Processing '{command_message.sub_query}' for query_id: {command_message.query_id}"
+                f"{self.agent_type}: Processing '{command_message.sub_query[:50]}...' "
+                f"for query_id: {command_message.query_id}"
             )
 
             async with asyncio.timeout(300.0):
-                response: WorkerAgentProcessResponse = await self.process(
-                    command_message
-                )
-
+                response = await self.process(command_message)
                 await self.publish_task_completion(command_message, response)
 
-                # Mark agent as idle before publishing, so manager can execute next task
-                await self.redis.hset(
-                    RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-                )
         except asyncio.TimeoutError:
-            logger.error(f"{self.agent_type}: Task processing timeout")
-            await self.redis.hset(
-                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-            )
+            logger.error(f"{self.agent_type}: Task timeout after 300s")
         except Exception as e:
-            logger.error(f"{self.agent_type}: Task processing error: {e}")
+            logger.error(f"{self.agent_type}: Task error: {e}")
+        finally:
+            # Always reset to IDLE
             await self.redis.hset(
                 RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
             )
@@ -381,131 +375,41 @@ class WorkerAgent(BaseAgent):
     async def publish_task_completion(
         self, command_message: CommandMessage, response: WorkerAgentProcessResponse
     ):
-        try:
-            task_id = await self.find_task_id_by_query(
-                command_message.query_id, command_message.sub_query
-            )
+        """Publish task completion to TASK_UPDATES channel."""
+        task_id = await find_task_id(
+            self.redis,
+            command_message.query_id,
+            self.agent_type,
+            command_message.sub_query,
+        )
+        status = TaskStatus.DONE
+        error = None
 
+        try:
             await self._store_result_references(
                 command_message.query_id, response.tools_result, response.data_resources
             )
-
-            task_update: TaskUpdate = TaskUpdate(
-                task_id=task_id,
-                query_id=command_message.query_id,
-                sub_query=command_message.sub_query,
-                status=TaskStatus.DONE,
-                result={
-                    "tool_results": response.tools_result,
-                    "resource_results": response.data_resources,
-                },
-                llm_usage=response.llm_usage or {},
-                llm_reasoning=response.llm_reasoning,
-                agent_type=self.agent_type,
-            )
-
         except Exception as e:
-            logger.error(f"{self.agent_type}: Task completion publishing failed: {e}")
-            task_update: TaskUpdate = TaskUpdate(
-                task_id=task_id,
-                query_id=command_message.query_id,
-                sub_query=command_message.sub_query,
-                status=TaskStatus.ERROR,
-                result={
-                    "tool_results": response.tools_result,
-                    "resource_results": response.data_resources,
-                    "error": str(e),
-                },
-                llm_usage=response.llm_usage or {},
-                llm_reasoning=response.llm_reasoning,
-                agent_type=self.agent_type,
-            )
-            raise
-        finally:
-            await self.publish_channel(
-                RedisChannels.TASK_UPDATES, task_update, TaskUpdate
-            )
+            logger.error(f"{self.agent_type}: Failed to store result refs: {e}")
+            status = TaskStatus.ERROR
+            error = str(e)
 
-    async def find_task_id_by_query(
-        self, query_id: str, sub_query: str
-    ) -> Optional[str]:
-        try:
-            shared_key = RedisKeys.get_shared_data_key(query_id)
-            shared_data_raw = await self.redis.json().get(shared_key)
+        task_update = TaskUpdate(
+            task_id=task_id,
+            query_id=command_message.query_id,
+            sub_query=command_message.sub_query,
+            status=status,
+            result={
+                "tool_results": response.tools_result,
+                "resource_results": response.data_resources,
+                **(({"error": error}) if error else {}),
+            },
+            llm_usage=response.llm_usage or {},
+            llm_reasoning=response.llm_reasoning,
+            agent_type=self.agent_type,
+        )
 
-            if shared_data_raw:
-                shared_data = SharedData(**shared_data_raw)
-                return shared_data.get_task_id_by_sub_query(self.agent_type, sub_query)
-            return None
-        except Exception as e:
-            logger.error(f"Task ID resolution failed: {e}")
-            return None
-
-    async def _get_dependency_context(
-        self, query_id: str, task_id: Optional[str]
-    ) -> Optional[str]:
-        """Load results from completed dependency tasks and format for LLM context."""
-        if not task_id:
-            return None
-
-        try:
-            shared = await get_shared_data(self.redis, query_id)
-            if not shared:
-                return None
-
-            dep_results = shared.get_dependency_results(task_id)
-            if not dep_results:
-                return None
-
-            # Truncate dependency results to prevent context overflow
-            truncated_results = self._truncate_dependency_results(dep_results)
-
-            return json.dumps(
-                truncated_results, indent=2, default=str, ensure_ascii=False
-            )
-
-        except Exception as e:
-            logger.error(f"{self.agent_type}: Failed to load dependency results: {e}")
-            return None
-
-    def _truncate_dependency_results(
-        self, results: Dict[str, Any], max_items: int = 20, max_str_len: int = 500
-    ) -> Dict[str, Any]:
-        """Truncate dependency results to prevent LLM context overflow.
-
-        Args:
-            results: Raw dependency results
-            max_items: Max items per list
-            max_str_len: Max string length
-        """
-
-        def truncate_value(val: Any, depth: int = 0) -> Any:
-            if depth > 3:  # Prevent deep recursion
-                return "[truncated - too deep]"
-
-            if isinstance(val, str):
-                if len(val) > max_str_len:
-                    return (
-                        val[:max_str_len]
-                        + f"... [truncated {len(val) - max_str_len} chars]"
-                    )
-                return val
-            elif isinstance(val, list):
-                if len(val) > max_items:
-                    truncated = [
-                        truncate_value(item, depth + 1) for item in val[:max_items]
-                    ]
-                    truncated.append(
-                        f"... [truncated {len(val) - max_items} more items]"
-                    )
-                    return truncated
-                return [truncate_value(item, depth + 1) for item in val]
-            elif isinstance(val, dict):
-                return {k: truncate_value(v, depth + 1) for k, v in val.items()}
-            else:
-                return val
-
-        return truncate_value(results)
+        await self.publish_channel(RedisChannels.TASK_UPDATES, task_update, TaskUpdate)
 
     async def get_mcp_client(self) -> MCPClient:
         if not self.mcp_server_url:

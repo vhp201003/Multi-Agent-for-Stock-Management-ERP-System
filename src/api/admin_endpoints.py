@@ -292,7 +292,6 @@ KNOWN_AGENTS = [
     "analytics_agent",
     "forecasting_agent",
     "ordering_agent",
-    "summary_agent",
     "chat_agent",
 ]
 
