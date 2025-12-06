@@ -156,18 +156,13 @@ class SharedData(BaseModel):
         dep_results = []
         for dep_id in current_task.task.dependencies:
             dep_task = self.tasks.get(dep_id)
-            if (
-                dep_task
-                and dep_task.status == TaskStatus.COMPLETED
-                and dep_task.result is not None
-            ):
-                dep_results.append(
-                    {
-                        "task_id": dep_id,
-                        "agent_type": dep_task.task.agent_type,
-                        "sub_query": dep_task.task.sub_query,
-                        "result": dep_task.result,
-                    }
-                )
+            dep_results.append(
+                {
+                    "task_id": dep_id,
+                    "agent_type": dep_task.task.agent_type,
+                    "sub_query": dep_task.task.sub_query,
+                    "result": dep_task.result,
+                }
+            )
 
         return dep_results if dep_results else None

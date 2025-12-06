@@ -25,32 +25,19 @@ const Users: React.FC = () => {
       const statsData = await getAdminStats();
       setStats(statsData);
       
-      // Mock users for now - in production, this would come from an API
-      // You can add a /admin/users endpoint later
-      setUsers([
-        {
-          id: '1',
-          email: 'admin@example.com',
-          username: 'admin',
-          role: 'admin',
-          created_at: '2024-01-15',
-          conversations_count: 45,
-          messages_count: 320,
-          last_active: '2 hours ago'
-        },
-        {
-          id: '2',
-          email: 'user@example.com',
-          username: 'john_doe',
-          role: 'user',
-          created_at: '2024-02-20',
-          conversations_count: 12,
-          messages_count: 87,
-          last_active: '1 day ago'
-        },
-      ]);
+      // Fetch real users from backend
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/admin/users`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      setUsers(data.users);
     } catch (error) {
       console.error('Failed to fetch users:', error);
+      setUsers([]);
     } finally {
       setLoading(false);
     }

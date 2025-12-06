@@ -8,6 +8,7 @@ const AdminSidebar: React.FC = () => {
 
   const menuItems = [
     { path: '/admin', label: 'Dashboard', icon: <DashboardIcon /> },
+    { path: '/admin/workers', label: 'Workers', icon: <WorkersIcon /> },
     { path: '/admin/users', label: 'Users', icon: <UsersIcon /> },
     { path: '/admin/settings', label: 'Chatbot Settings', icon: <SettingsIcon /> },
     { path: '/admin/analytics', label: 'Analytics', icon: <AnalyticsIcon /> },
@@ -90,6 +91,13 @@ const IntegrationsIcon = () => (
     <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
     <polyline points="2 17 12 22 22 17"></polyline>
     <polyline points="2 12 12 17 22 12"></polyline>
+  </svg>
+);
+
+const WorkersIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
   </svg>
 );
 

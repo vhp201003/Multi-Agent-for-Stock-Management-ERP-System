@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from config.settings import get_redis_host, get_redis_port
+from src.typing.redis.constants import RedisKeys
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,35 @@ class PerformanceTimeline(BaseModel):
     tokens_over_time: List[TimeSeriesPoint] = Field(default_factory=list)
     tasks_over_time: List[TimeSeriesPoint] = Field(default_factory=list)
     response_times: List[TimeSeriesPoint] = Field(default_factory=list)
+
+
+class WorkerInstancesResponse(BaseModel):
+    instances: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict
+    )  # {agent_type: {instance_id: status}}
+    total_workers: int = 0
+
+
+class QueueMetricsResponse(BaseModel):
+    queues: Dict[str, Dict[str, int]] = Field(
+        default_factory=dict
+    )  # {agent_type: {active: n, pending: n}}
+
+
+class UserInfo(BaseModel):
+    id: str
+    email: str
+    username: str
+    role: str = "user"
+    created_at: str
+    conversations_count: int = 0
+    messages_count: int = 0
+    last_active: str = "Unknown"
+
+
+class UsersListResponse(BaseModel):
+    users: List[UserInfo] = Field(default_factory=list)
+    total: int = 0
 
 
 # --- Response Models ---
@@ -214,6 +244,149 @@ async def get_engagement_data(redis_client: redis.Redis = Depends(get_redis)):
 
     except Exception as e:
         logger.error(f"Failed to get engagement data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/worker-instances", response_model=WorkerInstancesResponse)
+async def get_worker_instances(redis_client: redis.Redis = Depends(get_redis)):
+    """Get all worker instances with their current status."""
+    try:
+        agent_types = ["inventory", "analytics", "forecasting", "ordering"]
+        instances = {}
+        total_workers = 0
+
+        for agent_type in agent_types:
+            status_key = RedisKeys.get_agent_instance_status_key(agent_type)
+
+            # Get all instances for this agent type
+            raw_instances = await redis_client.hgetall(status_key)
+
+            if raw_instances:
+                instances[agent_type] = {}
+                for instance_id, status in raw_instances.items():
+                    instances[agent_type][instance_id] = status
+                    total_workers += 1
+
+        return WorkerInstancesResponse(instances=instances, total_workers=total_workers)
+    except Exception as e:
+        logger.error(f"Failed to get worker instances: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/queue-metrics", response_model=QueueMetricsResponse)
+async def get_queue_metrics(redis_client: redis.Redis = Depends(get_redis)):
+    """Get queue lengths for all agent types."""
+    try:
+        agent_types = ["inventory", "analytics", "forecasting", "ordering"]
+        queues = {}
+
+        for agent_type in agent_types:
+            active_key = RedisKeys.get_agent_queue(agent_type)
+            pending_key = RedisKeys.get_agent_pending_queue(agent_type)
+
+            active_len = await redis_client.llen(active_key)
+            pending_len = await redis_client.llen(pending_key)
+
+            queues[agent_type] = {"active": active_len, "pending": pending_len}
+
+        return QueueMetricsResponse(queues=queues)
+    except Exception as e:
+        logger.error(f"Failed to get queue metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users", response_model=UsersListResponse)
+async def get_users(redis_client: redis.Redis = Depends(get_redis)):
+    """Get all registered users with their activity stats."""
+    try:
+        users_list = []
+        cursor = 0
+
+        # Scan for all user keys
+        while True:
+            cursor, keys = await redis_client.scan(
+                cursor=cursor, match="users:*", count=100
+            )
+
+            for key in keys:
+                try:
+                    user_data = await redis_client.json().get(key)
+                    if not user_data:
+                        continue
+
+                    user_id = key.split(":")[-1]
+
+                    # Count conversations
+                    conv_count = 0
+                    msg_count = 0
+                    last_active = "Unknown"
+
+                    conv_cursor = 0
+                    while True:
+                        conv_cursor, conv_keys = await redis_client.scan(
+                            conv_cursor, match="conversation:*", count=50
+                        )
+
+                        for conv_key in conv_keys:
+                            try:
+                                conv_data = await redis_client.json().get(conv_key)
+                                if conv_data and conv_data.get("user_id") == user_id:
+                                    conv_count += 1
+                                    messages = conv_data.get("messages", [])
+                                    msg_count += len(messages)
+
+                                    if messages:
+                                        last_msg = messages[-1]
+                                        ts = last_msg.get("timestamp")
+                                        if ts:
+                                            try:
+                                                dt = datetime.fromisoformat(
+                                                    ts.replace("Z", "+00:00")
+                                                )
+                                                diff = datetime.now() - dt.replace(
+                                                    tzinfo=None
+                                                )
+
+                                                if diff.days > 0:
+                                                    last_active = f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+                                                elif diff.seconds > 3600:
+                                                    hours = diff.seconds // 3600
+                                                    last_active = f"{hours} hour{'s' if hours > 1 else ''} ago"
+                                                else:
+                                                    minutes = diff.seconds // 60
+                                                    last_active = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+                                            except:
+                                                pass
+                            except:
+                                continue
+
+                        if conv_cursor == 0:
+                            break
+
+                    users_list.append(
+                        UserInfo(
+                            id=user_id,
+                            email=user_data.get("email", "unknown@example.com"),
+                            username=user_data.get("username", f"user_{user_id[:8]}"),
+                            role=user_data.get("role", "user"),
+                            created_at=user_data.get("created_at", "Unknown"),
+                            conversations_count=conv_count,
+                            messages_count=msg_count,
+                            last_active=last_active,
+                        )
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error processing user {key}: {e}")
+                    continue
+
+            if cursor == 0:
+                break
+
+        return UsersListResponse(users=users_list, total=len(users_list))
+
+    except Exception as e:
+        logger.error(f"Failed to get users: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
