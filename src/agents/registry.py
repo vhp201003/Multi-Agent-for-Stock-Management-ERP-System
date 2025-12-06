@@ -1,16 +1,3 @@
-"""
-Agent Registry - Đơn giản: Agents tự đăng ký tools, Orchestrator lấy ra dùng.
-
-Usage:
-    # WorkerAgent đăng ký:
-    from src.agents.registry import register_agent
-    register_agent("inventory", "Manages stock...", tools_list)
-
-    # Orchestrator lấy:
-    from src.agents.registry import get_all_agents
-    agents_info = get_all_agents()
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
 

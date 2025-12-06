@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -176,12 +175,9 @@ async def get_dependency_context(
         if not dep_results:
             return None
 
-        truncated = truncate_results(dep_results)
-        tooned = encode(truncated)
-        logger.info(
-            f"Loaded {len(dep_results)} dependency results for task {task_id} (tooned size: {len(tooned)} bytes)"
-        )
-        return json.dumps(truncated, indent=2, default=str, ensure_ascii=False)
+        dep_results = truncate_results(dep_results, max_items=5, max_depth=4)
+        tooned = encode(dep_results)
+        return tooned
 
     except Exception as e:
         logger.error(f"Failed to load dependency results for {task_id}: {e}")
