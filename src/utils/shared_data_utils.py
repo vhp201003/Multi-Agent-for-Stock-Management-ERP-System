@@ -3,7 +3,6 @@ from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
 from redis.commands.json.path import Path
-from toon import encode
 
 from src.typing.redis import SharedData
 from src.typing.redis.constants import RedisKeys
@@ -176,8 +175,8 @@ async def get_dependency_context(
             return None
 
         dep_results = truncate_results(dep_results, max_items=5, max_depth=4)
-        tooned = encode(dep_results)
-        return tooned
+        # dep_results = encode(dep_results)
+        return dep_results
 
     except Exception as e:
         logger.error(f"Failed to load dependency results for {task_id}: {e}")

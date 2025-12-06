@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Debug directory for LLM responses
 DEBUG_DIR = Path("debug_llm_responses")
+LLM_CALL_MAX_RETRIES = 3
+LLM_CALL_RETRY_DELAY = 0.5
 
 
 class BaseAgent(ABC):
@@ -215,7 +217,20 @@ class BaseAgent(ABC):
                     logger.warning(f"ReAct loop exceeded max turns ({MAX_TURNS})")
                     break
 
-                response = await self.llm.chat.completions.create(**call_kwargs)
+                response = None
+                for attempt in range(1, LLM_CALL_MAX_RETRIES + 1):
+                    try:
+                        response = await self.llm.chat.completions.create(**call_kwargs)
+                        break
+                    except Exception as call_error:
+                        logger.warning(
+                            f"{self.agent_type}: LLM call failed (attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {call_error}"
+                        )
+                        if attempt == LLM_CALL_MAX_RETRIES:
+                            logger.error(f"{self.agent_type}: Exhausted LLM retries")
+                            raise
+                        await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+                assert response is not None  # For mypy guard
 
                 # Debug logging
                 if query_id:

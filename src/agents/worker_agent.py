@@ -288,7 +288,7 @@ class WorkerAgent(BaseAgent):
     ) -> Dict[str, Any]:
         """Handle tool execution error."""
         logger.error(f"{self.agent_type}: Tool call failed: {error}")
-        error_msg = f"Tool call failed: {str(error)}"
+        error_msg = f"Tool call failed for {tool_call} with {json.loads(getattr(tool_call.function, 'arguments', '{}'))} : {str(error)}"
 
         accumulator.append(
             ToolCallResultResponse(

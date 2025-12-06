@@ -1,7 +1,7 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
-from time import sleep
 from typing import Any, Dict, List, Optional
 
 from config.prompts import build_orchestrator_prompt
@@ -196,7 +196,7 @@ class OrchestratorAgent(BaseAgent):
                     "agent_type": self.agent_type,
                 }
 
-                sleep(0.3)  # Thêm độ trễ nhỏ để tránh gửi quá nhanh
+                await asyncio.sleep(0.3)  # Thêm độ trễ nhỏ để tránh gửi quá nhanh
 
                 await self.publish_broadcast(
                     RedisChannels.get_query_updates_channel(query_id),
