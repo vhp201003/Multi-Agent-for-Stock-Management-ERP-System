@@ -129,24 +129,42 @@ class BaseManager:
                 await asyncio.sleep(1)
 
     async def _wait_agent_idle(self) -> bool:
-        """Check agent status, reset ERROR, wait if BUSY."""
-        status_val = await self.redis.hget(RedisKeys.AGENT_STATUS, self.agent_type)
-        if isinstance(status_val, bytes):
-            status_val = status_val.decode()
+        """Check if ANY worker instance is IDLE (multi-instance aware)."""
+        status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
 
-        status = AgentStatus(status_val) if status_val else AgentStatus.IDLE
+        # Get all instance statuses: {instance_id: status}
+        instance_statuses = await self.redis.hgetall(status_key)
 
-        if status == AgentStatus.ERROR:
-            await self.redis.hset(
-                RedisKeys.AGENT_STATUS, self.agent_type, AgentStatus.IDLE.value
-            )
-            return True
-
-        if status != AgentStatus.IDLE:
+        if not instance_statuses:
+            # No workers registered yet, wait
             await asyncio.sleep(0.5)
             return False
 
-        return True
+        # Decode and check if any instance is IDLE
+        for instance_id, status_val in instance_statuses.items():
+            if isinstance(status_val, bytes):
+                status_val = status_val.decode()
+            if isinstance(instance_id, bytes):
+                instance_id = instance_id.decode()
+
+            try:
+                status = AgentStatus(status_val)
+            except ValueError:
+                # Invalid status, treat as IDLE
+                status = AgentStatus.IDLE
+
+            # Reset ERROR to IDLE
+            if status == AgentStatus.ERROR:
+                await self.redis.hset(status_key, instance_id, AgentStatus.IDLE.value)
+                return True
+
+            # Found an IDLE worker
+            if status == AgentStatus.IDLE:
+                return True
+
+        # All workers are PROCESSING, wait
+        await asyncio.sleep(0.5)
+        return False
 
     async def _dispatch(self, task_data: str):
         """Dispatch task to worker via pub/sub."""

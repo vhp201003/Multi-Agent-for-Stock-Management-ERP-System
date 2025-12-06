@@ -7,6 +7,7 @@ import { Login } from './pages/Login'
 import { Register } from './pages/Register'
 import AdminLayout from './layouts/AdminLayout'
 import Dashboard from './pages/Dashboard'
+import WorkerDashboard from './pages/WorkerDashboard'
 import { Analytics, Integrations, Users, Settings } from './pages/admin'
 import './App.css'
 
@@ -56,6 +57,7 @@ function App() {
             </PrivateRoute>
           }>
             <Route index element={<Dashboard />} />
+            <Route path="workers" element={<WorkerDashboard />} />
             <Route path="users" element={<Users />} />
             <Route path="settings" element={<Settings />} />
             <Route path="analytics" element={<Analytics />} />

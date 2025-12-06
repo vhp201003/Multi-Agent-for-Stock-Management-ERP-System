@@ -45,8 +45,12 @@ class RedisKeys:
     AGENT_QUEUE = "agent:queue:{}"
     AGENT_PENDING_QUEUE = "agent:pending_queue:{}"
 
-    # Agent status tracking
+    # Agent status tracking (legacy single-instance)
     AGENT_STATUS = "agent:status"
+
+    # Multi-instance status tracking: Hash per agent_type
+    # Key: agent:status:{agent_type}, Field: instance_id, Value: status
+    AGENT_INSTANCE_STATUS = "agent:status:{}"
 
     # Shared data storage
     SHARED_DATA = "agent:shared_data:{}"
@@ -69,6 +73,16 @@ class RedisKeys:
     @classmethod
     def get_conversation_key(cls, conversation_id: str) -> str:
         return cls.CONVERSATION.format(conversation_id)
+
+    @classmethod
+    def get_agent_instance_status_key(cls, agent_type: str) -> str:
+        """Get hash key for tracking all instances of an agent type.
+
+        Hash structure:
+          Key: agent:status:{agent_type}
+          Fields: {instance_id: status, instance_id: status, ...}
+        """
+        return cls.AGENT_INSTANCE_STATUS.format(agent_type)
 
 
 class TaskStatus(str, Enum):

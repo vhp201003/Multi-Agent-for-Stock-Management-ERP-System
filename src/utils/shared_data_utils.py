@@ -174,8 +174,7 @@ async def get_dependency_context(
         if not dep_results:
             return None
 
-        dep_results = truncate_results(dep_results, max_items=5, max_depth=4)
-        # dep_results = encode(dep_results)
+        dep_results = truncate_results(dep_results, max_items=50, max_depth=4)
         return dep_results
 
     except Exception as e:
