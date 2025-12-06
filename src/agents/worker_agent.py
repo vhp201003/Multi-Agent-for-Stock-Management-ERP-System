@@ -102,6 +102,10 @@ class WorkerAgent(BaseAgent):
 
         # Inject dependency results if available
         if dependency_context:
+            logger.debug(
+                f"{self.agent_type}[{self.instance_id}]: Loaded dependency context for task {self._current_task_id}"
+            )
+            logger.debug(f"Dependency Context: {dependency_context}")
             messages.append(
                 {
                     "role": "assistant",
