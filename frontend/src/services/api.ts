@@ -57,9 +57,10 @@ export interface QueryStatus {
 }
 
 class ApiService {
+  // Extend timeout so long-running HITL/LLM flows don't trip the HTTP client
   private client = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 30000,
+    timeout: 300000, // 5 minutes
     headers: {
       'Content-Type': 'application/json',
     },

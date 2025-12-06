@@ -206,11 +206,6 @@ class InventoryMCPServer(BaseMCPServer):
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
 
-            required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
-
             return result
         except Exception as e:
             self.logger.error(f"Error in retrieve_stock_levels: {e}")
@@ -241,11 +236,6 @@ class InventoryMCPServer(BaseMCPServer):
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
 
-            required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
-
             return result
         except Exception as e:
             self.logger.error(f"Error in retrieve_stock_history: {e}")
@@ -271,11 +261,6 @@ class InventoryMCPServer(BaseMCPServer):
 
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
-
-            required_keys = {"items", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
 
             return result
         except Exception as e:
@@ -308,42 +293,8 @@ class InventoryMCPServer(BaseMCPServer):
                 body=body,  # POST cần gửi qua body, không phải params
             )
 
-            self.logger.info(f"create_stock_transfer raw result: {result}")
-
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
-
-            # Wrap result nếu chưa có format chuẩn
-            if not isinstance(result, dict):
-                result = {"raw_result": result}
-
-            # Đảm bảo có đủ keys cho StockTransferOutput
-            if "items" not in result:
-                result["items"] = [
-                    {
-                        "item_code": item_code,
-                        "qty": qty,
-                        "from_warehouse": from_warehouse,
-                        "to_warehouse": to_warehouse,
-                        "status": result.get("status", "created"),
-                        "stock_entry_name": result.get(
-                            "name", result.get("stock_entry_name", "")
-                        ),
-                    }
-                ]
-            if "summary" not in result:
-                result["summary"] = {
-                    "total_transfers": 1,
-                    "total_qty": qty,
-                    "total_value": 0.0,
-                    "posting_date": result.get("posting_date", ""),
-                }
-            if "filters_applied" not in result:
-                result["filters_applied"] = {
-                    "item_code": item_code,
-                    "from_warehouse": from_warehouse,
-                    "to_warehouse": to_warehouse,
-                }
 
             return result
         except Exception as e:

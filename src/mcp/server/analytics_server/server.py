@@ -12,7 +12,6 @@ from src.typing.mcp.analytics import (
     StockCoverageOutput,
     TopPerformersOutput,
 )
-from src.typing.mcp.base import ApprovalLevel, HITLMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +56,6 @@ class AnalyticsMCPServer(BaseMCPServer):
             name="analyze_slow_movers",
             description="Identify slow-moving items with sell-through rate, GMROI, and actionable suggestions",
             structured_output=True,
-            hitl=HITLMetadata(
-                requires_approval=True,
-                approval_level=ApprovalLevel.REVIEW,
-                modifiable_fields=["from_date", "to_date", "top_n", "min_days_on_sale"],
-                approval_message="Vui lòng review các tham số phân tích slow movers",
-                timeout_seconds=90,
-            ),
         )
 
         self.add_tool(
@@ -273,11 +265,6 @@ class AnalyticsMCPServer(BaseMCPServer):
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
 
-            required_keys = {"ranking", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
-
             return result
         except Exception as e:
             self.logger.error(f"Error in analyze_top_performers: {e}")
@@ -311,11 +298,6 @@ class AnalyticsMCPServer(BaseMCPServer):
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
 
-            required_keys = {"slow_movers", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
-
             return result
         except Exception as e:
             self.logger.error(f"Error in analyze_slow_movers: {e}")
@@ -347,11 +329,6 @@ class AnalyticsMCPServer(BaseMCPServer):
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
 
-            required_keys = {"movers", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
-
             return result
         except Exception as e:
             self.logger.error(f"Error in track_movers_shakers: {e}")
@@ -375,11 +352,6 @@ class AnalyticsMCPServer(BaseMCPServer):
 
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
-
-            required_keys = {"pareto", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
 
             return result
         except Exception as e:
@@ -416,11 +388,6 @@ class AnalyticsMCPServer(BaseMCPServer):
 
             if isinstance(result, dict) and result.get("success") is False:
                 raise ValueError(f"Backend error: {result.get('error_message')}")
-
-            required_keys = {"stock_coverage", "summary", "filters_applied"}
-            if not all(key in result for key in required_keys):
-                missing = required_keys - set(result.keys())
-                raise ValueError(f"Missing keys: {missing}")
 
             return result
         except Exception as e:

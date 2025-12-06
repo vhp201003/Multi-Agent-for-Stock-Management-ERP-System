@@ -518,6 +518,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
     setLoading(true);
 
     try {
+      wsService.clearHandlers();
       wsService.connect(queryId);
 
       wsService.onMessage((message) => {
@@ -543,22 +544,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ conversationId: propConve
       // Push final response to queue
       addToQueue({ type: 'final_response', response, queryId });
 
-      wsService.disconnect();
-      wsService.clearHandlers();
-
     } catch (error) {
       console.error('Failed to send message:', error);
-      wsService.disconnect();
-      wsService.clearHandlers();
       setLoading(false);
-      
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        type: 'system',
-        content: 'Lỗi: Không thể gửi tin nhắn. Vui lòng thử lại.',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
       addToast('Failed to send message. Please try again.', 'error');
     }
   }, [loading, conversationId, addToQueue, addToast]);

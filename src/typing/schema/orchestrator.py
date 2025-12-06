@@ -23,21 +23,17 @@ class ReasoningStep(BaseModel):
 class TaskNode(BaseModel):
     task_id: str = Field(
         ...,
-        description="Unique task identifier in format '{agent_type}_{sequence}'",
-        pattern=r"^[a-z_]+_\d+$",
+        description="Unique task identifier for this task",
         examples=["inventory_1", "ordering_1", "finance_2"],
     )
     agent_type: str = Field(
         ...,
         description="Agent type responsible for this task",
-        pattern=r"^[a-z_]+$",
         examples=["inventory", "ordering", "finance"],
     )
     sub_query: str = Field(
         ...,
         description="Specific task for the agent to execute",
-        min_length=10,
-        max_length=500,
     )
     dependencies: List[str] = Field(
         default_factory=list,
