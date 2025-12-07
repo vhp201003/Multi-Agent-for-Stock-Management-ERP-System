@@ -148,17 +148,17 @@ const processLayoutWithFullData = (
     }
 
     // Transform source data to chart format
-    if (sourceData.length > 0) {
+    if (sourceData.length > 0 && data_source.label_field && data_source.value_field) {
       console.log('[processLayoutWithFullData] Transforming data to chart format...');
       console.log('[processLayoutWithFullData] Label field:', data_source.label_field);
       console.log('[processLayoutWithFullData] Value field:', data_source.value_field);
       
       const labels = sourceData.map(item => 
-        String(item[data_source.label_field] || '')
+        String(item[data_source.label_field!] || '')
       );
       
       const values = sourceData.map(item => {
-        const value = item[data_source.value_field];
+        const value = item[data_source.value_field!];
         return typeof value === 'number' ? value : Number(value) || 0;
       });
 

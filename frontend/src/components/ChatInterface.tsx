@@ -97,20 +97,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
   
-  // Buffer for batching updates to same message (avoid excessive re-renders)
-  const updateBufferRef = React.useRef<Map<string, TaskUpdate[]>>(new Map());
-  const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Toggle thinking process expand/collapse - update state via details element
-  const toggleThinkingProcess = useCallback((messageIndex: number) => {
-    setMessages((prev) =>
-      prev.map((msg, idx) =>
-        idx === messageIndex
-          ? { ...msg, isThinkingExpanded: !msg.isThinkingExpanded }
-          : msg
-      )
-    );
-  }, []);
 
   // Toast notification helper
   const addToast = useCallback(
@@ -379,40 +366,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messageQueue = React.useRef<QueueItem[]>([]);
   const isProcessingQueue = React.useRef(false);
 
-  // Helper: batch append update to message without immediate setState
-  const bufferUpdateToMessage = useCallback((queryId: string, update: TaskUpdate) => {
-    const key = `${queryId}-thinking`;
-    if (!updateBufferRef.current.has(key)) {
-      updateBufferRef.current.set(key, []);
-    }
-    updateBufferRef.current.get(key)!.push(update);
-
-    // Schedule flush after 80ms (batches typing updates efficiently)
-    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    flushTimerRef.current = setTimeout(() => {
-      flushUpdateBuffer();
-    }, 80);
-  }, []);
-
-  // Helper: flush all buffered updates to state at once
-  const flushUpdateBuffer = useCallback(() => {
-    if (updateBufferRef.current.size === 0) return;
-
-    setMessages((prev) => {
-      const newMessages = [...prev];
-      updateBufferRef.current.forEach((updates, key) => {
-        const idx = newMessages.findIndex((m) => m.id === key);
-        if (idx >= 0) {
-          newMessages[idx] = {
-            ...newMessages[idx],
-            updates: [...(newMessages[idx].updates || []), ...updates],
-          };
-        }
-      });
-      updateBufferRef.current.clear();
-      return newMessages;
-    });
-  }, []);
+  
 
   const processQueue = useCallback(async () => {
     if (isProcessingQueue.current) return;
@@ -425,7 +379,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       // Handle Final Response
       if (item.type === "final_response") {
-        const { response, queryId, isNewConversation } = item;
+        const { response, queryId } = item;
 
         setMessages((prevMessages) => {
           const filtered = prevMessages.filter(
@@ -881,7 +835,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       const queryId = generateId();
       let currentConversationId = conversationId;
-      const isNewConversation = !currentConversationId;
 
       if (!currentConversationId) {
         currentConversationId = queryId;
@@ -1010,6 +963,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     if (field.graph_type === "piechart") {
       // Transform data for PieChart
+      if (!field.data.labels) return null;
       const pieData = field.data.labels.map((label, i) => ({
         name: label,
         value: Number(field.data?.datasets?.[0]?.data?.[i] || 0),
@@ -1049,6 +1003,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     if (field.graph_type === "barchart") {
       // Transform data for BarChart
+      if (!field.data.labels) return null;
       const barData = field.data.labels.map((label, i) => {
         const dataPoint: any = { name: label };
         field.data?.datasets?.forEach((dataset) => {
@@ -1090,6 +1045,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     if (field.graph_type === "linechart") {
       // Transform data for LineChart (for trends)
+      if (!field.data.labels) return null;
       const lineData = field.data.labels.map((label, i) => {
         const dataPoint: any = { name: label };
         field.data?.datasets?.forEach((dataset) => {
@@ -1493,7 +1449,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       <div className="chat-messages" ref={chatMessagesRef}>
         <div>
-          {messages.map((message, messageIndex) => (
+          {messages.map((message, _messageIndex) => (
             <div key={message.id} className={`message message-${message.type}`}>
               <div className="message-content">
                 {/* Hiển thị layout nếu có */}
