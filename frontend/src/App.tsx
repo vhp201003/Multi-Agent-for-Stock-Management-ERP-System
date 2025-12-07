@@ -1,42 +1,57 @@
-import { useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import Sidebar from './components/Sidebar'
-import ChatInterface from './components/ChatInterface'
-import { AuthProvider, useAuth } from './context/AuthContext'
-import { Login } from './pages/Login'
-import { Register } from './pages/Register'
-import AdminLayout from './layouts/AdminLayout'
-import Dashboard from './pages/Dashboard'
-import WorkerDashboard from './pages/WorkerDashboard'
-import { Analytics, Integrations, Users, Settings } from './pages/admin'
-import './App.css'
+import { useState } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import Sidebar from "./components/Sidebar";
+import ChatInterface from "./components/ChatInterface";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { Login } from "./pages/Login";
+import { Register } from "./pages/Register";
+import AdminLayout from "./layouts/AdminLayout";
+import Dashboard from "./pages/Dashboard";
+import WorkerDashboard from "./pages/WorkerDashboard";
+import { Analytics, Integrations, Users, Settings } from "./pages/admin";
+import "./App.css";
 
-const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const { isAuthenticated } = useAuth();
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
 };
 
 function MainLayout() {
-  const [currentConversationId, setCurrentConversationId] = useState<string>('')
+  const [currentConversationId, setCurrentConversationId] =
+    useState<string>("");
 
   const handleSelectConversation = (conversationId: string) => {
-    setCurrentConversationId(conversationId)
-  }
+    setCurrentConversationId(conversationId);
+  };
 
   const handleNewConversation = () => {
-    setCurrentConversationId('')
-  }
+    setCurrentConversationId("");
+  };
+
+  const handleConversationChange = (conversationId: string) => {
+    setCurrentConversationId(conversationId);
+  };
 
   return (
     <div className="app">
-      <Sidebar 
+      <Sidebar
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
         currentConversationId={currentConversationId}
       />
-      <ChatInterface conversationId={currentConversationId} />
+      <ChatInterface
+        conversationId={currentConversationId}
+        onConversationChange={handleConversationChange}
+      />
     </div>
-  )
+  );
 }
 
 function App() {
@@ -46,16 +61,22 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/" element={
-            <PrivateRoute>
-              <MainLayout />
-            </PrivateRoute>
-          } />
-          <Route path="/admin" element={
-            <PrivateRoute>
-              <AdminLayout />
-            </PrivateRoute>
-          }>
+          <Route
+            path="/"
+            element={
+              <PrivateRoute>
+                <MainLayout />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <PrivateRoute>
+                <AdminLayout />
+              </PrivateRoute>
+            }
+          >
             <Route index element={<Dashboard />} />
             <Route path="workers" element={<WorkerDashboard />} />
             <Route path="users" element={<Users />} />
@@ -66,7 +87,7 @@ function App() {
         </Routes>
       </Router>
     </AuthProvider>
-  )
+  );
 }
 
-export default App
+export default App;
