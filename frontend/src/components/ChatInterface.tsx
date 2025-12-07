@@ -485,6 +485,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       if (message.type === "approval_required") {
         const approvalRequest = message.data as ApprovalRequest;
 
+        console.log("[ChatInterface] 📨 Received approval_required:", {
+          approval_id: approvalRequest.approval_id,
+          tool_name: approvalRequest.tool_name,
+          queryId,
+        });
+
         // AUTO MODE: Automatically approve without user interaction
         if (hitlMode === "auto") {
           const autoApprovalResponse: ApprovalResponse = {
@@ -530,14 +536,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 },
               ];
             }
-            return prev.map((msg) =>
-              msg.id === `${queryId}-thinking`
-                ? {
-                    ...msg,
-                    updates: [...(msg.updates || []), autoApprovedUpdate],
-                  }
-                : msg
-            );
+            return prev.map((msg) => {
+              if (msg.id === `${queryId}-thinking`) {
+                // Check for duplicate approval
+                const existingApproval = msg.updates?.find(
+                  (u: any) =>
+                    u.approval?.approval_id === approvalRequest.approval_id
+                );
+
+                if (existingApproval) {
+                  console.log(
+                    "[ChatInterface] ⚠️ Duplicate auto-approval detected, skipping:",
+                    approvalRequest.approval_id
+                  );
+                  return msg;
+                }
+
+                return {
+                  ...msg,
+                  updates: [...(msg.updates || []), autoApprovedUpdate],
+                };
+              }
+              return msg;
+            });
           });
 
           continue;
@@ -552,7 +573,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           timestamp: message.timestamp,
         };
 
-        // Add to thinking message updates
+        // Add to thinking message updates (prevent duplicates)
         setMessages((prev) => {
           const hasThinkingMsg = prev.some(
             (msg) => msg.id === `${queryId}-thinking`
@@ -570,11 +591,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               },
             ];
           }
-          return prev.map((msg) =>
-            msg.id === `${queryId}-thinking`
-              ? { ...msg, updates: [...(msg.updates || []), approvalUpdate] }
-              : msg
-          );
+          return prev.map((msg) => {
+            if (msg.id === `${queryId}-thinking`) {
+              // Check if this approval already exists in updates
+              const existingApproval = msg.updates?.find(
+                (u: any) =>
+                  u.approval?.approval_id === approvalRequest.approval_id
+              );
+
+              if (existingApproval) {
+                console.log(
+                  "[ChatInterface] ⚠️ Duplicate approval request detected, skipping:",
+                  approvalRequest.approval_id
+                );
+                return msg; // Don't add duplicate
+              }
+
+              return {
+                ...msg,
+                updates: [...(msg.updates || []), approvalUpdate],
+              };
+            }
+            return msg;
+          });
         });
 
         // Scroll to show approval card
