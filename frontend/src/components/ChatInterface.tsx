@@ -33,7 +33,13 @@ import type { WebSocketMessage } from "../services/websocket";
 import "./ChatInterface.css";
 
 type QueueItem =
-  | { type: "final_response"; response: any; queryId: string }
+  | {
+      type: "final_response";
+      response: any;
+      queryId: string;
+      isNewConversation?: boolean;
+      conversationId?: string;
+    }
   | { type?: undefined; message: WebSocketMessage; queryId: string };
 
 // Extend Window interface for saveConversation
@@ -80,14 +86,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { hitlMode } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const chatMessagesRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
+  const lastMessageIdRef = React.useRef<string | null>(null);
 
-  // Toggle thinking process expand/collapse
+  // Toggle thinking process expand/collapse - simplified without scroll restoration
   const toggleThinkingProcess = useCallback((messageIndex: number) => {
     setMessages((prev) =>
       prev.map((msg, idx) =>
@@ -148,29 +156,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     [addToast]
   );
 
-  // Auto-scroll to bottom when messages change
-  // Smart auto-scroll
-  // Auto-scroll to bottom only on initial load or user message
-  const scrollToBottom = useCallback(() => {
+  // Auto-scroll to bottom ONLY when NEW messages arrive
+  useEffect(() => {
+    if (messages.length === 0) return;
+
+    const lastMessage = messages[messages.length - 1];
+
+    // Check if this is actually a NEW message (different ID)
+    if (lastMessageIdRef.current === lastMessage.id) {
+      return; // Same message, just state update (like toggle), don't scroll
+    }
+
+    // New message detected, update ref
+    lastMessageIdRef.current = lastMessage.id;
+
     // Always scroll on initial load
-    if (!initialLoadDone.current && messages.length > 0) {
+    if (!initialLoadDone.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       initialLoadDone.current = true;
       return;
     }
 
-    const lastMessage = messages[messages.length - 1];
-    const isUserMessage = lastMessage?.type === "user";
-
-    // Always scroll if the last message is from the user
+    // Scroll for new user messages
+    const isUserMessage = lastMessage.type === "user";
     if (isUserMessage) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [scrollToBottom]);
 
   // Load messages from backend or localStorage when conversation changes
   useEffect(() => {
@@ -439,6 +451,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   currentMessages,
                   false // Don't move to top for final response
                 );
+
+                // No need to navigate again - already navigated when message was sent
               }
               return currentMessages;
             });
@@ -742,10 +756,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setConversationId(currentConversationId);
         // Mark this conversation as newly created to skip loading
         skipLoadForNewConversation.current = currentConversationId;
-        // Notify parent component about conversation change
+
+        // Navigate immediately to show URL and highlight sidebar
         if (onConversationChange) {
           onConversationChange(currentConversationId);
         }
+
         // Create new conversation entry in sidebar immediately
         if (window.createNewConversation) {
           window.createNewConversation(
@@ -791,7 +807,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         );
 
         // Push final response to queue
-        addToQueue({ type: "final_response", response, queryId });
+        addToQueue({
+          type: "final_response",
+          response,
+          queryId,
+          isNewConversation: false, // Don't navigate again
+          conversationId: currentConversationId,
+        });
       } catch (error) {
         console.error("Failed to send message:", error);
         setLoading(false);
@@ -1132,7 +1154,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
       </div>
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={chatMessagesRef}>
         <div>
           {messages.map((message, messageIndex) => (
             <div key={message.id} className={`message message-${message.type}`}>

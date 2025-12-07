@@ -415,6 +415,31 @@
   background: rgba(102, 126, 234, 0.05);
 }
 
+.terms-agreement {
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.terms-agreement .remember-me {
+  align-items: flex-start;
+}
+
+.terms-agreement .remember-me span {
+  line-height: 1.5;
+}
+
+.terms-link {
+  color: #667eea;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.terms-link:hover {
+  color: #764ba2;
+  text-decoration: underline;
+}
+
 /* Responsive */
 @media (max-width: 968px) {
   .auth-branding {

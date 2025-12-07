@@ -76,9 +76,14 @@
   overflow-y: auto;
   background: var(--bg-primary);
   width: 100%;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   display: flex;
   justify-content: center;
+  /* Stable scrolling - let browser handle anchoring naturally */
+  overflow-anchor: auto;
+  /* Optimize rendering performance */
+  will-change: scroll-position;
+  contain: strict;
 }
 
 /* Inner container for messages with max-width and padding */
@@ -280,12 +285,24 @@
   max-height: 500px;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Prevent flickering and layout shifts */
+  scroll-behavior: auto;
+  overflow-anchor: auto; /* Let browser handle scroll anchoring */
+  will-change: auto;
+  /* Isolate from parent layout */
+  contain: layout style;
+  /* Disable transitions during expansion to prevent flickering */
+  transition: none !important;
 }
 
 /* Inner wrapper for padding - keeps scroll area full width */
 .thinking-content > * {
   padding: 0 1rem;
   margin-bottom: 0.75rem;
+  /* Prevent scroll anchor issues */
+  overflow-anchor: none;
+  /* Prevent triggering reflow */
+  contain: layout style;
 }
 
 .thinking-content > *:first-child {
