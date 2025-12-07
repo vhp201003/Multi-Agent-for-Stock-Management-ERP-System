@@ -81,10 +81,9 @@
   justify-content: center;
 }
 
-/* Inner container for messages with max-width and padding */
+/* Inner container for messages with full width and padding */
 .chat-messages > div {
   width: 100%;
-  max-width: 900px;
   padding: 2rem;
   box-sizing: border-box;
 }

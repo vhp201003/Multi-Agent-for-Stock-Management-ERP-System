@@ -1471,7 +1471,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               {message.updates && message.updates.length > 0 && (
                 <details
                   className="thinking-process"
-                  open
+                  open={message.isThinkingExpanded ?? false}
                   onToggle={(e) => {
                     if ((e.target as HTMLDetailsElement).open) {
                       setMessages((prev) =>
