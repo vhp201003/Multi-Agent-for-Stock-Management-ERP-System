@@ -3,7 +3,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
-
 from src.agents.base_agent import BaseAgent
 from src.services.chart_data_mapper import ChartDataMapper
 from src.typing.llm_response import ChatResponse
@@ -220,9 +219,18 @@ class ChatAgent(BaseAgent):
 
                 if chart_data:
                     field.data = chart_data
+
+                    # Detect format type for safe logging
+                    if "chartData" in chart_data:
+                        count = len(chart_data["chartData"])
+                        format_type = "recharts"
+                    else:
+                        count = len(chart_data.get("labels", []))
+                        format_type = "legacy"
+
                     logger.info(
-                        f"Populated chart '{field.title}': "
-                        f"{len(chart_data['labels'])} points from "
+                        f"Populated chart '{field.title}' ({format_type}): "
+                        f"{count} points from "
                         f"{field.data_source.agent_type}.{field.data_source.tool_name}"
                     )
                 else:

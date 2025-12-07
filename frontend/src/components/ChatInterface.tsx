@@ -889,9 +889,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Render graph/chart
   const renderGraph = (field: LayoutField, index: number) => {
-    if (!field.data || !field.data.labels || !field.data.datasets) {
+    if (!field.data) {
+      console.log('[renderGraph] No data for field:', field);
       return null;
     }
+
+    console.log('[renderGraph]', {
+      graph_type: field.graph_type,
+      data_keys: Object.keys(field.data),
+      hasChartData: 'chartData' in field.data,
+      hasLabels: 'labels' in field.data,
+      data: field.data
+    });
 
     // Better color palette
     const COLORS = [
@@ -1041,6 +1050,113 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 />
               ))}
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (field.graph_type === 'scatterplot') {
+      // ScatterPlot - Recharts format
+      if (!field.data.scatterData || !Array.isArray(field.data.scatterData)) {
+        console.warn('[scatterplot] Missing scatterData array');
+        return null;
+      }
+
+      const scatterData = field.data.scatterData;
+      const xKey = (field.data.xKey as string) || 'x';
+      const yKey = (field.data.yKey as string) || 'y';
+      const nameKey = field.data.nameKey as string | undefined;
+      const groupKey = field.data.groupKey as string | undefined;
+      const groups = field.data.groups as string[] | undefined;
+
+      console.log('[scatterplot] Rendering:', {
+        points: scatterData.length,
+        xKey,
+        yKey,
+        hasGroups: !!groupKey,
+        groups: groups?.length || 0
+      });
+
+      // Group data by group_field if exists
+      const groupedData: Record<string, any[]> = {};
+      
+      if (groupKey && groups) {
+        // Initialize groups
+        groups.forEach(g => { groupedData[g] = []; });
+        // Distribute points
+        scatterData.forEach(point => {
+          const group = point[groupKey] as string || 'Ungrouped';
+          if (!groupedData[group]) groupedData[group] = [];
+          groupedData[group].push(point);
+        });
+      } else {
+        // No grouping - single scatter
+        groupedData['All'] = scatterData;
+      }
+
+      const chartHeight = 450;
+
+      // Custom scatter tooltip
+      const ScatterTooltip = ({ active, payload }: any) => {
+        if (active && payload && payload.length > 0) {
+          const data = payload[0].payload;
+          return (
+            <div className="chart-tooltip" style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-primary)',
+              borderRadius: '6px',
+              padding: '0.75rem',
+              fontSize: '0.85rem'
+            }}>
+              {nameKey && data[nameKey] && <p className="tooltip-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{data[nameKey]}</p>}
+              <p className="tooltip-value" style={{ margin: '0.15rem 0' }}>X: <strong>{data[xKey]?.toLocaleString()}</strong></p>
+              <p className="tooltip-value" style={{ margin: '0.15rem 0' }}>Y: <strong>{data[yKey]?.toLocaleString()}</strong></p>
+              {groupKey && data[groupKey] && <p className="tooltip-group" style={{ marginTop: '0.25rem', color: 'var(--text-secondary)' }}>Group: {data[groupKey]}</p>}
+            </div>
+          );
+        }
+        return null;
+      };
+
+      return (
+        <div key={index} className="layout-graph" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+          {field.title && <h4 style={{ marginBottom: '1.25rem', fontSize: '1rem' }}>{field.title}</h4>}
+          {field.description && <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{field.description}</p>}
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" opacity={0.5} />
+              <XAxis 
+                type="number" 
+                dataKey={xKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                name={xKey}
+              />
+              <YAxis 
+                type="number" 
+                dataKey={yKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                name={yKey}
+              />
+              <ZAxis range={[60, 400]} />
+              <Tooltip 
+                content={<ScatterTooltip />}
+                cursor={{ strokeDasharray: '3 3' }}
+              />
+              {groups && groups.length > 1 && <Legend wrapperStyle={{ paddingTop: '15px' }} />}
+              
+              {Object.entries(groupedData).map(([groupName, points], i) => (
+                <Scatter
+                  key={groupName}
+                  name={groupName}
+                  data={points}
+                  fill={COLORS[i % COLORS.length]}
+                  shape="circle"
+                  animationDuration={800}
+                />
+              ))}
+            </ScatterChart>
           </ResponsiveContainer>
         </div>
       );
