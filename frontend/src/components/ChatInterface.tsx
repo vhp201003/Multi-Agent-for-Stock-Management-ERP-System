@@ -59,11 +59,15 @@ declare global {
 interface ChatInterfaceProps {
   conversationId: string;
   onConversationChange?: (conversationId: string) => void;
+  onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   conversationId: propConversationId,
   onConversationChange,
+  onToggleSidebar,
+  isSidebarOpen = true,
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,6 +85,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   );
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
+  const skipLoadForNewConversation = React.useRef<string | null>(null);
 
   // Toggle thinking process expand/collapse
   const toggleThinkingProcess = useCallback((messageIndex: number) => {
@@ -172,6 +177,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     initialLoadDone.current = false;
     const loadConversation = async () => {
       if (propConversationId) {
+        // Skip loading if this is a newly created conversation
+        if (skipLoadForNewConversation.current === propConversationId) {
+          console.log(
+            "[ChatInterface] Skipping load for newly created conversation:",
+            propConversationId
+          );
+          setConversationId(propConversationId);
+          skipLoadForNewConversation.current = null;
+          isLoadingConversation.current = false;
+          return;
+        }
+
         isLoadingConversation.current = true; // Set flag when loading
         setConversationId(propConversationId);
         console.log(
@@ -220,15 +237,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             const conversation = conversations.find(
               (c: { id: string }) => c.id === propConversationId
             );
+            console.log(
+              "[ChatInterface] Found conversation in localStorage:",
+              !!conversation,
+              "messages:",
+              conversation?.messages?.length
+            );
             if (conversation && conversation.messages) {
               const normalizedMessages = normalizeLocalStorageMessages(
                 conversation.messages
+              );
+              console.log(
+                "[ChatInterface] Normalized messages:",
+                normalizedMessages.length
               );
               setMessages(normalizedMessages);
               // Clear flag after a short delay
               setTimeout(() => {
                 isLoadingConversation.current = false;
               }, 1000);
+            } else {
+              console.warn(
+                "[ChatInterface] Conversation found but no messages!"
+              );
+              isLoadingConversation.current = false;
             }
           } catch (error) {
             console.error(
@@ -289,7 +321,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           messages,
           shouldMoveToTop
         );
-      }, 500); // Save after 500ms of inactivity
+      }, 100); // Save after 100ms of inactivity (faster to prevent data loss)
     }
   }, [messages, conversationId]);
 
@@ -373,6 +405,46 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         });
 
         setLoading(false);
+
+        // Save conversation immediately after final response
+        if (conversationId && window.saveConversation) {
+          console.log(
+            "[ChatInterface] Saving conversation after final response:",
+            conversationId
+          );
+          // Use setTimeout to ensure state has updated
+          setTimeout(() => {
+            setMessages((currentMessages) => {
+              if (currentMessages.length > 0) {
+                const userMsg = currentMessages
+                  .filter((m) => m.type === "user")
+                  .pop();
+                const assistantMsg = currentMessages
+                  .filter((m) => m.type === "assistant")
+                  .pop();
+
+                console.log(
+                  "[ChatInterface] Messages to save:",
+                  currentMessages.length,
+                  "User msg:",
+                  userMsg?.content.slice(0, 30),
+                  "Assistant msg:",
+                  assistantMsg?.content?.slice(0, 30) || "layout response"
+                );
+
+                window.saveConversation!(
+                  conversationId,
+                  userMsg?.content || "New conversation",
+                  assistantMsg?.content || "Response received",
+                  currentMessages,
+                  false // Don't move to top for final response
+                );
+              }
+              return currentMessages;
+            });
+          }, 100);
+        }
+
         continue;
       }
 
@@ -519,7 +591,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             timestamp: message.timestamp,
           };
           break;
-        case "thinking": { // Check if this is orchestrator reasoning step (has step + explanation + conclusion)
+        case "thinking": {
+          // Check if this is orchestrator reasoning step (has step + explanation + conclusion)
           const isOrchestratorReasoning =
             message.data.step !== undefined &&
             message.data.explanation !== undefined &&
@@ -667,6 +740,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       if (!currentConversationId) {
         currentConversationId = queryId;
         setConversationId(currentConversationId);
+        // Mark this conversation as newly created to skip loading
+        skipLoadForNewConversation.current = currentConversationId;
         // Notify parent component about conversation change
         if (onConversationChange) {
           onConversationChange(currentConversationId);
@@ -1027,6 +1102,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   return (
     <div className="chat-container">
       <div className="chat-header">
+        {onToggleSidebar && (
+          <button
+            className="sidebar-toggle-btn"
+            onClick={onToggleSidebar}
+            title={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+          >
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M4 6h16M4 12h16M4 18h16"
+              />
+            </svg>
+          </button>
+        )}
         <h2>Multi-Agent Stock Management</h2>
         {conversationId && (
           <span className="conversation-id">

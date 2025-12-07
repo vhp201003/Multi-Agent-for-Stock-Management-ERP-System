@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
+  useNavigate,
+  useParams,
 } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
 import ChatInterface from "./components/ChatInterface";
@@ -24,19 +26,37 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({
 };
 
 function MainLayout() {
-  const [currentConversationId, setCurrentConversationId] =
-    useState<string>("");
+  const navigate = useNavigate();
+  const { conversationId: urlConversationId } = useParams();
+  const [currentConversationId, setCurrentConversationId] = useState<string>(
+    urlConversationId || ""
+  );
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Sync URL with conversation ID
+  useEffect(() => {
+    if (urlConversationId && urlConversationId !== currentConversationId) {
+      setCurrentConversationId(urlConversationId);
+    }
+  }, [urlConversationId]);
 
   const handleSelectConversation = (conversationId: string) => {
     setCurrentConversationId(conversationId);
+    navigate(`/chat/${conversationId}`);
   };
 
   const handleNewConversation = () => {
     setCurrentConversationId("");
+    navigate("/");
   };
 
   const handleConversationChange = (conversationId: string) => {
     setCurrentConversationId(conversationId);
+    navigate(`/chat/${conversationId}`);
+  };
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
   };
 
   return (
@@ -45,10 +65,13 @@ function MainLayout() {
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
         currentConversationId={currentConversationId}
+        isOpen={isSidebarOpen}
       />
       <ChatInterface
         conversationId={currentConversationId}
         onConversationChange={handleConversationChange}
+        onToggleSidebar={toggleSidebar}
+        isSidebarOpen={isSidebarOpen}
       />
     </div>
   );
@@ -63,6 +86,14 @@ function App() {
           <Route path="/register" element={<Register />} />
           <Route
             path="/"
+            element={
+              <PrivateRoute>
+                <MainLayout />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/chat/:conversationId"
             element={
               <PrivateRoute>
                 <MainLayout />

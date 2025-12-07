@@ -19,12 +19,14 @@ interface SidebarProps {
   currentConversationId?: string;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
+  isOpen?: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
   currentConversationId,
   onSelectConversation,
   onNewConversation,
+  isOpen = true,
 }) => {
   const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -156,6 +158,12 @@ const Sidebar: React.FC<SidebarProps> = ({
       messages: unknown[],
       moveToTop: boolean = true
     ) => {
+      console.log("[Sidebar] saveConversation called:", {
+        id,
+        messageCount: messages.length,
+        moveToTop,
+      });
+
       const conversation: Conversation = {
         id,
         title,
@@ -164,20 +172,75 @@ const Sidebar: React.FC<SidebarProps> = ({
         messages,
       };
 
+      // Read current conversations from localStorage to avoid race conditions
+      const savedConversations = localStorage.getItem("conversations");
+      const currentConversations = savedConversations
+        ? JSON.parse(savedConversations)
+        : [];
+
+      let updated: Conversation[];
+
       if (moveToTop) {
         // Move to top (for new messages)
-        const updated = [
+        updated = [
           conversation,
-          ...conversations.filter((c) => c.id !== id),
+          ...currentConversations.filter((c: Conversation) => c.id !== id),
         ];
         setConversations(updated);
         localStorage.setItem("conversations", JSON.stringify(updated));
+        console.log(
+          "[Sidebar] Saved to top, total conversations:",
+          updated.length
+        );
       } else {
-        // Update in place (for selecting existing conversation)
-        updateConversation(id, title, lastMessage, messages);
+        // Update in place (for final response or reload)
+        const existingIndex = currentConversations.findIndex(
+          (c: Conversation) => c.id === id
+        );
+        if (existingIndex === -1) {
+          // New conversation
+          updated = [conversation, ...currentConversations];
+          setConversations(updated);
+          localStorage.setItem("conversations", JSON.stringify(updated));
+          console.log(
+            "[Sidebar] Created new conversation, total:",
+            updated.length
+          );
+        } else {
+          // Update existing
+          updated = [...currentConversations];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            title,
+            lastMessage,
+            messages,
+            timestamp: updated[existingIndex].timestamp, // Keep original timestamp
+          };
+          setConversations(updated);
+          localStorage.setItem("conversations", JSON.stringify(updated));
+          console.log(
+            "[Sidebar] Updated existing conversation at index:",
+            existingIndex,
+            "messages:",
+            messages.length
+          );
+        }
+      }
+
+      // Verify save
+      const verified = localStorage.getItem("conversations");
+      if (verified) {
+        const parsed = JSON.parse(verified);
+        const found = parsed.find((c: Conversation) => c.id === id);
+        console.log(
+          "[Sidebar] Verification - conversation found:",
+          !!found,
+          "with messages:",
+          found?.messages?.length
+        );
       }
     },
-    [conversations, updateConversation]
+    []
   );
 
   const deleteConversation = async (id: string, e: React.MouseEvent) => {
@@ -299,7 +362,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isOpen ? "open" : "closed"}`}>
       {/* Header with New Chat Button and Theme Toggle */}
       <div className="sidebar-header">
         <button
