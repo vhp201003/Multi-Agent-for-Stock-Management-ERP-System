@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi-Agent System Workflow - Interactive Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+      }
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 2.5em;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+      }
+      .header p {
+        margin: 10px 0 0 0;
+        font-size: 1.1em;
+        opacity: 0.95;
+      }
+      .controls {
+        background: #f8f9fa;
+        padding: 20px;
+        border-bottom: 2px solid #e9ecef;
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+      .btn-primary {
+        background: #667eea;
+        color: white;
+      }
+      .btn-success {
+        background: #28a745;
+        color: white;
+      }
+      .btn-info {
+        background: #17a2b8;
+        color: white;
+      }
+      .btn-warning {
+        background: #ffc107;
+        color: #333;
+      }
+      .diagram-container {
+        padding: 40px;
+        overflow-x: auto;
+        background: white;
+      }
+      #diagram {
+        display: flex;
+        justify-content: center;
+        min-height: 800px;
+      }
+      .legend {
+        padding: 30px;
+        background: #f8f9fa;
+        border-top: 2px solid #e9ecef;
+      }
+      .legend h3 {
+        margin-top: 0;
+        color: #333;
+        font-size: 1.5em;
+      }
+      .legend-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+      }
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .legend-color {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        flex-shrink: 0;
+      }
+      .legend-text {
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        padding: 30px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      }
+      .stat-card {
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .stat-number {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #667eea;
+        margin: 10px 0;
+      }
+      .stat-label {
+        color: #666;
+        font-size: 0.9em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      @media print {
+        .controls,
+        .legend,
+        .stats {
+          display: none;
+        }
+        body {
+          background: white;
+        }
+      }
+      .zoom-info {
+        color: #666;
+        font-size: 14px;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Multi-Agent Stock Management System</h1>
+        <p>End-to-End Workflow Visualization - 29 Steps from Input to Output</p>
+      </div>
+
+      <div class="stats">
+        <div class="stat-card">
+          <div class="stat-label">Total Steps</div>
+          <div class="stat-number">29</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Agents</div>
+          <div class="stat-number">5</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Layers</div>
+          <div class="stat-number">9</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg Latency</div>
+          <div class="stat-number">2-5s</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-primary" onclick="downloadDiagram()">
+          Download PNG
+        </button>
+        <button class="btn btn-success" onclick="downloadSVG()">
+          Download SVG
+        </button>
+        <button class="btn btn-info" onclick="zoomIn()">Zoom In</button>
+        <button class="btn btn-info" onclick="zoomOut()">Zoom Out</button>
+        <button class="btn btn-warning" onclick="window.print()">Print</button>
+        <span class="zoom-info"
+          >Tip: Scroll to zoom, right-click to save image</span
+        >
+      </div>
+
+      <div class="diagram-container">
+        <div id="diagram" class="mermaid">
+          graph TB %% === LAYER 1: USER INPUT === User["User/Client<br />POST
+          /query"] %% === LAYER 2: API GATEWAY === FastAPI["FastAPI Server<br />main.py:8010"]
+          %% === LAYER 3: ORCHESTRATOR === Orchestrator["OrchestratorAgent<br />Query
+          Analysis & Decomposition"] %% === LAYER 4: REDIS MESSAGE BUS ===
+          Redis[("Redis Pub/Sub<br />Message Broker")] %% === LAYER 5: MANAGERS
+          === InventoryMgr["InventoryManager<br />Task Queue & Dependencies"] %%
+          === LAYER 6: WORKER AGENTS === InventoryAgent["InventoryAgent<br />Stock
+          Operations"] %% === LAYER 7: MCP SERVERS ===
+          InventoryMCP["InventoryMCPServer<br />:8001"] %% === LAYER 8: CHAT &
+          SUMMARY === ChatAgent["ChatAgent<br />UI Response Generation"]
+          SummaryAgent["SummaryAgent<br />Conversation Summary"] %% === LAYER 9:
+          OUTPUT === Response["Final Response<br />JSON + UI Layout"] %%
+          ============================================ %% WORKFLOW CONNECTIONS
+          %% ============================================ %% Step 1: User →
+          FastAPI User -->|Step 1: HTTP POST<br />query, query_id| FastAPI %%
+          Step 2: FastAPI → Orchestrator FastAPI -->|Step 2: process request|
+          Orchestrator %% Step 3: Orchestrator Analysis Orchestrator -->|Step 3:
+          LLM Call<br />Groq API| LLM["Groq LLM<br />Query Decomposition"] LLM
+          -->|agents_needed<br />task_dependency| Orchestrator %% Step 4:
+          Orchestrator → Redis Orchestrator -->|Step 4: Publish QueryTask<br />agent:query_channel|
+          Redis %% Step 5: Redis → SharedData Orchestrator -->|Step 5:
+          Initialize<br />SharedData| SharedData[("Redis JSON<br />agent:shared_data")]
+          %% Step 6: Manager Listen Redis -->|Step 6: Subscribe<br />query_channel|
+          InventoryMgr %% Step 7: Manager → Task Queue InventoryMgr -->|Step 7:
+          Queue Tasks<br />Check Dependencies| TaskQueue[("Task Queue<br />agent:queue:inventory")]
+          %% Step 8: Manager → Worker Agent InventoryMgr -->|Step 8: Publish
+          Command<br />agent:command_channel| Redis Redis -->|CommandMessage<br />execute,
+          sub_query| InventoryAgent %% Step 9: Worker → MCP Client
+          InventoryAgent -->|Step 9: MCP Client<br />call_tool / read_resource|
+          MCPClient["MCP Client<br />HTTP/SSE"] %% Step 10: MCP Client → MCP
+          Server MCPClient -->|Step 10: HTTP POST<br />localhost:8001/mcp|
+          InventoryMCP %% Step 11: MCP Server → Tools InventoryMCP -->|Step 11:
+          Execute Tool| Tools["Tools<br />check_stock<br />query_inventory"] %%
+          Step 12: MCP Server → Mock Data Tools -->|Step 12: Query|
+          MockData[("Mock Data<br />inventory_data")] %% Step 13: Return Results
+          MockData -->|Step 13: Stock Data| Tools Tools -->|Step 14: Tool
+          Result| InventoryMCP InventoryMCP -->|Step 15: JSON Response|
+          MCPClient MCPClient -->|Step 16: tool_result| InventoryAgent %% Step
+          14: Worker → Task Update InventoryAgent -->|Step 17: Publish
+          TaskUpdate<br />agent:task_updates| Redis %% Step 15: Update
+          SharedData Redis -->|Step 18: Task Completion| Orchestrator
+          Orchestrator -->|Step 19: Update<br />complete_task| SharedData %%
+          Step 16: Check Completion SharedData -->|Step 20: is_complete?|
+          Orchestrator %% Step 17: Trigger ChatAgent Orchestrator -->|Step 21:
+          Trigger ChatAgent<br />agent:command_channel:chat| Redis Redis
+          -->|ChatRequest<br />context, results| ChatAgent %% Step 18: ChatAgent
+          → LLM ChatAgent -->|Step 22: Generate UI<br />Groq API| ChatLLM["Groq
+          LLM<br />UI Generation"] ChatLLM -->|Step 23: Layout JSON<br />sections,
+          charts| ChatAgent %% Step 19: ChatAgent → Completion ChatAgent
+          -->|Step 24: Publish<br />query:completion| Redis %% Step 20:
+          Orchestrator Wait Redis -->|Step 25: CompletionResponse| Orchestrator
+          %% Step 21: Final Response Orchestrator -->|Step 26: Return Result|
+          FastAPI FastAPI -->|Step 27: HTTP 200 OK<br />JSON Response| User %%
+          Step 22: Summary Agent (Async) Orchestrator -.->|Step 28: Trigger
+          Summary<br />async| Redis Redis -.->|Async| SummaryAgent SummaryAgent
+          -.->|Step 29: Update<br />conversation summary|
+          ConvData[("Conversation<br />conversation:id")] %%
+          ============================================ %% STYLING %%
+          ============================================ classDef userClass
+          fill:#e1f5ff,stroke:#01579b,stroke-width:3px classDef apiClass
+          fill:#fff3e0,stroke:#e65100,stroke-width:2px classDef
+          orchestratorClass fill:#f3e5f5,stroke:#4a148c,stroke-width:3px
+          classDef redisClass fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+          classDef managerClass fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+          classDef workerClass fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+          classDef mcpClass fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+          classDef chatClass fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+          classDef dataClass fill:#eceff1,stroke:#263238,stroke-width:2px
+          classDef llmClass fill:#ede7f6,stroke:#311b92,stroke-width:2px class
+          User userClass class FastAPI apiClass class Orchestrator
+          orchestratorClass class Redis,SharedData,TaskQueue,ConvData redisClass
+          class InventoryMgr managerClass class InventoryAgent workerClass class
+          InventoryMCP,MCPClient,Tools mcpClass class ChatAgent,SummaryAgent
+          chatClass class Response,MockData dataClass class LLM,ChatLLM llmClass
+        </div>
+      </div>
+
+      <div class="legend">
+        <h3>Component Legend</h3>
+        <div class="legend-grid">
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #e1f5ff, #01579b)"
+            ></div>
+            <div class="legend-text">
+              User/Client<br /><small>HTTP Request</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #fff3e0, #e65100)"
+            ></div>
+            <div class="legend-text">
+              FastAPI Server<br /><small>API Gateway</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #f3e5f5, #4a148c)"
+            ></div>
+            <div class="legend-text">
+              Orchestrator<br /><small>Query Analysis</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #ffebee, #b71c1c)"
+            ></div>
+            <div class="legend-text">
+              Redis<br /><small>Message Broker</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #e8f5e9, #1b5e20)"
+            ></div>
+            <div class="legend-text">
+              Manager<br /><small>Task Queue</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #e0f2f1, #004d40)"
+            ></div>
+            <div class="legend-text">
+              Worker Agent<br /><small>Task Execution</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #fce4ec, #880e4f)"
+            ></div>
+            <div class="legend-text">
+              MCP Server<br /><small>Tools Provider</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #fff9c4, #f57f17)"
+            ></div>
+            <div class="legend-text">
+              Chat Agent<br /><small>UI Generation</small>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div
+              class="legend-color"
+              style="background: linear-gradient(135deg, #ede7f6, #311b92)"
+            ></div>
+            <div class="legend-text">LLM<br /><small>Groq API</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Initialize Mermaid
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "default",
+        themeVariables: {
+          primaryColor: "#e1f5ff",
+          primaryTextColor: "#01579b",
+          primaryBorderColor: "#01579b",
+          lineColor: "#666",
+          secondaryColor: "#fff3e0",
+          tertiaryColor: "#f3e5f5",
+        },
+        flowchart: {
+          useMaxWidth: true,
+          htmlLabels: true,
+          curve: "basis",
+        },
+      });
+
+      let currentZoom = 1;
+
+      function zoomIn() {
+        currentZoom += 0.1;
+        document.getElementById(
+          "diagram"
+        ).style.transform = `scale(${currentZoom})`;
+      }
+
+      function zoomOut() {
+        if (currentZoom > 0.5) {
+          currentZoom -= 0.1;
+          document.getElementById(
+            "diagram"
+          ).style.transform = `scale(${currentZoom})`;
+        }
+      }
+
+      function downloadDiagram() {
+        const svg = document.querySelector("#diagram svg");
+        if (!svg) {
+          alert("Diagram chưa render xong. Vui lòng đợi vài giây!");
+          return;
+        }
+
+        // Convert SVG to PNG
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        const data = new XMLSerializer().serializeToString(svg);
+        const img = new Image();
+
+        img.onload = function () {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.fillStyle = "white";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          const a = document.createElement("a");
+          a.download = "multi-agent-workflow.png";
+          a.href = canvas.toDataURL("image/png");
+          a.click();
+        };
+
+        img.src =
+          "data:image/svg+xml;base64," +
+          btoa(unescape(encodeURIComponent(data)));
+      }
+
+      function downloadSVG() {
+        const svg = document.querySelector("#diagram svg");
+        if (!svg) {
+          alert("Diagram chưa render xong. Vui lòng đợi vài giây!");
+          return;
+        }
+
+        const data = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([data], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.download = "multi-agent-workflow.svg";
+        a.href = url;
+        a.click();
+
+        URL.revokeObjectURL(url);
+      }
+    </script>
+  </body>
+</html>

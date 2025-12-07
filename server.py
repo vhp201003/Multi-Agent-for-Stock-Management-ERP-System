@@ -60,7 +60,7 @@ async def query_status_endpoint(query_id: str):
 async def health_endpoint():
     return await endpoints.health_check()
 
-
+# new
 @app.post("/approval-response")
 async def approval_response_endpoint(request: endpoints.ApprovalResponseRequest):
     """REST endpoint to handle approval responses (alternative to WebSocket)"""
