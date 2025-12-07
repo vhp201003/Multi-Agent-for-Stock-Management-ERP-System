@@ -1,31 +1,157 @@
+/* Modern Chat Input - Inspired by ChatGPT & Gemini */
+.chat-input-container {
+  padding: 1rem 2rem 1.5rem;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-primary);
+  position: sticky;
+  bottom: 0;
+  backdrop-filter: blur(10px);
+  z-index: 10;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border-primary);
+  border-radius: 24px;
+  padding: 0.5rem 0.75rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.input-wrapper:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 4px 20px var(--shadow-lg), 0 0 0 3px rgba(102, 126, 234, 0.1);
+  background: var(--bg-tertiary);
+}
+
 /* HITL Toggle Button */
 .hitl-toggle {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  border: 1px solid #3a3a3a;
-  background: #2a2a2a;
-  color: #e8e8e8;
-  font-size: 0.9rem;
+  border: 2px solid var(--border-secondary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 1.125rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.hitl-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-primary);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: -1;
 }
 
 .hitl-toggle:hover {
-  border-color: #667eea;
-  background: #333;
+  transform: scale(1.05);
+  border-color: var(--accent);
+}
+
+.hitl-toggle:active {
+  transform: scale(0.95);
 }
 
 .hitl-toggle.review {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.15);
+  border-color: var(--accent);
+  background: rgba(102, 126, 234, 0.1);
+  color: var(--accent);
+}
+
+.hitl-toggle.review::before {
+  opacity: 0.1;
 }
 
 .hitl-toggle.auto {
-  border-color: #48bb78;
-  background: rgba(72, 187, 120, 0.15);
+  border-color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+/* Chat Input Field */
+.chat-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  padding: 0.625rem 0.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    sans-serif;
+  resize: none;
+  line-height: 1.5;
+}
+
+.chat-input::placeholder {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.chat-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Send Button */
+.chat-send-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--gradient-primary);
+  color: white;
+  font-size: 1.125rem;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.chat-send-button:hover:not(:disabled) {
+  transform: scale(1.05) rotate(5deg);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+}
+
+.chat-send-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chat-send-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--bg-hover);
+  box-shadow: none;
+}
+
+.button-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
