@@ -258,3 +258,50 @@ class StockCoverageOutput(MCPToolOutputSchema):
     items: list[StockCoverageItem] | None
     summary: StockCoverageSummary | None
     filters_applied: StockCoverageFilters | None
+
+
+# Tool 6: get_sales_order_stats
+class SalesOrderStatsItem(BaseModel):
+    """Schema for individual period in get_sales_order_stats output."""
+
+    period: str = Field(
+        ...,
+        description="Time period (format depends on frequency: YYYY-MM-DD, YYYY-W##, YYYY-MM, or YYYY)",
+    )
+    total_orders: int = Field(..., description="Total number of orders in this period")
+    total_revenue: float = Field(
+        ..., description="Total revenue (grand_total) in this period"
+    )
+
+
+class SalesOrderStatsFilters(BaseModel):
+    """Schema for filters_applied in get_sales_order_stats."""
+
+    from_date: str = Field(..., description="Start date for analysis (YYYY-MM-DD)")
+    to_date: str = Field(..., description="End date for analysis (YYYY-MM-DD)")
+    frequency: str = Field(
+        ..., description="Time grouping: daily, weekly, monthly, yearly"
+    )
+    status: str | None = Field(
+        None, description="Sales Order status filter (if applied)"
+    )
+
+
+class SalesOrderStatsSummary(BaseModel):
+    """Schema for summary in get_sales_order_stats."""
+
+    total_orders: int = Field(
+        ..., description="Total number of orders across all periods"
+    )
+    total_revenue: float = Field(..., description="Total revenue across all periods")
+    avg_orders_per_period: float = Field(..., description="Average orders per period")
+    avg_revenue_per_period: float = Field(..., description="Average revenue per period")
+    period_count: int = Field(..., description="Number of time periods in the analysis")
+
+
+class SalesOrderStatsOutput(MCPToolOutputSchema):
+    """Schema for get_sales_order_stats tool output."""
+
+    items: list[SalesOrderStatsItem] | None = None
+    summary: SalesOrderStatsSummary | None = None
+    filters_applied: SalesOrderStatsFilters | None = None

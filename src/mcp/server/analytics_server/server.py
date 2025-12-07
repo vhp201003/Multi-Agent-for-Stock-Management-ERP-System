@@ -8,6 +8,7 @@ from src.mcp.server.base_server import BaseMCPServer, ServerConfig
 from src.typing.mcp.analytics import (
     MoversShakersOutput,
     ParetoAnalysisOutput,
+    SalesOrderStatsOutput,
     SlowMoversOutput,
     StockCoverageOutput,
     TopPerformersOutput,
@@ -76,6 +77,13 @@ class AnalyticsMCPServer(BaseMCPServer):
             self.analyze_stock_coverage,
             name="analyze_stock_coverage",
             description="Analyze stock coverage (Days of Cover) with reorder recommendations",
+            structured_output=True,
+        )
+
+        self.add_tool(
+            self.get_sales_order_stats,
+            name="get_sales_order_stats",
+            description="Get sales order statistics grouped by time period (daily, monthly, yearly)",
             structured_output=True,
         )
 
@@ -231,6 +239,27 @@ class AnalyticsMCPServer(BaseMCPServer):
             return StockCoverageOutput(**response)
         except Exception as e:
             self.logger.error(f"Error in analyze_stock_coverage: {e}", exc_info=True)
+            raise
+
+    async def get_sales_order_stats(
+        self,
+        from_date: str = Field(..., description="Start date (YYYY-MM-DD)"),
+        to_date: str = Field(..., description="End date (YYYY-MM-DD)"),
+        frequency: str = Field(
+            default="monthly",
+            description="Time grouping: 'daily', 'monthly', or 'yearly'",
+        ),
+        status: Optional[str] = Field(
+            None, description="Sales Order status filter (e.g., 'Completed', 'Draft')"
+        ),
+    ) -> SalesOrderStatsOutput:
+        try:
+            response = await self._fetch_sales_order_stats(
+                from_date, to_date, frequency, status
+            )
+            return SalesOrderStatsOutput(**response)
+        except Exception as e:
+            self.logger.error(f"Error in get_sales_order_stats: {e}", exc_info=True)
             raise
 
     async def _fetch_top_performers(
@@ -392,6 +421,36 @@ class AnalyticsMCPServer(BaseMCPServer):
             return result
         except Exception as e:
             self.logger.error(f"Error in analyze_stock_coverage: {e}")
+            raise
+
+    async def _fetch_sales_order_stats(
+        self,
+        from_date: str,
+        to_date: str,
+        frequency: str,
+        status: Optional[str],
+    ) -> dict:
+        params = {
+            "from_date": from_date,
+            "to_date": to_date,
+            "frequency": frequency,
+        }
+        if status:
+            params["status"] = status
+
+        try:
+            result = await self.erpnext.call_method(
+                "agent_stock_system.controller.analytics.get_sales_order_stats",
+                method="GET",
+                params=params,
+            )
+
+            if isinstance(result, dict) and result.get("success") is False:
+                raise ValueError(f"Backend error: {result.get('error_message')}")
+
+            return result
+        except Exception as e:
+            self.logger.error(f"Error in get_sales_order_stats: {e}")
             raise
 
     async def cleanup(self) -> None:
