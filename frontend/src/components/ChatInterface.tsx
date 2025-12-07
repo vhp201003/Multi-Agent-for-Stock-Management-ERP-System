@@ -8,6 +8,9 @@ import {
   Bar,
   LineChart,
   Line,
+  ScatterChart,
+  Scatter,
+  ZAxis,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -1050,6 +1053,86 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 />
               ))}
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (field.graph_type === 'horizontalbarchart') {
+      // Horizontal BarChart - uses Recharts format {chartData, dataKey, nameKey}
+      if (!field.data.chartData || !Array.isArray(field.data.chartData)) {
+        console.warn('[horizontalbarchart] Missing chartData array');
+        return null;
+      }
+
+      const chartData = field.data.chartData;
+      const dataKey = (field.data.dataKey as string) || 'value';
+      const nameKey = (field.data.nameKey as string) || 'name';
+
+      console.log('[horizontalbarchart] Rendering with:', {
+        chartDataLength: chartData.length,
+        dataKey,
+        nameKey,
+        firstItem: chartData[0]
+      });
+
+      // Dynamic height: more space per item for readability
+      const chartHeight = Math.max(400, chartData.length * 45);
+
+      // Format number helper
+      const formatNumber = (value: number) => {
+        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+        if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+        return value.toString();
+      };
+
+      return (
+        <div key={index} className="layout-graph" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+          {field.title && <h4 style={{ marginBottom: '1.25rem', fontSize: '1rem' }}>{field.title}</h4>}
+          {field.description && <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{field.description}</p>}
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <BarChart 
+              data={chartData} 
+              layout="vertical"
+              margin={{ top: 10, right: 30, left: 20, bottom: 10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" opacity={0.5} />
+              <XAxis 
+                type="number" 
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                tickFormatter={formatNumber}
+              />
+              <YAxis 
+                type="category" 
+                dataKey={nameKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }} 
+                width={180}
+                tick={{ fill: '#aaaaaa' }}
+              />
+              <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{ fill: 'rgba(102, 126, 234, 0.1)' }}
+                contentStyle={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem'
+                }}
+              />
+              <Legend 
+                wrapperStyle={{ paddingTop: '15px' }}
+                iconType="rect"
+              />
+              <Bar 
+                dataKey={dataKey}
+                fill={COLORS[0]}
+                radius={[0, 6, 6, 0]}
+                barSize={25}
+                animationDuration={800}
+              />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       );
