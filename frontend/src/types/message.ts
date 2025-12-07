@@ -5,8 +5,13 @@
 export interface ChartDataSource {
   agent_type: string;
   tool_name: string;
-  label_field: string;
-  value_field: string;
+  label_field?: string;
+  value_field?: string;
+  category_field?: string;
+  x_field?: string;
+  y_field?: string;
+  name_field?: string;
+  group_field?: string;
   data_path?: string;
 }
 
@@ -18,6 +23,7 @@ export interface LayoutField {
   graph_type?: string;
   data_source?: ChartDataSource;
   data?: {
+    // Legacy format (barchart, linechart, piechart)
     headers?: string[];
     rows?: unknown[][];
     labels?: string[];
@@ -25,6 +31,27 @@ export interface LayoutField {
       label: string;
       data: unknown[];
     }>;
+    // Recharts format (horizontalbarchart)
+    chartData?: Array<{
+      name: string;
+      value: number;
+      [key: string]: any;
+    }>;
+    dataKey?: string;
+    nameKey?: string;
+    layout?: 'horizontal' | 'vertical';
+    // ScatterPlot format
+    scatterData?: Array<{
+      x: number;
+      y: number;
+      name?: string;
+      group?: string;
+      [key: string]: any;
+    }>;
+    xKey?: string;
+    yKey?: string;
+    groupKey?: string;
+    groups?: string[];
   };
 }
 

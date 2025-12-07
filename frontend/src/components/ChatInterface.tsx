@@ -8,6 +8,9 @@ import {
   Bar,
   LineChart,
   Line,
+  ScatterChart,
+  Scatter,
+  ZAxis,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -86,14 +89,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { hitlMode } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const chatMessagesRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
+  
+  // Buffer for batching updates to same message (avoid excessive re-renders)
+  const updateBufferRef = React.useRef<Map<string, TaskUpdate[]>>(new Map());
+  const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Toggle thinking process expand/collapse
+  // Toggle thinking process expand/collapse - update state via details element
   const toggleThinkingProcess = useCallback((messageIndex: number) => {
     setMessages((prev) =>
       prev.map((msg, idx) =>
@@ -180,6 +188,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = useCallback(() => {
+    const container = chatMessagesRef.current;
+
     // Always scroll on initial load
     if (!initialLoadDone.current && messages.length > 0) {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -190,8 +200,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const lastMessage = messages[messages.length - 1];
     const isUserMessage = lastMessage?.type === "user";
 
+    // Only auto-scroll if user near bottom to avoid fighting manual scroll
+    let isNearBottom = true;
+    if (container) {
+      const distanceToBottom =
+        container.scrollHeight - container.clientHeight - container.scrollTop;
+      isNearBottom = distanceToBottom < 200;
+    }
+
     // Always scroll if the last message is from the user
     if (isUserMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+
+    if (isNearBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
@@ -356,6 +379,41 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messageQueue = React.useRef<QueueItem[]>([]);
   const isProcessingQueue = React.useRef(false);
 
+  // Helper: batch append update to message without immediate setState
+  const bufferUpdateToMessage = useCallback((queryId: string, update: TaskUpdate) => {
+    const key = `${queryId}-thinking`;
+    if (!updateBufferRef.current.has(key)) {
+      updateBufferRef.current.set(key, []);
+    }
+    updateBufferRef.current.get(key)!.push(update);
+
+    // Schedule flush after 80ms (batches typing updates efficiently)
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = setTimeout(() => {
+      flushUpdateBuffer();
+    }, 80);
+  }, []);
+
+  // Helper: flush all buffered updates to state at once
+  const flushUpdateBuffer = useCallback(() => {
+    if (updateBufferRef.current.size === 0) return;
+
+    setMessages((prev) => {
+      const newMessages = [...prev];
+      updateBufferRef.current.forEach((updates, key) => {
+        const idx = newMessages.findIndex((m) => m.id === key);
+        if (idx >= 0) {
+          newMessages[idx] = {
+            ...newMessages[idx],
+            updates: [...(newMessages[idx].updates || []), ...updates],
+          };
+        }
+      });
+      updateBufferRef.current.clear();
+      return newMessages;
+    });
+  }, []);
+
   const processQueue = useCallback(async () => {
     if (isProcessingQueue.current) return;
     isProcessingQueue.current = true;
@@ -367,7 +425,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       // Handle Final Response
       if (item.type === "final_response") {
-        const { response, queryId } = item;
+        const { response, queryId, isNewConversation } = item;
 
         setMessages((prevMessages) => {
           const filtered = prevMessages.filter(
@@ -415,7 +473,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             messagesToAdd.push({
               ...thinkingMsg,
               id: `${queryId}-thinking-display`,
-              isThinkingExpanded: false,
+              isThinkingExpanded: true,
             });
           }
 
@@ -532,7 +590,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [autoApprovedUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
@@ -587,7 +644,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 content: "",
                 timestamp: new Date(),
                 updates: [approvalUpdate],
-                isThinkingExpanded: false,
               },
             ];
           }
@@ -705,7 +761,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (message.type === "thinking" && uiUpdate.message) {
           const fullText = uiUpdate.message;
           let currentText = "";
-          const chunkSize = 15; // chars per tick
+          const chunkSize = 45; // bigger chunk to reduce re-renders
+          const minFlushGap = 60; // ms
+          let lastFlush = performance.now();
 
           // Create the update object initially with empty message
           const updateId = generateId();
@@ -725,13 +783,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [initialUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
             return prev.map((msg) =>
               msg.id === `${queryId}-thinking`
-                ? { ...msg, updates: [...(msg.updates || []), initialUpdate] }
+                ? {
+                    ...msg,
+                    updates: [...(msg.updates || []), initialUpdate],
+                  }
                 : msg
             );
           });
@@ -739,21 +799,36 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           // Type out the text
           for (let i = 0; i < fullText.length; i += chunkSize) {
             currentText += fullText.slice(i, i + chunkSize);
+            const now = performance.now();
 
-            setMessages((prev) =>
-              prev.map((msg) => {
-                if (msg.id !== `${queryId}-thinking`) return msg;
-                const updates = msg.updates || [];
-                const newUpdates = updates.map((u) =>
-                  (u as any).id === updateId
-                    ? { ...u, message: currentText }
-                    : u
-                );
-                return { ...msg, updates: newUpdates };
-              })
-            );
+            // Throttle state updates to avoid jitter
+            if (
+              now - lastFlush >= minFlushGap ||
+              i + chunkSize >= fullText.length
+            ) {
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id !== `${queryId}-thinking`) return msg;
+                  const updates = msg.updates || [];
+                  const newUpdates = updates.map((u) =>
+                    (u as any).id === updateId
+                      ? { ...u, message: currentText }
+                      : u
+                  );
+                  return {
+                    ...msg,
+                    updates: newUpdates,
+                    isThinkingExpanded:
+                      msg.isThinkingExpanded === undefined
+                        ? true
+                        : msg.isThinkingExpanded,
+                  };
+                })
+              );
 
-            await new Promise((r) => setTimeout(r, 5)); // 10ms delay for typing speed
+              lastFlush = now;
+              await new Promise((r) => setTimeout(r, 25));
+            }
           }
         } else {
           // Non-typing updates (immediate)
@@ -770,13 +845,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [uiUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
             return prev.map((msg) =>
               msg.id === `${queryId}-thinking`
-                ? { ...msg, updates: [...(msg.updates || []), uiUpdate] }
+                ? {
+                    ...msg,
+                    updates: [...(msg.updates || []), uiUpdate],
+                  }
                 : msg
             );
           });
@@ -889,9 +966,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Render graph/chart
   const renderGraph = (field: LayoutField, index: number) => {
-    if (!field.data || !field.data.labels || !field.data.datasets) {
+    if (!field.data) {
+      console.log('[renderGraph] No data for field:', field);
       return null;
     }
+
+    console.log('[renderGraph]', {
+      graph_type: field.graph_type,
+      data_keys: Object.keys(field.data),
+      hasChartData: 'chartData' in field.data,
+      hasLabels: 'labels' in field.data,
+      data: field.data
+    });
 
     // Better color palette
     const COLORS = [
@@ -1041,6 +1127,193 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 />
               ))}
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (field.graph_type === 'horizontalbarchart') {
+      // Horizontal BarChart - uses Recharts format {chartData, dataKey, nameKey}
+      if (!field.data.chartData || !Array.isArray(field.data.chartData)) {
+        console.warn('[horizontalbarchart] Missing chartData array');
+        return null;
+      }
+
+      const chartData = field.data.chartData;
+      const dataKey = (field.data.dataKey as string) || 'value';
+      const nameKey = (field.data.nameKey as string) || 'name';
+
+      console.log('[horizontalbarchart] Rendering with:', {
+        chartDataLength: chartData.length,
+        dataKey,
+        nameKey,
+        firstItem: chartData[0]
+      });
+
+      // Dynamic height: more space per item for readability
+      const chartHeight = Math.max(400, chartData.length * 45);
+
+      // Format number helper
+      const formatNumber = (value: number) => {
+        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+        if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+        return value.toString();
+      };
+
+      return (
+        <div key={index} className="layout-graph" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+          {field.title && <h4 style={{ marginBottom: '1.25rem', fontSize: '1rem' }}>{field.title}</h4>}
+          {field.description && <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{field.description}</p>}
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <BarChart 
+              data={chartData} 
+              layout="vertical"
+              margin={{ top: 10, right: 30, left: 20, bottom: 10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" opacity={0.5} />
+              <XAxis 
+                type="number" 
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                tickFormatter={formatNumber}
+              />
+              <YAxis 
+                type="category" 
+                dataKey={nameKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }} 
+                width={180}
+                tick={{ fill: '#aaaaaa' }}
+              />
+              <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{ fill: 'rgba(102, 126, 234, 0.1)' }}
+                contentStyle={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem'
+                }}
+              />
+              <Legend 
+                wrapperStyle={{ paddingTop: '15px' }}
+                iconType="rect"
+              />
+              <Bar 
+                dataKey={dataKey}
+                fill={COLORS[0]}
+                radius={[0, 6, 6, 0]}
+                barSize={25}
+                animationDuration={800}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (field.graph_type === 'scatterplot') {
+      // ScatterPlot - Recharts format
+      if (!field.data.scatterData || !Array.isArray(field.data.scatterData)) {
+        console.warn('[scatterplot] Missing scatterData array');
+        return null;
+      }
+
+      const scatterData = field.data.scatterData;
+      const xKey = (field.data.xKey as string) || 'x';
+      const yKey = (field.data.yKey as string) || 'y';
+      const nameKey = field.data.nameKey as string | undefined;
+      const groupKey = field.data.groupKey as string | undefined;
+      const groups = field.data.groups as string[] | undefined;
+
+      console.log('[scatterplot] Rendering:', {
+        points: scatterData.length,
+        xKey,
+        yKey,
+        hasGroups: !!groupKey,
+        groups: groups?.length || 0
+      });
+
+      // Group data by group_field if exists
+      const groupedData: Record<string, any[]> = {};
+      
+      if (groupKey && groups) {
+        // Initialize groups
+        groups.forEach(g => { groupedData[g] = []; });
+        // Distribute points
+        scatterData.forEach(point => {
+          const group = point[groupKey] as string || 'Ungrouped';
+          if (!groupedData[group]) groupedData[group] = [];
+          groupedData[group].push(point);
+        });
+      } else {
+        // No grouping - single scatter
+        groupedData['All'] = scatterData;
+      }
+
+      const chartHeight = 450;
+
+      // Custom scatter tooltip
+      const ScatterTooltip = ({ active, payload }: any) => {
+        if (active && payload && payload.length > 0) {
+          const data = payload[0].payload;
+          return (
+            <div className="chart-tooltip" style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-primary)',
+              borderRadius: '6px',
+              padding: '0.75rem',
+              fontSize: '0.85rem'
+            }}>
+              {nameKey && data[nameKey] && <p className="tooltip-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{data[nameKey]}</p>}
+              <p className="tooltip-value" style={{ margin: '0.15rem 0' }}>X: <strong>{data[xKey]?.toLocaleString()}</strong></p>
+              <p className="tooltip-value" style={{ margin: '0.15rem 0' }}>Y: <strong>{data[yKey]?.toLocaleString()}</strong></p>
+              {groupKey && data[groupKey] && <p className="tooltip-group" style={{ marginTop: '0.25rem', color: 'var(--text-secondary)' }}>Group: {data[groupKey]}</p>}
+            </div>
+          );
+        }
+        return null;
+      };
+
+      return (
+        <div key={index} className="layout-graph" style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+          {field.title && <h4 style={{ marginBottom: '1.25rem', fontSize: '1rem' }}>{field.title}</h4>}
+          {field.description && <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{field.description}</p>}
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" opacity={0.5} />
+              <XAxis 
+                type="number" 
+                dataKey={xKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                name={xKey}
+              />
+              <YAxis 
+                type="number" 
+                dataKey={yKey}
+                stroke="#888888" 
+                style={{ fontSize: '0.85rem' }}
+                name={yKey}
+              />
+              <ZAxis range={[60, 400]} />
+              <Tooltip 
+                content={<ScatterTooltip />}
+                cursor={{ strokeDasharray: '3 3' }}
+              />
+              {groups && groups.length > 1 && <Legend wrapperStyle={{ paddingTop: '15px' }} />}
+              
+              {Object.entries(groupedData).map(([groupName, points], i) => (
+                <Scatter
+                  key={groupName}
+                  name={groupName}
+                  data={points}
+                  fill={COLORS[i % COLORS.length]}
+                  shape="circle"
+                  animationDuration={800}
+                />
+              ))}
+            </ScatterChart>
           </ResponsiveContainer>
         </div>
       );
@@ -1218,7 +1491,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
       </div>
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={chatMessagesRef}>
         <div>
           {messages.map((message, messageIndex) => (
             <div key={message.id} className={`message message-${message.type}`}>
@@ -1242,10 +1515,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               {message.updates && message.updates.length > 0 && (
                 <details
                   className="thinking-process"
-                  open={message.isThinkingExpanded}
+                  open
                   onToggle={(e) => {
-                    e.stopPropagation();
-                    toggleThinkingProcess(messageIndex);
+                    if ((e.target as HTMLDetailsElement).open) {
+                      setMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === message.id
+                            ? { ...m, isThinkingExpanded: true }
+                            : m
+                        )
+                      );
+                    } else {
+                      setMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === message.id
+                            ? { ...m, isThinkingExpanded: false }
+                            : m
+                        )
+                      );
+                    }
                   }}
                 >
                   <summary

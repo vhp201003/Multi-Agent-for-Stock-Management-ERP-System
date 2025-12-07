@@ -63,55 +63,99 @@ class LLMMarkdownField(LLMLayoutField):
     )
 
 
-class ChartDataSource(BaseModel):
-    """
-    Simplified specification for chart data extraction.
-
-    LLM only needs to specify:
-    - Which agent and tool has the data
-    - Which fields to use for X and Y axis
-
-    Backend handles all the navigation and data extraction automatically.
-
-    Example:
-    {
-        "agent_type": "inventory",
-        "tool_name": "retrieve_stock_history",
-        "label_field": "posting_date",
-        "value_field": "quantity"
-    }
-    """
+# ============ BASE CLASS ============
+class BaseChartDataSource(BaseModel):
+    """Base class for all chart data sources."""
 
     agent_type: str = Field(
         ...,
-        description=(
-            "REQUIRED: Agent that provides the data. Look at results to find agent name.\n"
-            "Examples: 'inventory', 'sales', 'finance'"
-        ),
+        description="Agent that provides the data (e.g., 'analytics_agent', 'inventory_agent')",
     )
     tool_name: str = Field(
         ...,
-        description=(
-            "REQUIRED: Tool that generated the data. Must match tool name in results.\n"
-            "Examples: 'retrieve_stock_history', 'check_stock', 'get_products'"
-        ),
+        description="Tool that generated the data (e.g., 'analyze_top_performers', 'check_stock')",
     )
-    label_field: str = Field(
-        ...,
-        description=(
-            "REQUIRED: Field name for X-axis (labels/categories).\n"
-            "Look at the data items to find the correct field name.\n"
-            "Examples: 'posting_date', 'product_name', 'category', 'warehouse'"
-        ),
+
+
+# ============ SPECIFIC CHART SCHEMAS ============
+class BarChartDataSource(BaseChartDataSource):
+    """Vertical bar chart: categories on X-axis, values on Y-axis."""
+
+    chart_type: Literal["barchart"] = "barchart"
+    category_field: str = Field(
+        ..., description="Field for X-axis categories (e.g., 'item_name', 'warehouse')"
     )
     value_field: str = Field(
-        ...,
-        description=(
-            "REQUIRED: Field name for Y-axis (numeric values).\n"
-            "Look at the data items to find the correct field name.\n"
-            "Examples: 'quantity', 'amount', 'stock_level', 'total'"
-        ),
+        ..., description="Field for Y-axis values (e.g., 'revenue', 'stock_qty')"
     )
+
+
+class HorizontalBarChartDataSource(BaseChartDataSource):
+    """Horizontal bar chart: categories on Y-axis, values on X-axis. Better for many items with long names."""
+
+    chart_type: Literal["horizontalbarchart"] = "horizontalbarchart"
+    category_field: str = Field(
+        ...,
+        description="Field for Y-axis categories (e.g., 'item_name', 'product_name')",
+    )
+    value_field: str = Field(
+        ..., description="Field for X-axis values (e.g., 'revenue', 'qty')"
+    )
+
+
+class LineChartDataSource(BaseChartDataSource):
+    """Line chart: X-axis (usually time/sequence), Y-axis (metric)."""
+
+    chart_type: Literal["linechart"] = "linechart"
+    x_field: str = Field(
+        ...,
+        description="Field for X-axis, usually date/time (e.g., 'posting_date', 'date')",
+    )
+    y_field: str = Field(
+        ..., description="Field for Y-axis metric (e.g., 'stock_qty', 'amount')"
+    )
+
+
+class PieChartDataSource(BaseChartDataSource):
+    """Pie chart: labels and their proportions."""
+
+    chart_type: Literal["piechart"] = "piechart"
+    label_field: str = Field(
+        ..., description="Field for slice labels (e.g., 'category', 'item_group')"
+    )
+    value_field: str = Field(
+        ..., description="Field for slice sizes (e.g., 'total_sales', 'count')"
+    )
+
+
+class ScatterPlotDataSource(BaseChartDataSource):
+    """Scatter plot: X-Y correlation with optional grouping and labeling."""
+
+    chart_type: Literal["scatterplot"] = "scatterplot"
+    x_field: str = Field(
+        ..., description="Field for X-axis values (e.g., 'price', 'quantity', 'weight')"
+    )
+    y_field: str = Field(
+        ..., description="Field for Y-axis values (e.g., 'sales', 'profit', 'revenue')"
+    )
+    name_field: Optional[str] = Field(
+        None,
+        description="Optional field for point labels/tooltips (e.g., 'item_name', 'product_code')",
+    )
+    group_field: Optional[str] = Field(
+        None,
+        description="Optional field for grouping/coloring points (e.g., 'category', 'warehouse', 'region')",
+    )
+
+
+# ============ UNION TYPE ============
+ChartDataSource = Union[
+    BarChartDataSource,
+    HorizontalBarChartDataSource,
+    LineChartDataSource,
+    PieChartDataSource,
+    ScatterPlotDataSource,
+]
 
 
 class LLMGraphField(LLMLayoutField):
@@ -156,7 +200,9 @@ class LLMGraphField(LLMLayoutField):
     field_type: Literal["graph"] = Field(
         default="graph", description="Must be exactly 'graph'"
     )
-    graph_type: Literal["piechart", "barchart", "linechart"] = Field(
+    graph_type: Literal[
+        "piechart", "barchart", "horizontalbarchart", "linechart", "scatterplot"
+    ] = Field(
         ...,
         description=(
             "REQUIRED: Chart type based on data structure (NOT domain):\n\n"
@@ -164,14 +210,23 @@ class LLMGraphField(LLMLayoutField):
             "  When: Have categories + numeric values representing parts of whole\n"
             "  Example: Product distribution, category breakdown, status counts\n"
             "  Max: 8 items recommended\n\n"
-            "- 'barchart': Compare values across categories\n"
+            "- 'barchart': Compare values across categories (vertical)\n"
             "  When: Have categories + numeric values to compare side-by-side\n"
             "  Example: Stock levels by product, sales by region, counts by type\n"
             "  Max: 15 items recommended\n\n"
+            "- 'horizontalbarchart': Compare values across categories (horizontal)\n"
+            "  When: Have many categories (>5) with long names + numeric values\n"
+            "  Example: Product comparison, multi-item inventory levels, top performers\n"
+            "  Max: 20 items recommended (better for long labels)\n\n"
             "- 'linechart': Show progression/trends over sequence\n"
             "  When: Have ordered/sequential labels + numeric values\n"
             "  Example: Time series, historical trends, sequential measurements\n"
             "  Max: 50 points recommended\n\n"
+            "- 'scatterplot': Show correlation/relationship between two numeric variables\n"
+            "  When: Have two numeric fields to compare (X vs Y)\n"
+            "  Example: Price vs Sales, Quantity vs Revenue, Weight vs Cost\n"
+            "  Max: 100 points recommended\n"
+            "  Optional: Add group_field for colored clusters, name_field for tooltips\n\n"
             "Select based on what insights the data provides, not what domain it's from."
         ),
     )
@@ -193,13 +248,31 @@ class LLMGraphField(LLMLayoutField):
     )
     data_source: ChartDataSource = Field(
         ...,
+        discriminator="chart_type",
         description=(
-            "REQUIRED: Specification of WHERE and HOW to extract chart data from context.\n\n"
-            "You MUST:\n"
-            "1. Look at AVAILABLE DATA section to identify correct agent_type and tool_name\n"
-            "2. Examine the tool result structure to identify exact field names\n"
-            "3. Specify label_field (X-axis) and value_field (Y-axis) using EXACT field names\n"
-            "4. Set data_path if array is nested (default 'data' works for most cases)\n\n"
+            "REQUIRED: Type-safe data source specification. MUST include 'chart_type' field matching graph_type.\n\n"
+            "CRITICAL: Always set 'chart_type' field first!\n\n"
+            "Schema by chart type:\n"
+            '- barchart: {"chart_type": "barchart", "agent_type": "...", "tool_name": "...", "category_field": "...", "value_field": "..."}\n'
+            '- horizontalbarchart: {"chart_type": "horizontalbarchart", "agent_type": "...", "tool_name": "...", "category_field": "...", "value_field": "..."}\n'
+            '- linechart: {"chart_type": "linechart", "agent_type": "...", "tool_name": "...", "x_field": "...", "y_field": "..."}\n'
+            '- piechart: {"chart_type": "piechart", "agent_type": "...", "tool_name": "...", "label_field": "...", "value_field": "..."}\n'
+            '- scatterplot: {"chart_type": "scatterplot", "agent_type": "...", "tool_name": "...", "x_field": "...", "y_field": "...", "name_field": "...", "group_field": "..."}\n\n'
+            "Steps:\n"
+            "1. Set chart_type to EXACTLY match graph_type\n"
+            "2. Identify agent_type and tool_name from AVAILABLE DATA section\n"
+            "3. Examine tool result structure for exact field names\n"
+            "4. Use correct field names for the chart type (see schemas above)\n\n"
+            "Example for scatterplot:\n"
+            "{\n"
+            '  "chart_type": "scatterplot",\n'
+            '  "agent_type": "analytics",\n'
+            '  "tool_name": "analyze_price_performance",\n'
+            '  "x_field": "standard_rate",\n'
+            '  "y_field": "total_qty_sold",\n'
+            '  "name_field": "item_name",\n'
+            '  "group_field": "item_group"\n'
+            "}\n\n"
             "DO NOT guess field names - they must match exactly what's in the data."
         ),
     )

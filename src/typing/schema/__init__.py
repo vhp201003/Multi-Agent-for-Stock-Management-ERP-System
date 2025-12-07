@@ -1,10 +1,16 @@
 from .base_schema import BaseSchema
 from .chat_agent import (
+    BarChartDataSource,
+    BaseChartDataSource,
     ChartDataSource,
     ChatAgentSchema,
+    HorizontalBarChartDataSource,
+    LineChartDataSource,
     LLMGraphField,
     LLMMarkdownField,
     LLMTableField,
+    PieChartDataSource,
+    ScatterPlotDataSource,
 )
 from .orchestrator import OrchestratorSchema, TaskNode
 from .summary_agent import SummaryAgentSchema
@@ -15,10 +21,16 @@ __all__ = [
     "TaskNode",
     "OrchestratorSchema",
     "ChatAgentSchema",
+    "BaseChartDataSource",
+    "BarChartDataSource",
+    "HorizontalBarChartDataSource",
+    "LineChartDataSource",
+    "PieChartDataSource",
     "ChartDataSource",
     "LLMMarkdownField",
     "LLMGraphField",
     "LLMTableField",
     "SummaryAgentSchema",
     "ToolCallSchema",
+    "ScatterPlotDataSource",
 ]
