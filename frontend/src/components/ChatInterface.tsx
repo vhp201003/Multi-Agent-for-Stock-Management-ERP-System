@@ -89,14 +89,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { hitlMode } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const chatMessagesRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
+  
+  // Buffer for batching updates to same message (avoid excessive re-renders)
+  const updateBufferRef = React.useRef<Map<string, TaskUpdate[]>>(new Map());
+  const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Toggle thinking process expand/collapse
+  // Toggle thinking process expand/collapse - update state via details element
   const toggleThinkingProcess = useCallback((messageIndex: number) => {
     setMessages((prev) =>
       prev.map((msg, idx) =>
@@ -183,6 +188,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = useCallback(() => {
+    const container = chatMessagesRef.current;
+
     // Always scroll on initial load
     if (!initialLoadDone.current && messages.length > 0) {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -193,8 +200,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const lastMessage = messages[messages.length - 1];
     const isUserMessage = lastMessage?.type === "user";
 
+    // Only auto-scroll if user near bottom to avoid fighting manual scroll
+    let isNearBottom = true;
+    if (container) {
+      const distanceToBottom =
+        container.scrollHeight - container.clientHeight - container.scrollTop;
+      isNearBottom = distanceToBottom < 200;
+    }
+
     // Always scroll if the last message is from the user
     if (isUserMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+
+    if (isNearBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
@@ -359,6 +379,41 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messageQueue = React.useRef<QueueItem[]>([]);
   const isProcessingQueue = React.useRef(false);
 
+  // Helper: batch append update to message without immediate setState
+  const bufferUpdateToMessage = useCallback((queryId: string, update: TaskUpdate) => {
+    const key = `${queryId}-thinking`;
+    if (!updateBufferRef.current.has(key)) {
+      updateBufferRef.current.set(key, []);
+    }
+    updateBufferRef.current.get(key)!.push(update);
+
+    // Schedule flush after 80ms (batches typing updates efficiently)
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = setTimeout(() => {
+      flushUpdateBuffer();
+    }, 80);
+  }, []);
+
+  // Helper: flush all buffered updates to state at once
+  const flushUpdateBuffer = useCallback(() => {
+    if (updateBufferRef.current.size === 0) return;
+
+    setMessages((prev) => {
+      const newMessages = [...prev];
+      updateBufferRef.current.forEach((updates, key) => {
+        const idx = newMessages.findIndex((m) => m.id === key);
+        if (idx >= 0) {
+          newMessages[idx] = {
+            ...newMessages[idx],
+            updates: [...(newMessages[idx].updates || []), ...updates],
+          };
+        }
+      });
+      updateBufferRef.current.clear();
+      return newMessages;
+    });
+  }, []);
+
   const processQueue = useCallback(async () => {
     if (isProcessingQueue.current) return;
     isProcessingQueue.current = true;
@@ -370,7 +425,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       // Handle Final Response
       if (item.type === "final_response") {
-        const { response, queryId } = item;
+        const { response, queryId, isNewConversation } = item;
 
         setMessages((prevMessages) => {
           const filtered = prevMessages.filter(
@@ -418,7 +473,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             messagesToAdd.push({
               ...thinkingMsg,
               id: `${queryId}-thinking-display`,
-              isThinkingExpanded: false,
+              isThinkingExpanded: true,
             });
           }
 
@@ -535,7 +590,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [autoApprovedUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
@@ -590,7 +644,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 content: "",
                 timestamp: new Date(),
                 updates: [approvalUpdate],
-                isThinkingExpanded: false,
               },
             ];
           }
@@ -708,7 +761,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (message.type === "thinking" && uiUpdate.message) {
           const fullText = uiUpdate.message;
           let currentText = "";
-          const chunkSize = 15; // chars per tick
+          const chunkSize = 45; // bigger chunk to reduce re-renders
+          const minFlushGap = 60; // ms
+          let lastFlush = performance.now();
 
           // Create the update object initially with empty message
           const updateId = generateId();
@@ -728,13 +783,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [initialUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
             return prev.map((msg) =>
               msg.id === `${queryId}-thinking`
-                ? { ...msg, updates: [...(msg.updates || []), initialUpdate] }
+                ? {
+                    ...msg,
+                    updates: [...(msg.updates || []), initialUpdate],
+                  }
                 : msg
             );
           });
@@ -742,21 +799,36 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           // Type out the text
           for (let i = 0; i < fullText.length; i += chunkSize) {
             currentText += fullText.slice(i, i + chunkSize);
+            const now = performance.now();
 
-            setMessages((prev) =>
-              prev.map((msg) => {
-                if (msg.id !== `${queryId}-thinking`) return msg;
-                const updates = msg.updates || [];
-                const newUpdates = updates.map((u) =>
-                  (u as any).id === updateId
-                    ? { ...u, message: currentText }
-                    : u
-                );
-                return { ...msg, updates: newUpdates };
-              })
-            );
+            // Throttle state updates to avoid jitter
+            if (
+              now - lastFlush >= minFlushGap ||
+              i + chunkSize >= fullText.length
+            ) {
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id !== `${queryId}-thinking`) return msg;
+                  const updates = msg.updates || [];
+                  const newUpdates = updates.map((u) =>
+                    (u as any).id === updateId
+                      ? { ...u, message: currentText }
+                      : u
+                  );
+                  return {
+                    ...msg,
+                    updates: newUpdates,
+                    isThinkingExpanded:
+                      msg.isThinkingExpanded === undefined
+                        ? true
+                        : msg.isThinkingExpanded,
+                  };
+                })
+              );
 
-            await new Promise((r) => setTimeout(r, 5)); // 10ms delay for typing speed
+              lastFlush = now;
+              await new Promise((r) => setTimeout(r, 25));
+            }
           }
         } else {
           // Non-typing updates (immediate)
@@ -773,13 +845,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   content: "",
                   timestamp: new Date(),
                   updates: [uiUpdate],
-                  isThinkingExpanded: false,
                 },
               ];
             }
             return prev.map((msg) =>
               msg.id === `${queryId}-thinking`
-                ? { ...msg, updates: [...(msg.updates || []), uiUpdate] }
+                ? {
+                    ...msg,
+                    updates: [...(msg.updates || []), uiUpdate],
+                  }
                 : msg
             );
           });
@@ -1417,7 +1491,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
       </div>
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={chatMessagesRef}>
         <div>
           {messages.map((message, messageIndex) => (
             <div key={message.id} className={`message message-${message.type}`}>
@@ -1441,10 +1515,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               {message.updates && message.updates.length > 0 && (
                 <details
                   className="thinking-process"
-                  open={message.isThinkingExpanded}
+                  open
                   onToggle={(e) => {
-                    e.stopPropagation();
-                    toggleThinkingProcess(messageIndex);
+                    if ((e.target as HTMLDetailsElement).open) {
+                      setMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === message.id
+                            ? { ...m, isThinkingExpanded: true }
+                            : m
+                        )
+                      );
+                    } else {
+                      setMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === message.id
+                            ? { ...m, isThinkingExpanded: false }
+                            : m
+                        )
+                      );
+                    }
                   }}
                 >
                   <summary
