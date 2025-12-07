@@ -46,8 +46,8 @@ class LLMMarkdownField(LLMLayoutField):
     field_type: Literal["markdown"] = Field(
         default="markdown", description="Must be exactly 'markdown'"
     )
-    content: str = Field(
-        ...,
+    content: Optional[str] = Field(
+        default="",
         description=(
             "REQUIRED: Markdown-formatted text content.\n\n"
             "Supported formatting:\n"
@@ -67,12 +67,12 @@ class LLMMarkdownField(LLMLayoutField):
 class BaseChartDataSource(BaseModel):
     """Base class for all chart data sources."""
 
-    agent_type: str = Field(
-        ...,
+    agent_type: Optional[str] = Field(
+        default=None,
         description="Agent that provides the data (e.g., 'analytics_agent', 'inventory_agent')",
     )
-    tool_name: str = Field(
-        ...,
+    tool_name: Optional[str] = Field(
+        default=None,
         description="Tool that generated the data (e.g., 'analyze_top_performers', 'check_stock')",
     )
 
@@ -82,11 +82,13 @@ class BarChartDataSource(BaseChartDataSource):
     """Vertical bar chart: categories on X-axis, values on Y-axis."""
 
     chart_type: Literal["barchart"] = "barchart"
-    category_field: str = Field(
-        ..., description="Field for X-axis categories (e.g., 'item_name', 'warehouse')"
+    category_field: Optional[str] = Field(
+        default=None,
+        description="Field for X-axis categories (e.g., 'item_name', 'warehouse')",
     )
-    value_field: str = Field(
-        ..., description="Field for Y-axis values (e.g., 'revenue', 'stock_qty')"
+    value_field: Optional[str] = Field(
+        default=None,
+        description="Field for Y-axis values (e.g., 'revenue', 'stock_qty')",
     )
 
 
@@ -94,12 +96,12 @@ class HorizontalBarChartDataSource(BaseChartDataSource):
     """Horizontal bar chart: categories on Y-axis, values on X-axis. Better for many items with long names."""
 
     chart_type: Literal["horizontalbarchart"] = "horizontalbarchart"
-    category_field: str = Field(
-        ...,
+    category_field: Optional[str] = Field(
+        default=None,
         description="Field for Y-axis categories (e.g., 'item_name', 'product_name')",
     )
-    value_field: str = Field(
-        ..., description="Field for X-axis values (e.g., 'revenue', 'qty')"
+    value_field: Optional[str] = Field(
+        default=None, description="Field for X-axis values (e.g., 'revenue', 'qty')"
     )
 
 
@@ -107,12 +109,13 @@ class LineChartDataSource(BaseChartDataSource):
     """Line chart: X-axis (usually time/sequence), Y-axis (metric)."""
 
     chart_type: Literal["linechart"] = "linechart"
-    x_field: str = Field(
-        ...,
+    x_field: Optional[str] = Field(
+        default=None,
         description="Field for X-axis, usually date/time (e.g., 'posting_date', 'date')",
     )
-    y_field: str = Field(
-        ..., description="Field for Y-axis metric (e.g., 'stock_qty', 'amount')"
+    y_field: Optional[str] = Field(
+        default=None,
+        description="Field for Y-axis metric (e.g., 'stock_qty', 'amount')",
     )
 
 
@@ -120,11 +123,12 @@ class PieChartDataSource(BaseChartDataSource):
     """Pie chart: labels and their proportions."""
 
     chart_type: Literal["piechart"] = "piechart"
-    label_field: str = Field(
-        ..., description="Field for slice labels (e.g., 'category', 'item_group')"
+    label_field: Optional[str] = Field(
+        default=None,
+        description="Field for slice labels (e.g., 'category', 'item_group')",
     )
-    value_field: str = Field(
-        ..., description="Field for slice sizes (e.g., 'total_sales', 'count')"
+    value_field: Optional[str] = Field(
+        default=None, description="Field for slice sizes (e.g., 'total_sales', 'count')"
     )
 
 
@@ -132,11 +136,13 @@ class ScatterPlotDataSource(BaseChartDataSource):
     """Scatter plot: X-Y correlation with optional grouping and labeling."""
 
     chart_type: Literal["scatterplot"] = "scatterplot"
-    x_field: str = Field(
-        ..., description="Field for X-axis values (e.g., 'price', 'quantity', 'weight')"
+    x_field: Optional[str] = Field(
+        default=None,
+        description="Field for X-axis values (e.g., 'price', 'quantity', 'weight')",
     )
-    y_field: str = Field(
-        ..., description="Field for Y-axis values (e.g., 'sales', 'profit', 'revenue')"
+    y_field: Optional[str] = Field(
+        default=None,
+        description="Field for Y-axis values (e.g., 'sales', 'profit', 'revenue')",
     )
     name_field: Optional[str] = Field(
         None,
@@ -246,9 +252,8 @@ class LLMGraphField(LLMLayoutField):
             "Provide business context if relevant."
         ),
     )
-    data_source: ChartDataSource = Field(
-        ...,
-        discriminator="chart_type",
+    data_source: Optional[Union[ChartDataSource, Dict[str, Any]]] = Field(
+        default=None,
         description=(
             "REQUIRED: Type-safe data source specification. MUST include 'chart_type' field matching graph_type.\n\n"
             "CRITICAL: Always set 'chart_type' field first!\n\n"
@@ -328,10 +333,10 @@ class LLMTableField(LLMLayoutField):
             "Examples: 'Product Details', 'Chi Tiết Sản Phẩm'"
         ),
     )
-    data: dict = Field(
-        ...,
+    data: Optional[dict] = Field(
+        default=None,
         description=(
-            "REQUIRED: Table data structure.\n\n"
+            "Table data structure.\n\n"
             "Must be object with:\n"
             "- 'headers': Array of column header strings\n"
             "- 'rows': Array of arrays (each inner array is one row)\n\n"
