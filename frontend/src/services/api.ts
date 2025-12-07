@@ -1,6 +1,7 @@
-import axios from 'axios';
+import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8010';
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8010";
 
 // Helper function to generate unique IDs
 export const generateId = (): string => {
@@ -8,10 +9,10 @@ export const generateId = (): string => {
 };
 
 // HITL Mode types
-export type HITLMode = 'review' | 'auto';
+export type HITLMode = "review" | "auto";
 
 // Theme Mode types
-export type ThemeMode = 'dark' | 'light';
+export type ThemeMode = "dark" | "light";
 
 export interface UserSettings {
   hitl_mode: HITLMode;
@@ -19,9 +20,9 @@ export interface UserSettings {
 }
 
 export interface QueryRequest {
-  query_id: string;  // Frontend tạo và gửi
+  query_id: string; // Frontend tạo và gửi
   query: string;
-  conversation_id?: string;  // Gửi từ message thứ 2 trở đi
+  conversation_id?: string; // Gửi từ message thứ 2 trở đi
 }
 
 export interface QueryResponse {
@@ -62,13 +63,14 @@ class ApiService {
     baseURL: API_BASE_URL,
     timeout: 300000, // 5 minutes
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
   });
 
   async getMe(token: string): Promise<any> {
-    const response = await this.client.get('/auth/me', {
-      headers: { Authorization: `Bearer ${token}` }
+    console.log("[API] getMe called with token:", token?.slice(0, 20) + "...");
+    const response = await this.client.get("/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
     });
     return response.data;
   }
@@ -76,59 +78,109 @@ class ApiService {
   async login(data: any): Promise<any> {
     // Form data for OAuth2
     const formData = new FormData();
-    formData.append('username', data.email);
-    formData.append('password', data.password);
-    
-    const response = await this.client.post('/auth/token', formData, {
+    formData.append("username", data.email);
+    formData.append("password", data.password);
+
+    const response = await this.client.post("/auth/token", formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        "Content-Type": "multipart/form-data",
       },
     });
     return response.data;
   }
 
   async register(data: any): Promise<any> {
-    const response = await this.client.post('/auth/register', data);
+    const response = await this.client.post("/auth/register", data);
     return response.data;
   }
 
-  async submitQuery(queryId: string, query: string, conversationId?: string): Promise<QueryResponse> {
-    const token = localStorage.getItem('token');
+  async submitQuery(
+    queryId: string,
+    query: string,
+    conversationId?: string
+  ): Promise<QueryResponse> {
+    // Try both 'authToken' (new) and 'token' (legacy) for compatibility
+    const token =
+      localStorage.getItem("authToken") || localStorage.getItem("token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    
+
+    console.log("[API] submitQuery:", {
+      queryId,
+      conversationId,
+      hasToken: !!token,
+    });
+
     const requestData: QueryRequest = {
       query_id: queryId,
       query,
       ...(conversationId && { conversation_id: conversationId }),
     };
-    
-    const response = await this.client.post<QueryResponse>('/query', requestData, { headers });
+
+    const response = await this.client.post<QueryResponse>(
+      "/query",
+      requestData,
+      { headers }
+    );
     return response.data;
   }
 
   async getQueryStatus(queryId: string): Promise<QueryStatus> {
-    const token = localStorage.getItem('token');
+    const token =
+      localStorage.getItem("authToken") || localStorage.getItem("token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const response = await this.client.get<QueryStatus>(`/query/${queryId}`, { headers });
+    const response = await this.client.get<QueryStatus>(`/query/${queryId}`, {
+      headers,
+    });
     return response.data;
   }
 
   async checkHealth(): Promise<{ status: string }> {
-    const response = await this.client.get<{ status: string }>('/health');
+    const response = await this.client.get<{ status: string }>("/health");
     return response.data;
   }
 
   async getUserSettings(token: string): Promise<UserSettings> {
-    const response = await this.client.get<UserSettings>('/auth/settings', {
-      headers: { Authorization: `Bearer ${token}` }
+    const response = await this.client.get<UserSettings>("/auth/settings", {
+      headers: { Authorization: `Bearer ${token}` },
     });
     return response.data;
   }
 
-  async updateUserSettings(token: string, settings: Partial<UserSettings>): Promise<UserSettings> {
-    const response = await this.client.patch<UserSettings>('/auth/settings', settings, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+  async updateUserSettings(
+    token: string,
+    settings: Partial<UserSettings>
+  ): Promise<UserSettings> {
+    const response = await this.client.patch<UserSettings>(
+      "/auth/settings",
+      settings,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    return response.data;
+  }
+
+  async submitApprovalResponse(approvalResponse: {
+    approval_id: string;
+    query_id: string;
+    action: string;
+    modified_params?: any;
+    reason?: string;
+  }): Promise<{ status: string; message: string }> {
+    console.log(
+      "[API] 📤 Submitting approval response via REST:",
+      approvalResponse
+    );
+    const token =
+      localStorage.getItem("authToken") || localStorage.getItem("token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    const response = await this.client.post(
+      "/approval-response",
+      approvalResponse,
+      { headers }
+    );
+    console.log("[API] ✅ Approval response submitted:", response.data);
     return response.data;
   }
 }

@@ -86,16 +86,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { hitlMode } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const chatMessagesRef = React.useRef<HTMLDivElement>(null);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
-  const lastMessageIdRef = React.useRef<string | null>(null);
 
-  // Toggle thinking process expand/collapse - simplified without scroll restoration
+  // Toggle thinking process expand/collapse
   const toggleThinkingProcess = useCallback((messageIndex: number) => {
     setMessages((prev) =>
       prev.map((msg, idx) =>
@@ -130,59 +128,77 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // HITL: Handle approval response from inline card
   const handleApprovalResponse = useCallback(
-    (response: ApprovalResponse) => {
-      // Mark as resolved
+    async (response: ApprovalResponse) => {
+      console.log("[ChatInterface] 🔔 Handling approval response:", {
+        approval_id: response.approval_id,
+        action: response.action,
+        query_id: response.query_id,
+      });
+
+      // Mark as resolved immediately for UI feedback
       setResolvedApprovals((prev) => {
         const newMap = new Map(prev);
         newMap.set(response.approval_id, response.action);
         return newMap;
       });
 
-      // Send to backend via WebSocket
-      wsService.sendApprovalResponse(response);
+      try {
+        // Send approval response via REST API (more reliable than WebSocket)
+        await apiService.submitApprovalResponse(response);
+        console.log(
+          "[ChatInterface] ✅ Approval response sent successfully via REST API"
+        );
 
-      // Show toast
-      const actionText =
-        response.action === "approve"
-          ? "approved"
-          : response.action === "modify"
-          ? "modified & approved"
-          : "rejected";
-      addToast(
-        `Action ${actionText}`,
-        response.action === "reject" ? "warning" : "success"
-      );
+        // Show success toast
+        const actionText =
+          response.action === "approve"
+            ? "approved"
+            : response.action === "modify"
+            ? "modified & approved"
+            : "rejected";
+        addToast(`Action ${actionText}`, "success");
+      } catch (error) {
+        console.error(
+          "[ChatInterface] ❌ Failed to send approval response:",
+          error
+        );
+        addToast(
+          "Failed to send approval response. Please try again.",
+          "error"
+        );
+
+        // Revert resolved state on error
+        setResolvedApprovals((prev) => {
+          const newMap = new Map(prev);
+          newMap.delete(response.approval_id);
+          return newMap;
+        });
+      }
     },
     [addToast]
   );
 
-  // Auto-scroll to bottom ONLY when NEW messages arrive
-  useEffect(() => {
-    if (messages.length === 0) return;
-
-    const lastMessage = messages[messages.length - 1];
-
-    // Check if this is actually a NEW message (different ID)
-    if (lastMessageIdRef.current === lastMessage.id) {
-      return; // Same message, just state update (like toggle), don't scroll
-    }
-
-    // New message detected, update ref
-    lastMessageIdRef.current = lastMessage.id;
-
+  // Auto-scroll to bottom when messages change
+  const scrollToBottom = useCallback(() => {
     // Always scroll on initial load
-    if (!initialLoadDone.current) {
+    if (!initialLoadDone.current && messages.length > 0) {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       initialLoadDone.current = true;
       return;
     }
 
-    // Scroll for new user messages
-    const isUserMessage = lastMessage.type === "user";
+    const lastMessage = messages[messages.length - 1];
+    const isUserMessage = lastMessage?.type === "user";
+
+    // Always scroll if the last message is from the user
     if (isUserMessage) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   // Load messages from backend or localStorage when conversation changes
   useEffect(() => {
@@ -783,6 +799,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setLoading(true);
 
       try {
+        // Only disconnect if WebSocket is for a different query
+        const currentQueryId = wsService.getQueryId();
+        console.log("[ChatInterface] 📡 WebSocket state:", {
+          currentQueryId,
+          newQueryId: queryId,
+          isConnected: wsService.isConnected(),
+        });
+
+        // Always clear old handlers and reconnect for new query
         wsService.clearHandlers();
         wsService.connect(queryId);
 
@@ -791,11 +816,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         });
 
         wsService.onClose(() => {
-          // Optional: handle close
+          console.log("[ChatInterface] WebSocket closed for query:", queryId);
         });
 
         wsService.onError((error) => {
-          console.error("WebSocket error:", error);
+          console.error("[ChatInterface] WebSocket error:", error);
         });
 
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -820,7 +845,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         addToast("Failed to send message. Please try again.", "error");
       }
     },
-    [loading, conversationId, addToQueue, addToast]
+    [loading, conversationId, addToQueue, addToast, onConversationChange]
   );
 
   // Render graph/chart
@@ -1154,7 +1179,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
       </div>
 
-      <div className="chat-messages" ref={chatMessagesRef}>
+      <div className="chat-messages">
         <div>
           {messages.map((message, messageIndex) => (
             <div key={message.id} className={`message message-${message.type}`}>

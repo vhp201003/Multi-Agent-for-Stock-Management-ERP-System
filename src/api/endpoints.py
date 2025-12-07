@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from src.api.lifespan import agent_manager
 from src.typing import Request
@@ -13,6 +14,16 @@ from src.typing.redis import RedisChannels, RedisKeys
 from src.typing.redis.shared_data import SharedData
 
 logger = logging.getLogger(__name__)
+
+
+class ApprovalResponseRequest(BaseModel):
+    """Request model for approval response via REST API"""
+
+    approval_id: str
+    query_id: str
+    action: str  # 'approve', 'reject', 'modify'
+    modified_params: Optional[dict] = None
+    reason: Optional[str] = None
 
 
 def validate_query_request(request: Request) -> Optional[str]:
@@ -91,13 +102,18 @@ async def websocket_handler(websocket: WebSocket, query_id: str):
                             query_id
                         )
 
+                        logger.info(
+                            f"📨 Received approval response from frontend for query_id {query_id}: "
+                            f"approval_id={approval_data.get('approval_id')}, "
+                            f"action={approval_data.get('action')}"
+                        )
+
                         # Publish to approval response channel for agent to receive
                         await redis_client.publish(
                             approval_channel, json.dumps(approval_data)
                         )
                         logger.info(
-                            f"Forwarded approval response for query_id {query_id}: "
-                            f"action={approval_data.get('action')}"
+                            f"✅ Published approval response to Redis channel: {approval_channel}"
                         )
                     else:
                         logger.debug(
@@ -223,3 +239,49 @@ async def health_check():
             "error": str(e)[:100],  # Truncate for security
             "timestamp": datetime.now().isoformat(),
         }
+
+
+async def handle_approval_response(request: ApprovalResponseRequest):
+    """
+    REST endpoint to handle approval responses.
+    This allows approvals to be sent even when WebSocket is disconnected.
+    """
+    try:
+        redis_client = agent_manager.redis_client
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Redis not available")
+
+        # Get approval response channel for the query
+        approval_channel = RedisChannels.get_approval_response_channel(request.query_id)
+
+        # Prepare approval data
+        approval_data = {
+            "approval_id": request.approval_id,
+            "query_id": request.query_id,
+            "action": request.action,
+        }
+
+        if request.modified_params:
+            approval_data["modified_params"] = request.modified_params
+        if request.reason:
+            approval_data["reason"] = request.reason
+
+        # Publish to Redis channel for agent to receive
+        await redis_client.publish(approval_channel, json.dumps(approval_data))
+
+        logger.info(
+            f"✅ [REST] Published approval response to Redis channel: {approval_channel}, "
+            f"approval_id={request.approval_id}, action={request.action}"
+        )
+
+        return {
+            "status": "success",
+            "message": "Approval response submitted successfully",
+            "approval_id": request.approval_id,
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to handle approval response: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process approval: {str(e)}"
+        )

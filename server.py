@@ -61,6 +61,12 @@ async def health_endpoint():
     return await endpoints.health_check()
 
 
+@app.post("/approval-response")
+async def approval_response_endpoint(request: endpoints.ApprovalResponseRequest):
+    """REST endpoint to handle approval responses (alternative to WebSocket)"""
+    return await endpoints.handle_approval_response(request)
+
+
 @app.post("/conversations", response_model=conversation_endpoints.ConversationResponse)
 async def create_conversation(
     request: conversation_endpoints.ConversationCreateRequest,
@@ -144,9 +150,6 @@ async def delete_conversation(conversation_id: str, user_id: str = Query(None)):
         )
     finally:
         await redis_client.aclose()
-
-
-
 
 
 if __name__ == "__main__":

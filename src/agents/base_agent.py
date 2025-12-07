@@ -95,7 +95,17 @@ class BaseAgent(ABC):
             timeout_seconds=hitl.timeout_seconds,
         )
 
-        # Broadcast to frontend
+        # Subscribe to response channel FIRST to avoid race condition
+        response_channel = RedisChannels.get_approval_response_channel(query_id)
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(response_channel)
+
+        logger.info(
+            f"{self.agent_type}: Subscribed to approval channel, now broadcasting request for '{tool_name}' "
+            f"(approval_id: {approval_request.approval_id}, timeout: {hitl.timeout_seconds}s)"
+        )
+
+        # Broadcast to frontend AFTER subscribing
         await self.publish_broadcast(
             RedisChannels.get_query_updates_channel(query_id),
             MessageType.APPROVAL_REQUIRED,
@@ -104,19 +114,19 @@ class BaseAgent(ABC):
 
         logger.info(
             f"{self.agent_type}: Waiting for approval on '{tool_name}' "
-            f"(approval_id: {approval_request.approval_id}, timeout: {hitl.timeout_seconds}s)"
+            f"(approval_id: {approval_request.approval_id})"
         )
 
-        # Subscribe and wait for response
-        response_channel = RedisChannels.get_approval_response_channel(query_id)
-        pubsub = self.redis.pubsub()
-        await pubsub.subscribe(response_channel)
-
+        # Wait for response
         try:
             async with asyncio.timeout(hitl.timeout_seconds):
                 async for message in pubsub.listen():
                     if message["type"] != "message":
                         continue
+
+                    logger.debug(
+                        f"{self.agent_type}: Received message on approval channel: {message['data'][:100]}..."
+                    )
 
                     try:
                         response = ApprovalResponse.model_validate_json(message["data"])
@@ -124,8 +134,8 @@ class BaseAgent(ABC):
                         # Match approval_id to handle multiple pending approvals
                         if response.approval_id == approval_request.approval_id:
                             logger.info(
-                                f"{self.agent_type}: Received approval response: "
-                                f"{response.action.value} for '{tool_name}'"
+                                f"{self.agent_type}: ✅ Received matching approval response: "
+                                f"{response.action.value} for '{tool_name}' (approval_id: {response.approval_id})"
                             )
 
                             # Broadcast resolution
@@ -140,8 +150,15 @@ class BaseAgent(ABC):
                             )
 
                             return response
+                        else:
+                            logger.debug(
+                                f"{self.agent_type}: Received approval for different request: "
+                                f"{response.approval_id} (expected: {approval_request.approval_id})"
+                            )
                     except Exception as e:
-                        logger.warning(f"Invalid approval response: {e}")
+                        logger.warning(
+                            f"Invalid approval response: {e}, data: {message['data']}"
+                        )
                         continue
 
         except asyncio.TimeoutError:
