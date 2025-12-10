@@ -3,8 +3,6 @@ import logging
 
 from src.communication import get_async_redis_connection
 from src.typing.redis import (
-    AgentStatus,
-    CommandMessage,
     QueryTask,
     RedisChannels,
     RedisKeys,
@@ -16,8 +14,6 @@ from src.typing.redis import (
 
 logger = logging.getLogger(__name__)
 
-BLPOP_TIMEOUT = 5
-
 
 class BaseManager:
     def __init__(self, agent_type: str):
@@ -28,10 +24,7 @@ class BaseManager:
 
     async def start(self):
         self._running = True
-        await asyncio.gather(
-            self._listen_channels(),
-            self._consume_queue(),
-        )
+        await self._listen_channels()
 
     async def stop(self):
         self._running = False
@@ -108,86 +101,6 @@ class BaseManager:
         await asyncio.sleep(0.05)  # Wait for SharedData sync
         await self._promote_pending(update.query_id)
 
-    # ==================== QUEUE CONSUMER ====================
-
-    async def _consume_queue(self):
-        """BLPOP active queue → dispatch to worker."""
-        queue_key = RedisKeys.get_agent_queue(self.agent_type)
-
-        while self._running:
-            try:
-                # Wait for agent to be IDLE
-                if not await self._wait_agent_idle():
-                    continue
-
-                result = await self.redis.blpop(queue_key, timeout=BLPOP_TIMEOUT)
-                if result:
-                    _, task_data = result
-                    await self._dispatch(task_data)
-            except Exception as e:
-                logger.error(f"Manager {self.agent_type}: Consumer error: {e}")
-                await asyncio.sleep(1)
-
-    async def _wait_agent_idle(self) -> bool:
-        """Check if ANY worker instance is IDLE (multi-instance aware)."""
-        status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
-
-        # Get all instance statuses: {instance_id: status}
-        instance_statuses = await self.redis.hgetall(status_key)
-
-        if not instance_statuses:
-            # No workers registered yet, wait
-            await asyncio.sleep(0.5)
-            return False
-
-        # Decode and check if any instance is IDLE
-        for instance_id, status_val in instance_statuses.items():
-            if isinstance(status_val, bytes):
-                status_val = status_val.decode()
-            if isinstance(instance_id, bytes):
-                instance_id = instance_id.decode()
-
-            try:
-                status = AgentStatus(status_val)
-            except ValueError:
-                # Invalid status, treat as IDLE
-                status = AgentStatus.IDLE
-
-            # Reset ERROR to IDLE
-            if status == AgentStatus.ERROR:
-                await self.redis.hset(status_key, instance_id, AgentStatus.IDLE.value)
-                return True
-
-            # Found an IDLE worker
-            if status == AgentStatus.IDLE:
-                return True
-
-        # All workers are PROCESSING, wait
-        await asyncio.sleep(0.5)
-        return False
-
-    async def _dispatch(self, task_data: str):
-        """Dispatch task to worker via pub/sub."""
-        try:
-            task = TaskQueueItem.model_validate_json(task_data)
-            shared_data = await self._get_shared_data(task.query_id)
-            if not shared_data:
-                return
-
-            msg = CommandMessage(
-                agent_type=self.agent_type,
-                command="execute",
-                query_id=task.query_id,
-                conversation_id=shared_data.conversation_id,
-                sub_query=task.sub_query,
-            )
-            channel = RedisChannels.get_command_channel(self.agent_type)
-            await self.redis.publish(channel, msg.model_dump_json())
-            logger.info(
-                f"Manager {self.agent_type}: Dispatched: {task.sub_query[:50]}..."
-            )
-        except Exception as e:
-            logger.error(f"Manager {self.agent_type}: Dispatch failed: {e}")
 
     # ==================== PENDING → ACTIVE ====================
 

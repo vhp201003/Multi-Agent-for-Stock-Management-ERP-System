@@ -21,6 +21,8 @@ from src.typing.redis import (
     CommandMessage,
     RedisChannels,
     RedisKeys,
+    SharedData,
+    TaskQueueItem,
     TaskStatus,
     TaskUpdate,
 )
@@ -317,8 +319,71 @@ class WorkerAgent(BaseAgent):
             "content": json.dumps({"error": error_msg}),
         }
 
+    async def _worker_pull_loop(self):
+        queue_key = RedisKeys.get_agent_queue(self.agent_type)
+        BLPOP_TIMEOUT = 5  # seconds
+
+        logger.info(
+            f"{self.agent_type}[{self.instance_id}]: Starting pull loop from {queue_key}"
+        )
+
+        while True:  # Continuous pull loop
+            try:
+                # BLPOP: Blocking pop from queue (efficient, no polling)
+                result = await self.redis.blpop(queue_key, timeout=BLPOP_TIMEOUT)
+
+                if not result:
+                    continue  # Timeout, retry
+
+                _, task_data = result
+                task_item = TaskQueueItem.model_validate_json(task_data)
+
+                logger.debug(
+                    f"{self.agent_type}[{self.instance_id}]: Pulled task from queue: "
+                    f"{task_item.sub_query[:50]}... (query_id: {task_item.query_id})"
+                )
+
+                # Get SharedData to build CommandMessage
+                shared_data = await self._get_shared_data(task_item.query_id)
+                if not shared_data:
+                    logger.warning(
+                        f"{self.agent_type}[{self.instance_id}]: No shared data for "
+                        f"{task_item.query_id}, skipping task"
+                    )
+                    continue
+
+                # Build CommandMessage for processing
+                command_message = CommandMessage(
+                    agent_type=self.agent_type,
+                    command="execute",
+                    query_id=task_item.query_id,
+                    conversation_id=shared_data.conversation_id,
+                    sub_query=task_item.sub_query,
+                )
+
+                # Process with distributed lock (handled in handle_command_message)
+                await self.handle_command_message(command_message)
+
+            except Exception as e:
+                logger.error(
+                    f"{self.agent_type}[{self.instance_id}]: Pull loop error: {e}",
+                    exc_info=True,
+                )
+                # Reset state to prevent stale query_id issues
+                self._current_query_id = None
+                self._current_task_id = None
+                await asyncio.sleep(1)
+
+    async def _get_shared_data(self, query_id: str) -> SharedData | None:
+        """Fetch SharedData from Redis."""
+        try:
+            raw = await self.redis.json().get(RedisKeys.get_shared_data_key(query_id))
+            return SharedData(**raw) if raw else None
+        except Exception as e:
+            logger.error(f"Failed to get shared data for {query_id}: {e}")
+            return None
+
     async def listen_channels(self):
-        """Listen for commands from Manager with reconnect logic."""
         channels = await self.get_sub_channels()
 
         while True:  # Reconnect loop
@@ -328,17 +393,25 @@ class WorkerAgent(BaseAgent):
                 async for message in pubsub.listen():
                     if message["type"] != "message":
                         continue
-                    command_message = CommandMessage.model_validate_json(
-                        message["data"]
-                    )
-                    await self.handle_command_message(command_message)
+
+                    try:
+                        command_message = CommandMessage.model_validate_json(
+                            message["data"]
+                        )
+                        if command_message.command == "stop":
+                            logger.info(
+                                f"{self.agent_type}[{self.instance_id}]: Received stop signal"
+                            )
+                            await self.stop()
+                            return
+                        # Add more control commands as needed
+                    except Exception as e:
+                        logger.debug(f"Ignoring non-command message: {e}")
+
             except Exception as e:
                 logger.error(
-                    f"{self.agent_type}[{self.instance_id}]: Redis error, reconnecting: {e}"
+                    f"{self.agent_type}[{self.instance_id}]: Signal listener error: {e}"
                 )
-                # Reset state to prevent stale query_id issues
-                self._current_query_id = None
-                self._current_task_id = None
                 await asyncio.sleep(1)
             finally:
                 try:
@@ -475,14 +548,19 @@ class WorkerAgent(BaseAgent):
         return await client.read_resource(uri)
 
     async def start(self):
-        logger.info(f"{self.agent_type}[{self.instance_id}]: Starting worker agent")
+        logger.info(
+            f"{self.agent_type}[{self.instance_id}]: Starting worker agent (Pull Model)"
+        )
 
         status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
         await self.redis.hset(status_key, self.instance_id, AgentStatus.IDLE.value)
 
         await self.init_prompt()
 
-        await self.listen_channels()
+        await asyncio.gather(
+            self._worker_pull_loop(),  # Pull tasks from queue
+            self.listen_channels(),  # Listen for control signals
+        )
 
     async def init_prompt(self):
         if not self.mcp_server_url:
