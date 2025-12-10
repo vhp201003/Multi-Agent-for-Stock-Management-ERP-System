@@ -228,6 +228,7 @@ class BaseAgent(ABC):
             # --- ReAct Loop ---
             turn_count = 0
             MAX_TURNS = 10
+
             while True:
                 turn_count += 1
                 if turn_count > MAX_TURNS:
@@ -235,10 +236,65 @@ class BaseAgent(ABC):
                     break
 
                 response = None
+                parsed_result = None
+
+                # Retry loop for both LLM call AND validation
                 for attempt in range(1, LLM_CALL_MAX_RETRIES + 1):
                     try:
+                        # 1. Call LLM API
                         response = await self.llm.chat.completions.create(**call_kwargs)
-                        break
+
+                        # 2. Parse response content
+                        choice = response.choices[0]
+                        message = choice.message
+                        content = message.content
+
+                        # 3. Validate schema if required (MOVED INSIDE RETRY)
+                        if response_schema and not message.tool_calls:
+                            try:
+                                data = json.loads(content) if content else {}
+                                if (
+                                    isinstance(data, list)
+                                    and len(data) == 1
+                                    and isinstance(data[0], dict)
+                                ):
+                                    data = data[0]
+                                parsed_result = response_schema.model_validate(data)
+                                break
+                            except (json.JSONDecodeError, ValidationError) as e:
+                                logger.warning(
+                                    f"{self.agent_type}: Schema validation failed "
+                                    f"(attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {e}"
+                                )
+
+                                if attempt < LLM_CALL_MAX_RETRIES:
+                                    error_msg = (
+                                        f"Your previous response had invalid format. "
+                                        f"Error: {str(e)[:200]}. "
+                                        f"Please provide a valid JSON response matching the schema."
+                                    )
+                                    messages.append(
+                                        {"role": "user", "content": error_msg}
+                                    )
+                                    call_kwargs["messages"] = messages
+                                    await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+                                    continue  # Retry with error feedback
+                                else:
+                                    # Exhausted retries
+                                    logger.error(
+                                        f"{self.agent_type}: Schema validation failed after "
+                                        f"{LLM_CALL_MAX_RETRIES} attempts"
+                                    )
+                                    raise
+                        else:
+                            # No schema validation needed, success
+                            break
+
+                    except (json.JSONDecodeError, ValidationError):
+                        # Already handled above
+                        if attempt == LLM_CALL_MAX_RETRIES:
+                            raise
+                        continue
                     except Exception as call_error:
                         logger.warning(
                             f"{self.agent_type}: LLM call failed (attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {call_error}"
@@ -247,12 +303,14 @@ class BaseAgent(ABC):
                             logger.error(f"{self.agent_type}: Exhausted LLM retries")
                             raise
                         await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+
                 assert response is not None  # For mypy guard
 
                 # Debug logging
                 if query_id:
                     self._save_llm_response_debug(query_id, response.model_dump())
 
+                # Re-extract message (already extracted in retry loop, but need for non-schema paths)
                 choice = response.choices[0]
                 message = choice.message
                 content = message.content
@@ -318,21 +376,7 @@ class BaseAgent(ABC):
                 )
                 break
 
-            result = content
-
-            if response_schema:
-                try:
-                    data = json.loads(content) if content else {}
-                    if (
-                        isinstance(data, list)
-                        and len(data) == 1
-                        and isinstance(data[0], dict)
-                    ):
-                        data = data[0]
-                    result = response_schema.model_validate(data)
-                except (json.JSONDecodeError, ValidationError) as e:
-                    logger.error(f"Schema validation failed: {e}")
-                    raise
+            result = parsed_result if parsed_result is not None else content
 
             if tools and tool_calls and not tool_executor:
                 result = {
