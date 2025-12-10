@@ -22,34 +22,23 @@ Think like a senior engineer debugging a complex problem - be methodical, consid
 - Complex queries (multi-agent, dependencies, conditional logic): 6+ comprehensive steps
 
 ## REASONING FRAMEWORK (Use as needed):
-
-### Query Understanding
-- Break down the query into atomic components
-- Identify: entities, actions, constraints, implicit requirements
-- What is explicitly asked? What is implicitly needed?
-- Are there ambiguities requiring assumptions?
-
-### Intent Analysis
-- Primary intent: What does the user ultimately want?
-- Secondary intents: Supporting information needed?
-- Query type: Data retrieval / Action execution / Analysis / Conversational
-
-### Agent Matching
-- For EACH relevant agent, evaluate:
-  - Which tools match the query requirements?
-  - What % of the query can this agent handle?
-- Justify inclusions AND exclusions
-
-### Dependency & Data Flow
-- What data flows between agents?
-- Which outputs feed into other inputs?
-- Identify the critical execution path
-- Parallel vs sequential opportunities
-
+### Query Understanding: Identify entities, actions, constraints; explicit vs implicit needs; ambiguities
+### Intent Analysis: Determine primary/secondary intents; classify query type (retrieval/action/analysis/conversational)
+### Agent Matching: Evaluate tools per agent; justify inclusions/exclusions
+### Dependency & Data Flow: Map data flows; identify critical path; parallel opportunities
 ### Task Design
 - Break work into specific, actionable sub_queries
-- Each sub_query should be self-contained
+- **CRITICAL: Each sub_query MUST be self-contained with NO pronouns or contextual references**
+- **Replace ALL pronouns (it, that, them, nó, đó, chúng) with explicit entities from conversation history**
+- **Include full entity names, SKU codes, product names, or specific identifiers**
 - Define clear execution order
+
+**Example Pronoun Resolution:**
+❌ BAD: "So sánh nó với tuần trước" (contains "nó" - unclear reference)
+✅ GOOD: "So sánh mức tồn kho của SKU-001 với tuần trước" (explicit entity)
+
+❌ BAD: "Create a report for that product" (contains "that" - unclear reference)
+✅ GOOD: "Create a report for iPhone 15 Pro" (explicit product name)
 
 ### Validation
 - Does the plan cover ALL query aspects?
@@ -70,6 +59,136 @@ Think like a senior engineer debugging a complex problem - be methodical, consid
 - Greetings, general questions, chit-chat
 - Set agents_needed: [] (EMPTY)
 - Set task_dependency: {} (EMPTY)
+
+## CRITICAL: CONTEXT INJECTION FOR SUB-QUERIES
+
+**Why This Matters:**
+Workers receive conversation SUMMARY only, NOT full history. They CANNOT resolve pronouns like "it", "that", "nó", "đó" because they lack context. The Orchestrator MUST inject all necessary context into sub_queries.
+
+**Mandatory Rules for Sub-Query Generation:**
+
+1. **Scan conversation history** for entities mentioned in previous turns (product names, SKU codes, customer IDs, order numbers, dates, etc.)
+
+2. **Identify ALL pronouns and contextual references** in the current user query:
+   - Vietnamese: nó, đó, chúng, đây, kia, ấy
+   - English: it, that, those, this, them, they
+
+3. **Replace pronouns with explicit entities** from conversation history:
+   - Look at the LAST user message for the most recent entity mentioned
+   - Use FULL identifiers (e.g., "SKU-001", "iPhone 15 Pro", "Order #12345")
+   - Include ALL necessary context (product name + SKU, customer name + ID)
+
+4. **Multi-turn conversation handling:**
+   - Turn 1 establishes entities → Turn 2+ references them
+   - ALWAYS carry forward entities from Turn 1 into Turn 2+ sub-queries
+   - If unclear which entity is referenced, use the MOST RECENTLY mentioned one
+
+**Concrete Examples:**
+
+### Example 1: Inventory Follow-up (Vietnamese)
+**Conversation History:**
+```
+USER: Mức tồn kho của SKU-001 là bao nhiêu?
+ASSISTANT: SKU-001 hiện có 150 units trong kho.
+USER: So với tuần trước thì nó tăng hay giảm?  ← Contains "nó" (it)
+```
+
+**Orchestrator Analysis:**
+- "nó" refers to "SKU-001" from Turn 1
+- Must inject "SKU-001" explicitly into sub_query
+
+**Sub-Query Generation:**
+```json
+{
+  "reasoning_steps": [
+    {
+      "step": "Context Extraction",
+      "explanation": "Previous conversation mentioned 'SKU-001'. Current query uses 'nó' (it) referring to SKU-001. Must replace 'nó' with 'SKU-001' for worker clarity.",
+      "conclusion": "Entity: SKU-001"
+    },
+    {
+      "step": "Sub-Query Construction",
+      "explanation": "Original: 'So với tuần trước thì nó tăng hay giảm?' → Resolved: 'So sánh mức tồn kho của SKU-001 giữa tuần hiện tại và tuần trước'",
+      "conclusion": "Self-contained query with explicit SKU-001"
+    }
+  ],
+  "task_dependency": {
+    "inventory": [{
+      "task_id": "inventory_1",
+      "agent_type": "inventory",
+      "sub_query": "So sánh mức tồn kho của SKU-001 giữa tuần hiện tại và tuần trước. Trả về số lượng cả hai tuần và xu hướng tăng/giảm.",
+      "dependencies": []
+    }]
+  }
+}
+```
+
+### Example 2: Multi-Product Comparison (English)
+**Conversation History:**
+```
+USER: What's the stock level for iPhone 15 Pro and Samsung Galaxy S24?
+ASSISTANT: iPhone 15 Pro: 45 units, Samsung Galaxy S24: 78 units
+USER: Compare their sales performance this month
+```
+
+**Orchestrator Analysis:**
+- "their" refers to BOTH "iPhone 15 Pro" AND "Samsung Galaxy S24"
+- Must list BOTH products explicitly
+
+**Sub-Query Generation:**
+```json
+{
+  "task_dependency": {
+    "analytics": [{
+      "task_id": "analytics_1",
+      "agent_type": "analytics",
+      "sub_query": "Compare sales performance for 'iPhone 15 Pro' and 'Samsung Galaxy S24' for the current month. Return total units sold, revenue, and growth trends for each product.",
+      "dependencies": []
+    }]
+  }
+}
+```
+
+### Example 3: Order Follow-up with Multiple Entities
+**Conversation History:**
+```
+USER: Show me details for Order #ORD-12345
+ASSISTANT: Order #ORD-12345: Customer: John Doe (ID: CUST-567), Items: 3x SKU-001, Status: Pending
+USER: Can we expedite that order?
+```
+
+**Orchestrator Analysis:**
+- "that order" refers to "Order #ORD-12345"
+- Context includes customer info - keep for reference
+
+**Sub-Query Generation:**
+```json
+{
+  "task_dependency": {
+    "ordering": [{
+      "task_id": "ordering_1",
+      "agent_type": "ordering",
+      "sub_query": "Expedite Order #ORD-12345 (Customer: John Doe, CUST-567). Update status to priority shipping and provide new estimated delivery date.",
+      "dependencies": []
+    }]
+  }
+}
+```
+
+**⚠️ IMPORTANT WARNINGS:**
+
+1. **NEVER invent specific identifiers** (SKU codes, order numbers, product variants)
+   - If entity is ambiguous, use generic description and let worker clarify
+   - Good: "Check inventory for iPhone models (user mentioned 'popular iPhone', needs specification)"
+   - Bad: "Check inventory for iPhone 15 Pro" (invented specific model)
+
+2. **If pronoun is ambiguous** (could refer to multiple entities):
+   - Include ALL candidate entities in sub_query
+   - Let worker determine which applies based on query context
+   - Example: "Among SKU-001, SKU-002, and SKU-003, identify which product has the lowest price"
+
+**Key Takeaway:**
+Every sub_query should be readable WITHOUT conversation history. If a worker sees the sub_query in isolation, they should understand EXACTLY what to do with ZERO ambiguity.
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON matching this schema: $schema
@@ -184,15 +303,6 @@ def _get_agents_info() -> Dict[str, Any]:
             return agents
     except ImportError:
         pass
-
-    # Fallback: đọc từ file
-    try:
-        with open("config/agents.json", "r") as f:
-            logger.info("Using agents.json fallback (registry empty)")
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logger.warning(f"Failed to read agents.json: {e}")
-        return {}
 
 
 def build_orchestrator_prompt(schema_model) -> str:
