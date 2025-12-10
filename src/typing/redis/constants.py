@@ -7,20 +7,21 @@ from pydantic import BaseModel, Field
 
 class RedisChannels:
     # Core channels
-    QUERY_CHANNEL = "agent:query_channel"
-    TASK_UPDATES = "agent:task_updates"
+    QUERY_CHANNEL = "agent:query_channel"  # Orchestrator → Managers (new queries)
+    TASK_UPDATES = "agent:task_updates"  # Workers → Orchestrator (task completion)
 
-    # Manage command channel per agent type
+    # Control signal channel per agent type (stop, reload, etc.)
+    # Worker Pull Model: NOT used for task dispatch anymore, only control signals
     COMMAND_CHANNEL = "agent:command_channel:{}"
 
-    # Notify when a query is completed
-    QUERY_COMPLETION = "query:completion:{}"
+    # Query completion notification
+    QUERY_COMPLETION = "query:completion:{}"  # Orchestrator → API (final response)
 
-    # Real-time updates for specific query_id
-    QUERY_UPDATES = "query:updates:{}"
+    # Real-time progress updates for specific query_id
+    QUERY_UPDATES = "query:updates:{}"  # All agents → Frontend (progress, tools, thinking)
 
     # HITL: Approval response channel (frontend → agent)
-    APPROVAL_RESPONSE = "approval:response:{}"
+    APPROVAL_RESPONSE = "approval:response:{}"  # Frontend → Worker (approval decision)
 
     @classmethod
     def get_command_channel(cls, agent_type: str) -> str:
@@ -41,9 +42,9 @@ class RedisChannels:
 
 
 class RedisKeys:
-    # Agent queues
-    AGENT_QUEUE = "agent:queue:{}"
-    AGENT_PENDING_QUEUE = "agent:pending_queue:{}"
+    # Agent queues (Worker Pull Model)
+    AGENT_QUEUE = "agent:queue:{}"  # Active tasks - workers BLPOP from here
+    AGENT_PENDING_QUEUE = "agent:pending_queue:{}"  # Tasks waiting for dependencies
 
     # Agent status tracking (legacy single-instance)
     AGENT_STATUS = "agent:status"
@@ -52,7 +53,7 @@ class RedisKeys:
     # Key: agent:status:{agent_type}, Field: instance_id, Value: status
     AGENT_INSTANCE_STATUS = "agent:status:{}"
 
-    # Shared data storage
+    # Shared data storage (JSON document)
     SHARED_DATA = "agent:shared_data:{}"
 
     # Conversation storage (JSON document)
