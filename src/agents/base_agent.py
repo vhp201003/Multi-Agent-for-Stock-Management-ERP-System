@@ -177,7 +177,7 @@ class BaseAgent(ABC):
 
     # ============= Debug & LLM Methods =============
 
-    def _save_llm_response_debug(
+    def save_llm_response_debug(
         self, query_id: str, response_data: Dict[str, Any]
     ) -> None:
         try:
@@ -192,7 +192,17 @@ class BaseAgent(ABC):
         except Exception as e:
             logger.warning(f"Failed to save debug response: {e}")
 
-    async def _call_llm(
+    def validate_response_schema(
+        self, content: Optional[str], response_schema: Type[BaseSchema]
+    ) -> BaseSchema:
+        data = json.loads(content) if content else {}
+
+        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+            data = data[0]
+
+        return response_schema.model_validate(data)
+
+    async def call_llm(
         self,
         messages: List[Dict[str, str]],
         query_id: Optional[str] = None,
@@ -249,52 +259,38 @@ class BaseAgent(ABC):
                         message = choice.message
                         content = message.content
 
-                        # 3. Validate schema if required (MOVED INSIDE RETRY)
+                        # 3. Validate schema if required
                         if response_schema and not message.tool_calls:
-                            try:
-                                data = json.loads(content) if content else {}
-                                if (
-                                    isinstance(data, list)
-                                    and len(data) == 1
-                                    and isinstance(data[0], dict)
-                                ):
-                                    data = data[0]
-                                parsed_result = response_schema.model_validate(data)
-                                break
-                            except (json.JSONDecodeError, ValidationError) as e:
-                                logger.warning(
-                                    f"{self.agent_type}: Schema validation failed "
-                                    f"(attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {e}"
-                                )
+                            parsed_result = self.validate_response_schema(
+                                content, response_schema
+                            )
 
-                                if attempt < LLM_CALL_MAX_RETRIES:
-                                    error_msg = (
-                                        f"Your previous response had invalid format. "
-                                        f"Error: {str(e)[:200]}. "
-                                        f"Please provide a valid JSON response matching the schema."
-                                    )
-                                    messages.append(
-                                        {"role": "user", "content": error_msg}
-                                    )
-                                    call_kwargs["messages"] = messages
-                                    await asyncio.sleep(LLM_CALL_RETRY_DELAY)
-                                    continue  # Retry with error feedback
-                                else:
-                                    # Exhausted retries
-                                    logger.error(
-                                        f"{self.agent_type}: Schema validation failed after "
-                                        f"{LLM_CALL_MAX_RETRIES} attempts"
-                                    )
-                                    raise
+                        break
+
+                    except (json.JSONDecodeError, ValidationError) as e:
+                        logger.warning(
+                            f"{self.agent_type}: Schema validation failed "
+                            f"(attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {e}"
+                        )
+
+                        if attempt < LLM_CALL_MAX_RETRIES:
+                            error_msg = (
+                                f"Your previous response had invalid format. "
+                                f"Error: {str(e)[:200]}. "
+                                f"Please provide a valid JSON response matching the schema."
+                            )
+                            messages.append({"role": "user", "content": error_msg})
+                            call_kwargs["messages"] = messages
+                            await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+                            continue  # Retry with error feedback
                         else:
-                            # No schema validation needed, success
-                            break
-
-                    except (json.JSONDecodeError, ValidationError):
-                        # Already handled above
-                        if attempt == LLM_CALL_MAX_RETRIES:
+                            # Exhausted retries
+                            logger.error(
+                                f"{self.agent_type}: Schema validation failed after "
+                                f"{LLM_CALL_MAX_RETRIES} attempts"
+                            )
                             raise
-                        continue
+
                     except Exception as call_error:
                         logger.warning(
                             f"{self.agent_type}: LLM call failed (attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {call_error}"
@@ -308,7 +304,7 @@ class BaseAgent(ABC):
 
                 # Debug logging
                 if query_id:
-                    self._save_llm_response_debug(query_id, response.model_dump())
+                    self.save_llm_response_debug(query_id, response.model_dump())
 
                 # Re-extract message (already extracted in retry loop, but need for non-schema paths)
                 choice = response.choices[0]
@@ -391,10 +387,6 @@ class BaseAgent(ABC):
             raise
 
     @abstractmethod
-    async def get_sub_channels(self) -> List[str]:
-        pass
-
-    @abstractmethod
     async def process(self, request) -> Any:
         """Process a request and return a response.
 
@@ -407,18 +399,6 @@ class BaseAgent(ABC):
 
         Returns:
             Agent-specific response object
-        """
-        pass
-
-    @abstractmethod
-    async def listen_channels(self):
-        """Listen to subscribed channels and process messages.
-
-        Each agent implements channel-specific listening logic:
-        - OrchestratorAgent: Listens for task updates and workflow coordination
-        - WorkerAgent: Listens for execution commands
-
-        Must handle message parsing, validation, and dispatch to update_shared_data_from_message.
         """
         pass
 
@@ -448,6 +428,27 @@ class BaseAgent(ABC):
             await self.redis.publish(channel, message.model_dump_json())
         except Exception as e:
             logger.error(f"Broadcast publish failed for {channel}: {e}")
+
+    async def broadcast_tool_result(
+        self, query_id: str, tool_name: str, parameters: Dict, result: Dict
+    ):
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.TOOL_EXECUTION,
+            {
+                "tool_name": tool_name,
+                "parameters": parameters,
+                "result": result,
+                "agent_type": self.agent_type,
+            },
+        )
+
+    async def broadcast_error(self, query_id: str, error_msg: str):
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.ERROR,
+            {"error": error_msg, "agent_type": self.agent_type},
+        )
 
     @abstractmethod
     async def start(self):

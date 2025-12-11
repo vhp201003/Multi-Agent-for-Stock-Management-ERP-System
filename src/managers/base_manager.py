@@ -33,34 +33,20 @@ class BaseManager:
 
     async def _listen_channels(self):
         """Listen for queries and task updates."""
-        channels = [RedisChannels.QUERY_CHANNEL, RedisChannels.TASK_UPDATES]
+        from src.utils.agent_helpers import listen_pubsub_channels
 
-        while self._running:
-            pubsub = self.redis.pubsub()
-            try:
-                await pubsub.subscribe(*channels)
-                async for msg in pubsub.listen():
-                    if not self._running:
-                        break
-                    if msg["type"] != "message":
-                        continue
+        async def handler(channel: str, data: bytes):
+            if channel == RedisChannels.QUERY_CHANNEL:
+                await self._on_query(QueryTask.model_validate_json(data))
+            elif channel == RedisChannels.TASK_UPDATES:
+                await self._on_task_update(TaskUpdate.model_validate_json(data))
 
-                    channel = msg["channel"]
-                    if isinstance(channel, bytes):
-                        channel = channel.decode()
-
-                    if channel == RedisChannels.QUERY_CHANNEL:
-                        await self._on_query(QueryTask.model_validate_json(msg["data"]))
-                    elif channel == RedisChannels.TASK_UPDATES:
-                        await self._on_task_update(
-                            TaskUpdate.model_validate_json(msg["data"])
-                        )
-            except Exception as e:
-                logger.error(f"Manager {self.agent_type}: Listener error: {e}")
-                await asyncio.sleep(1)
-            finally:
-                await pubsub.unsubscribe(*channels)
-                await pubsub.aclose()
+        await listen_pubsub_channels(
+            self.redis,
+            [RedisChannels.QUERY_CHANNEL, RedisChannels.TASK_UPDATES],
+            handler,
+            lambda: self._running,
+        )
 
     async def _on_query(self, data: QueryTask):
         """Query received → queue tasks for this agent."""

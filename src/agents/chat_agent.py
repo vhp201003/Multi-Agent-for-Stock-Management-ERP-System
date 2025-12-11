@@ -36,13 +36,13 @@ class ChatAgent(BaseAgent):
 
             shared_data = await get_shared_data(self.redis, request.query_id)
             if not shared_data:
-                return self._create_fallback_response(
+                return self.create_fallback_response(
                     request.query_id, request.conversation_id, None
                 )
 
             filtered_context = request.context or {}
 
-            full_data = self._reconstruct_full_data_from_references(
+            full_data = self.reconstruct_full_data_from_references(
                 shared_data, filtered_context
             )
 
@@ -56,7 +56,7 @@ class ChatAgent(BaseAgent):
                 },
             ]
 
-            result, llm_usage, llm_reasoning = await self._call_llm(
+            result, llm_usage, llm_reasoning = await self.call_llm(
                 query_id=request.query_id,
                 messages=messages,
                 response_schema=ChatAgentSchema,
@@ -72,16 +72,16 @@ class ChatAgent(BaseAgent):
 
             if isinstance(response, ChatResponse) and response.result:
                 response.result.full_data = full_data
-                self._fill_data_from_full_data(response.result, full_data)
+                self.fill_data_from_full_data(response.result, full_data)
                 return response
             else:
-                return self._create_fallback_response(
+                return self.create_fallback_response(
                     request.query_id, request.conversation_id, full_data
                 )
 
         except Exception as e:
             logger.error(f"Chat processing failed: {e}")
-            return self._create_error_response(
+            return self.create_error_response(
                 str(e), request.query_id, request.conversation_id, full_data
             )
 
@@ -159,7 +159,7 @@ class ChatAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to publish completion for {response.query_id}: {e}")
 
-    def _create_fallback_response(
+    def create_fallback_response(
         self,
         query_id: str,
         conversation_id: Optional[str],
@@ -173,14 +173,14 @@ class ChatAgent(BaseAgent):
             ]
         )
         schema.full_data = full_context
-        self._fill_data_from_full_data(schema, full_context)
+        self.fill_data_from_full_data(schema, full_context)
         return ChatResponse(
             query_id=query_id,
             conversation_id=conversation_id,
             result=schema,
         )
 
-    def _create_error_response(
+    def create_error_response(
         self,
         error: str,
         query_id: str,
@@ -195,7 +195,7 @@ class ChatAgent(BaseAgent):
             ]
         )
         schema.full_data = full_context
-        self._fill_data_from_full_data(schema, full_context)
+        self.fill_data_from_full_data(schema, full_context)
         return ChatResponse(
             query_id=query_id,
             conversation_id=conversation_id,
@@ -203,7 +203,7 @@ class ChatAgent(BaseAgent):
             llm_usage={},  # Empty dict instead of None to satisfy Pydantic validation
         )
 
-    def _fill_data_from_full_data(
+    def fill_data_from_full_data(
         self, schema: ChatAgentSchema, full_data: Optional[Dict[str, Any]]
     ):
         if not full_data or not schema.layout:
@@ -240,23 +240,25 @@ class ChatAgent(BaseAgent):
                     )
 
             elif isinstance(field, LLMTableField):
-                table_data = self._extract_table_data(full_data, field.title)
+                table_data = self.extract_table_data(full_data, field.title)
                 if table_data:
                     field.data = table_data
 
-    def _extract_table_data(
+    def extract_table_data(
         self, full_data: Dict[str, Any], title: Optional[str]
     ) -> Optional[Dict[str, Any]]:
         """Extract data for table from full_data using generic detection."""
         try:
-            return self._extract_generic_table_data(full_data)
+            return self.extract_generic_table_data(full_data)
         except Exception as e:
             logger.warning(f"Failed to extract table data: {e}")
         return None
 
-    def _reconstruct_full_data_from_references(
+    def reconstruct_full_data_from_references(
         self, shared_data: "SharedData", filtered_context: Dict[str, Any]
     ) -> Dict[str, Any]:
+        from src.utils.agent_helpers import traverse_full_data
+
         full_data = {}
 
         try:
@@ -265,34 +267,31 @@ class ChatAgent(BaseAgent):
 
             results = filtered_context.get("results", {})
 
-            for agent_type, agent_results in results.items():
-                if not isinstance(agent_results, dict):
+            # Group by agent_type as we traverse
+            for agent_type, task_id, task_result in traverse_full_data(results):
+                if not isinstance(task_result, dict):
                     continue
 
-                agent_full_data = {}
+                # Initialize agent data if needed
+                if agent_type not in full_data:
+                    full_data[agent_type] = {}
 
-                for task_id, task_result in agent_results.items():
-                    if isinstance(task_result, dict):
-                        if "result_id" in task_result:
-                            result_id = task_result["result_id"]
-                            full_result = shared_data.get_result_by_id(result_id)
-                            if full_result:
-                                task_result = full_result
+                # Resolve result_id reference if present
+                if "result_id" in task_result:
+                    full_result = shared_data.get_result_by_id(task_result["result_id"])
+                    if full_result:
+                        task_result = full_result
 
-                        if "tool_results" in task_result:
-                            for tool_item in task_result["tool_results"]:
-                                if (
-                                    isinstance(tool_item, dict)
-                                    and "tool_name" in tool_item
-                                ):
-                                    tool_name = tool_item["tool_name"]
-                                    tool_result = tool_item.get("tool_result", {})
-                                    agent_full_data[tool_name] = tool_result
+                # Extract tool results to top level
+                if "tool_results" in task_result:
+                    for tool_item in task_result["tool_results"]:
+                        if isinstance(tool_item, dict) and "tool_name" in tool_item:
+                            tool_name = tool_item["tool_name"]
+                            tool_result = tool_item.get("tool_result", {})
+                            full_data[agent_type][tool_name] = tool_result
 
-                        agent_full_data[task_id] = task_result
-
-                if agent_full_data:
-                    full_data[agent_type] = agent_full_data
+                # Store task result
+                full_data[agent_type][task_id] = task_result
 
             logger.debug(f"Reconstructed full_data for {len(full_data)} agents")
             return full_data
@@ -301,108 +300,100 @@ class ChatAgent(BaseAgent):
             logger.warning(f"Failed to reconstruct full_data from references: {e}")
             return full_data
 
-    def _extract_generic_graph_data(
+    def extract_generic_graph_data(
         self, full_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
+        from src.utils.agent_helpers import traverse_full_data
+
         try:
-            for _, agent_tools in full_data.items():
-                if not isinstance(agent_tools, dict):
+            for agent_type, tool_name, tool_result in traverse_full_data(full_data):
+                if not isinstance(tool_result, dict):
                     continue
 
-                for tool_name, tool_result in agent_tools.items():
-                    if not isinstance(tool_result, dict):
-                        continue
+                raw_data = tool_result.get("data", tool_result)
 
-                    raw_data = tool_result.get("data", tool_result)
+                if not (isinstance(raw_data, list) and len(raw_data) > 0):
+                    continue
 
-                    if isinstance(raw_data, list) and len(raw_data) > 0:
-                        first_entry = raw_data[0]
-                        if isinstance(first_entry, dict):
-                            date_keys = [
-                                k
-                                for k in first_entry.keys()
-                                if "date" in k.lower() or "time" in k.lower()
-                            ]
-                            value_keys = [
-                                k
-                                for k in first_entry.keys()
-                                if "quantity" in k.lower()
-                                or "amount" in k.lower()
-                                or "value" in k.lower()
-                                or "level" in k.lower()
-                                or "stock" in k.lower()
-                            ]
+                first_entry = raw_data[0]
+                if not isinstance(first_entry, dict):
+                    continue
 
-                            if date_keys and value_keys:
-                                labels = []
-                                values = []
-                                for entry in raw_data:
-                                    date_val = entry.get(date_keys[0])
-                                    val = entry.get(value_keys[0])
-                                    if date_val is not None and val is not None:
-                                        labels.append(str(date_val))
-                                        values.append(
-                                            int(val)
-                                            if isinstance(val, (int, float))
-                                            else 0
-                                        )
+                # Find date/time and value keys
+                date_keys = [
+                    k
+                    for k in first_entry.keys()
+                    if "date" in k.lower() or "time" in k.lower()
+                ]
+                value_keys = [
+                    k
+                    for k in first_entry.keys()
+                    if any(
+                        term in k.lower()
+                        for term in ["quantity", "amount", "value", "level", "stock"]
+                    )
+                ]
 
-                                if labels and values:
-                                    return {
-                                        "labels": labels,
-                                        "datasets": [
-                                            {
-                                                "label": tool_name,
-                                                "data": values,
-                                                "borderColor": "blue",
-                                                "fill": False,
-                                            }
-                                        ],
-                                    }
+                if not (date_keys and value_keys):
+                    continue
+
+                # Extract labels and values
+                labels, values = [], []
+                for entry in raw_data:
+                    date_val = entry.get(date_keys[0])
+                    val = entry.get(value_keys[0])
+                    if date_val is not None and val is not None:
+                        labels.append(str(date_val))
+                        values.append(int(val) if isinstance(val, (int, float)) else 0)
+
+                if labels and values:
+                    return {
+                        "labels": labels,
+                        "datasets": [
+                            {
+                                "label": tool_name,
+                                "data": values,
+                                "borderColor": "blue",
+                                "fill": False,
+                            }
+                        ],
+                    }
+
             return None
         except Exception as e:
             logger.debug(f"Generic graph extraction failed: {e}")
             return None
 
-    def _extract_generic_table_data(
+    def extract_generic_table_data(
         self, full_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Generic table data extraction: find first list of objects in tools."""
+        from src.utils.agent_helpers import traverse_full_data
+
         try:
-            for agent_type, agent_tools in full_data.items():
-                if not isinstance(agent_tools, dict):
+            for agent_type, tool_name, tool_result in traverse_full_data(full_data):
+                if not isinstance(tool_result, dict):
                     continue
 
-                for tool_name, tool_result in agent_tools.items():
-                    if not isinstance(tool_result, dict):
-                        continue
+                raw_data = tool_result.get("data", tool_result)
 
-                    raw_data = tool_result.get("data", tool_result)
+                # Handle list of dicts
+                if isinstance(raw_data, list) and len(raw_data) > 0:
+                    first_entry = raw_data[0]
+                    if isinstance(first_entry, dict):
+                        columns = list(first_entry.keys())
+                        rows = [
+                            {col: entry.get(col, "") for col in columns}
+                            for entry in raw_data
+                        ]
+                        if rows:
+                            return {"columns": columns, "rows": rows}
 
-                    if isinstance(raw_data, list) and len(raw_data) > 0:
-                        first_entry = raw_data[0]
-                        if isinstance(first_entry, dict):
-                            columns = list(first_entry.keys())
-                            rows = []
-                            for entry in raw_data:
-                                row = {}
-                                for col in columns:
-                                    row[col] = entry.get(col, "")
-                                rows.append(row)
-
-                            if rows:
-                                return {
-                                    "columns": columns,
-                                    "rows": rows,
-                                }
-
-                    elif isinstance(raw_data, dict):
-                        columns = list(raw_data.keys())
-                        rows = [{col: raw_data.get(col, "") for col in columns}]
-                        return {
-                            "columns": columns,
-                            "rows": rows,
-                        }
+                # Handle single dict
+                elif isinstance(raw_data, dict):
+                    columns = list(raw_data.keys())
+                    rows = [{col: raw_data.get(col, "") for col in columns}]
+                    return {"columns": columns, "rows": rows}
 
             return None
         except Exception as e:

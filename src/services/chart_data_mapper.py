@@ -47,19 +47,19 @@ class ChartDataMapper:
         try:
             # Route based on concrete type
             if isinstance(data_source, HorizontalBarChartDataSource):
-                return ChartDataMapper._extract_horizontal_bar(full_data, data_source)
+                return ChartDataMapper.extract_horizontal_bar(full_data, data_source)
 
             elif isinstance(data_source, BarChartDataSource):
-                return ChartDataMapper._extract_vertical_bar(full_data, data_source)
+                return ChartDataMapper.extract_vertical_bar(full_data, data_source)
 
             elif isinstance(data_source, LineChartDataSource):
-                return ChartDataMapper._extract_line(full_data, data_source)
+                return ChartDataMapper.extract_line(full_data, data_source)
 
             elif isinstance(data_source, PieChartDataSource):
-                return ChartDataMapper._extract_pie(full_data, data_source)
+                return ChartDataMapper.extract_pie(full_data, data_source)
 
             elif isinstance(data_source, ScatterPlotDataSource):
-                return ChartDataMapper._extract_scatter(full_data, data_source)
+                return ChartDataMapper.extract_scatter(full_data, data_source)
 
             else:
                 logger.warning(f"Unknown data source type: {type(data_source)}")
@@ -70,306 +70,280 @@ class ChartDataMapper:
             return None
 
     @staticmethod
-    def _extract_horizontal_bar(
+    def extract_generic(
+        full_data: Dict[str, Any],
+        source: ChartDataSource,
+        field_extractor: callable,
+        transformer: callable,
+        limit: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Generic chart data extractor with customizable field extraction and transformation.
+
+        This eliminates code duplication across all 5 chart extraction methods.
+        Each chart type provides:
+        - field_extractor: fn(item, source) -> tuple of field values or None
+        - transformer: fn(extracted_data, source) -> chart format dict
+        - limit: max data points for this chart type
+
+        Args:
+            full_data: Complete agent results
+            source: Data source configuration
+            field_extractor: Callable to extract fields from each item
+            transformer: Callable to transform extracted data to chart format
+            limit: Maximum data points to extract
+
+        Returns:
+            Chart data dict or None if extraction fails
+        """
+        # Step 1: Locate tool result
+        tool_result = ChartDataMapper.locate_tool_result(
+            full_data, source.agent_type, source.tool_name
+        )
+        if not tool_result:
+            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
+            return None
+
+        # Step 2: Find data array
+        data_array = ChartDataMapper.find_data_array(tool_result)
+        if not data_array:
+            logger.warning(f"No chartable array in {source.tool_name}")
+            return None
+
+        # Step 3: Extract fields from each item
+        extracted = []
+        for item in data_array[:limit]:
+            if not isinstance(item, dict):
+                continue
+
+            fields = field_extractor(item, source)
+            if fields:
+                extracted.append(fields)
+
+        # Step 4: Check if we got any data
+        if not extracted:
+            logger.warning(f"No data extracted from {source.tool_name}")
+            return None
+
+        # Step 5: Transform to chart format
+        result = transformer(extracted, source)
+
+        logger.info(
+            f"Extracted {len(extracted)} points from {source.tool_name} "
+            f"(format: {result.get('layout', 'legacy')})"
+        )
+
+        return result
+
+    @staticmethod
+    def extract_horizontal_bar(
         full_data: Dict[str, Any],
         source: HorizontalBarChartDataSource,
     ) -> Optional[Dict[str, Any]]:
         """Extract data for horizontal bar chart in Recharts format."""
-        tool_result = ChartDataMapper._locate_tool_result(
-            full_data, source.agent_type, source.tool_name
+
+        def extractor(item, src):
+            """Extract category and value fields."""
+            cat = item.get(src.category_field)
+            val = item.get(src.value_field)
+            return (cat, val) if cat is not None and val is not None else None
+
+        def transformer(data, src):
+            """Transform to Recharts format."""
+            chart_data = []
+            for cat, val in data:
+                try:
+                    chart_data.append({"name": str(cat), "value": float(val)})
+                except (ValueError, TypeError):
+                    chart_data.append({"name": str(cat), "value": 0.0})
+
+            return {
+                "chartData": chart_data,
+                "dataKey": "value",
+                "nameKey": "name",
+                "layout": "horizontal",
+            }
+
+        return ChartDataMapper.extract_generic(
+            full_data, source, extractor, transformer, limit=20
         )
-        if not tool_result:
-            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
-            return None
-
-        data_array = ChartDataMapper._find_data_array(tool_result)
-        if not data_array:
-            logger.warning(f"No chartable array in {source.tool_name}")
-            return None
-
-        chart_data = []
-        for item in data_array[:20]:  # Limit 20 for horizontal bar
-            if not isinstance(item, dict):
-                continue
-
-            category = item.get(source.category_field)
-            value = item.get(source.value_field)
-
-            if category is None or value is None:
-                continue
-
-            try:
-                chart_data.append(
-                    {
-                        "name": str(category),
-                        "value": float(value),
-                    }
-                )
-            except (ValueError, TypeError):
-                chart_data.append(
-                    {
-                        "name": str(category),
-                        "value": 0.0,
-                    }
-                )
-
-        if not chart_data:
-            logger.warning(
-                f"No data extracted from {source.category_field}, {source.value_field}"
-            )
-            return None
-
-        logger.info(
-            f"Extracted {len(chart_data)} points (recharts format) from {source.tool_name}"
-        )
-        return {
-            "chartData": chart_data,
-            "dataKey": "value",
-            "nameKey": "name",
-            "layout": "horizontal",
-        }
 
     @staticmethod
-    def _extract_vertical_bar(
+    def extract_vertical_bar(
         full_data: Dict[str, Any],
         source: BarChartDataSource,
     ) -> Optional[Dict[str, Any]]:
         """Extract data for vertical bar chart in legacy format."""
-        tool_result = ChartDataMapper._locate_tool_result(
-            full_data, source.agent_type, source.tool_name
+
+        def extractor(item, src):
+            """Extract category and value fields."""
+            cat = item.get(src.category_field)
+            val = item.get(src.value_field)
+            return (cat, val) if cat is not None and val is not None else None
+
+        def transformer(data, src):
+            """Transform to legacy format (labels + datasets)."""
+            labels, values = [], []
+            for cat, val in data:
+                labels.append(str(cat))
+                try:
+                    values.append(float(val))
+                except (ValueError, TypeError):
+                    values.append(0.0)
+
+            return {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": src.value_field.replace("_", " ").title(),
+                        "data": values,
+                        "fill": False,
+                    }
+                ],
+            }
+
+        return ChartDataMapper.extract_generic(
+            full_data, source, extractor, transformer, limit=15
         )
-        if not tool_result:
-            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
-            return None
-
-        data_array = ChartDataMapper._find_data_array(tool_result)
-        if not data_array:
-            logger.warning(f"No chartable array in {source.tool_name}")
-            return None
-
-        labels, values = [], []
-        for item in data_array[:15]:  # Limit 15 for vertical bar
-            if not isinstance(item, dict):
-                continue
-
-            category = item.get(source.category_field)
-            value = item.get(source.value_field)
-
-            if category is None or value is None:
-                continue
-
-            labels.append(str(category))
-            try:
-                values.append(float(value))
-            except (ValueError, TypeError):
-                values.append(0.0)
-
-        if not labels:
-            logger.warning(
-                f"No data extracted from {source.category_field}, {source.value_field}"
-            )
-            return None
-
-        logger.info(
-            f"Extracted {len(labels)} points (legacy format) from {source.tool_name}"
-        )
-        return {
-            "labels": labels,
-            "datasets": [
-                {
-                    "label": source.value_field.replace("_", " ").title(),
-                    "data": values,
-                    "fill": False,
-                }
-            ],
-        }
 
     @staticmethod
-    def _extract_line(
+    def extract_line(
         full_data: Dict[str, Any],
         source: LineChartDataSource,
     ) -> Optional[Dict[str, Any]]:
         """Extract data for line chart in legacy format."""
-        tool_result = ChartDataMapper._locate_tool_result(
-            full_data, source.agent_type, source.tool_name
+
+        def extractor(item, src):
+            """Extract x and y fields."""
+            x = item.get(src.x_field)
+            y = item.get(src.y_field)
+            return (x, y) if x is not None and y is not None else None
+
+        def transformer(data, src):
+            """Transform to legacy format (labels + datasets)."""
+            labels, values = [], []
+            for x, y in data:
+                labels.append(str(x))
+                try:
+                    values.append(float(y))
+                except (ValueError, TypeError):
+                    values.append(0.0)
+
+            return {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": src.y_field.replace("_", " ").title(),
+                        "data": values,
+                        "fill": True,
+                    }
+                ],
+            }
+
+        return ChartDataMapper.extract_generic(
+            full_data, source, extractor, transformer, limit=50
         )
-        if not tool_result:
-            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
-            return None
-
-        data_array = ChartDataMapper._find_data_array(tool_result)
-        if not data_array:
-            logger.warning(f"No chartable array in {source.tool_name}")
-            return None
-
-        labels, values = [], []
-        for item in data_array[:50]:  # Limit 50 for line chart
-            if not isinstance(item, dict):
-                continue
-
-            x_val = item.get(source.x_field)
-            y_val = item.get(source.y_field)
-
-            if x_val is None or y_val is None:
-                continue
-
-            labels.append(str(x_val))
-            try:
-                values.append(float(y_val))
-            except (ValueError, TypeError):
-                values.append(0.0)
-
-        if not labels:
-            logger.warning(f"No data extracted from {source.x_field}, {source.y_field}")
-            return None
-
-        logger.info(
-            f"Extracted {len(labels)} points (legacy format) from {source.tool_name}"
-        )
-        return {
-            "labels": labels,
-            "datasets": [
-                {
-                    "label": source.y_field.replace("_", " ").title(),
-                    "data": values,
-                    "fill": True,
-                }
-            ],
-        }
 
     @staticmethod
-    def _extract_pie(
+    def extract_pie(
         full_data: Dict[str, Any],
         source: PieChartDataSource,
     ) -> Optional[Dict[str, Any]]:
         """Extract data for pie chart in legacy format."""
-        tool_result = ChartDataMapper._locate_tool_result(
-            full_data, source.agent_type, source.tool_name
+
+        def extractor(item, src):
+            """Extract label and value fields."""
+            lbl = item.get(src.label_field)
+            val = item.get(src.value_field)
+            return (lbl, val) if lbl is not None and val is not None else None
+
+        def transformer(data, src):
+            """Transform to legacy format (labels + datasets)."""
+            labels, values = [], []
+            for lbl, val in data:
+                labels.append(str(lbl))
+                try:
+                    values.append(float(val))
+                except (ValueError, TypeError):
+                    values.append(0.0)
+
+            return {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": src.value_field.replace("_", " ").title(),
+                        "data": values,
+                        "fill": False,
+                    }
+                ],
+            }
+
+        return ChartDataMapper.extract_generic(
+            full_data, source, extractor, transformer, limit=10
         )
-        if not tool_result:
-            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
-            return None
-
-        data_array = ChartDataMapper._find_data_array(tool_result)
-        if not data_array:
-            logger.warning(f"No chartable array in {source.tool_name}")
-            return None
-
-        labels, values = [], []
-        for item in data_array[:10]:  # Limit 10 for pie chart
-            if not isinstance(item, dict):
-                continue
-
-            label = item.get(source.label_field)
-            value = item.get(source.value_field)
-
-            if label is None or value is None:
-                continue
-
-            labels.append(str(label))
-            try:
-                values.append(float(value))
-            except (ValueError, TypeError):
-                values.append(0.0)
-
-        if not labels:
-            logger.warning(
-                f"No data extracted from {source.label_field}, {source.value_field}"
-            )
-            return None
-
-        logger.info(
-            f"Extracted {len(labels)} points (legacy format) from {source.tool_name}"
-        )
-        return {
-            "labels": labels,
-            "datasets": [
-                {
-                    "label": source.value_field.replace("_", " ").title(),
-                    "data": values,
-                    "fill": False,
-                }
-            ],
-        }
 
     @staticmethod
-    def _extract_scatter(
+    def extract_scatter(
         full_data: Dict[str, Any],
         source: ScatterPlotDataSource,
     ) -> Optional[Dict[str, Any]]:
         """Extract data for scatter plot in Recharts format."""
-        tool_result = ChartDataMapper._locate_tool_result(
-            full_data, source.agent_type, source.tool_name
-        )
-        if not tool_result:
-            logger.warning(f"Tool not found: {source.agent_type}.{source.tool_name}")
-            return None
 
-        data_array = ChartDataMapper._find_data_array(tool_result)
-        if not data_array:
-            logger.warning(f"No chartable array in {source.tool_name}")
-            return None
+        def extractor(item, src):
+            """Extract x, y, and optional name/group fields."""
+            x = item.get(src.x_field)
+            y = item.get(src.y_field)
+            if x is None or y is None:
+                return None
 
-        scatter_data = []
-        groups = set()  # Track unique groups for legend
-
-        for item in data_array[:100]:  # Limit 100 for scatter
-            if not isinstance(item, dict):
-                continue
-
-            x_val = item.get(source.x_field)
-            y_val = item.get(source.y_field)
-
-            if x_val is None or y_val is None:
-                continue
-
+            # Try to convert to float for validation
             try:
-                point = {
-                    "x": float(x_val),
-                    "y": float(y_val),
-                }
+                float(x)
+                float(y)
             except (ValueError, TypeError):
-                continue
+                return None
 
-            # Optional: Add name for tooltip
-            if source.name_field:
-                name_val = item.get(source.name_field)
-                point["name"] = str(name_val) if name_val else "Unknown"
+            # Extract optional fields
+            name = item.get(src.name_field) if src.name_field else None
+            group = item.get(src.group_field) if src.group_field else None
 
-            # Optional: Add group for coloring
-            if source.group_field:
-                group_val = item.get(source.group_field)
-                group = str(group_val) if group_val else "Ungrouped"
-                point["group"] = group
-                groups.add(group)
+            return (x, y, name, group)
 
-            scatter_data.append(point)
+        def transformer(data, src):
+            """Transform to Recharts scatter format."""
+            scatter_data = []
+            groups = set()
 
-        if not scatter_data:
-            logger.warning(f"No data extracted from {source.x_field}, {source.y_field}")
-            return None
+            for x, y, name, group in data:
+                point = {"x": float(x), "y": float(y)}
 
-        # Build result in Recharts format
-        result = {
-            "scatterData": scatter_data,
-            "xKey": "x",
-            "yKey": "y",
-        }
+                if name is not None:
+                    point["name"] = str(name) if name else "Unknown"
 
-        if source.name_field:
-            result["nameKey"] = "name"
+                if group is not None:
+                    group_str = str(group) if group else "Ungrouped"
+                    point["group"] = group_str
+                    groups.add(group_str)
 
-        if source.group_field:
-            result["groupKey"] = "group"
-            result["groups"] = sorted(list(groups))  # For legend
+                scatter_data.append(point)
 
-        logger.info(
-            f"Extracted {len(scatter_data)} points (scatter format) from {source.tool_name}"
+            # Build result
+            result = {"scatterData": scatter_data, "xKey": "x", "yKey": "y"}
+
+            if src.name_field:
+                result["nameKey"] = "name"
+
+            if src.group_field:
+                result["groupKey"] = "group"
+                result["groups"] = sorted(list(groups))
+
+            return result
+
+        return ChartDataMapper.extract_generic(
+            full_data, source, extractor, transformer, limit=100
         )
-        return result
 
     @staticmethod
-    def _validate_data_source(data_source: Union[ChartDataSource]) -> None:
+    def validate_data_source(data_source: Union[ChartDataSource]) -> None:
         """Basic validation to prevent injection/crashes."""
         # Get field names based on type
         field_names = []
@@ -396,7 +370,7 @@ class ChartDataMapper:
                 raise ValueError(f"Field name too long: {field_name[:50]}...")
 
     @staticmethod
-    def _locate_tool_result(
+    def locate_tool_result(
         full_data: Dict[str, Any],
         agent_type: str,
         tool_name: str,
@@ -409,7 +383,7 @@ class ChartDataMapper:
         return tool_result if isinstance(tool_result, dict) else None
 
     @staticmethod
-    def _find_data_array(tool_result: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    def find_data_array(tool_result: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         for key, value in tool_result.items():
             if isinstance(value, list) and value and isinstance(value[0], dict):
                 logger.debug(f"Found data array: '{key}' ({len(value)} items)")
@@ -417,7 +391,7 @@ class ChartDataMapper:
         return None
 
     @staticmethod
-    def _extract_fields(
+    def extract_fields(
         data_array: List[Dict[str, Any]],
         label_field: str,
         value_field: str,
@@ -445,7 +419,7 @@ class ChartDataMapper:
         return labels, values
 
     @staticmethod
-    def _get_limit_for_chart_type(graph_type: str) -> int:
+    def get_limit_for_chart_type(graph_type: str) -> int:
         """Reasonable limits to prevent UI lag."""
         limits = {
             "piechart": 10,
