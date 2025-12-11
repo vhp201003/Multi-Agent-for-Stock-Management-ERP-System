@@ -6,6 +6,7 @@ from redis.commands.json.path import Path
 
 from src.typing.redis import SharedData
 from src.typing.redis.constants import RedisKeys
+from src.utils.agent_helpers import validate_string_param
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,7 @@ async def get_shared_data(
     redis_client: redis.Redis, query_id: str
 ) -> Optional[SharedData]:
     try:
-        if not query_id or not isinstance(query_id, str):
-            raise ValueError("query_id must be non-empty string")
+        validate_string_param(query_id, "query_id")
 
         shared_data_key = RedisKeys.get_shared_data_key(query_id)
         data = await redis_client.json().get(shared_data_key)
@@ -111,8 +111,7 @@ def _deep_update(current_data: Dict[str, Any], update_data: Dict[str, Any]) -> N
 async def get_shared_data_field(
     redis_client: redis.Redis, query_id: str, json_path: str
 ) -> Any:
-    if not json_path or not isinstance(json_path, str):
-        raise ValueError("json_path must be non-empty string")
+    validate_string_param(json_path, "json_path")
 
     key = RedisKeys.get_shared_data_key(query_id)
 
@@ -126,8 +125,7 @@ async def get_shared_data_field(
 async def update_shared_data_field(
     redis_client: redis.Redis, query_id: str, json_path: str, value: Any
 ):
-    if not json_path or not isinstance(json_path, str):
-        raise ValueError("json_path must be non-empty string")
+    validate_string_param(json_path, "json_path")
 
     key = RedisKeys.get_shared_data_key(query_id)
 

@@ -26,7 +26,6 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
-from src.typing.redis.constants import MessageType
 from src.utils.converstation import get_summary_conversation
 from src.utils.shared_data_utils import (
     find_task_id,
@@ -62,9 +61,7 @@ class WorkerAgent(BaseAgent):
         # HITL: Track current query_id for approval requests
         self._current_query_id: Optional[str] = None
         self._current_task_id: Optional[str] = None
-
-    async def get_sub_channels(self) -> List[str]:
-        return [RedisChannels.get_command_channel(self.agent_type)]
+        self._running = False
 
     async def process(
         self, command_message: CommandMessage
@@ -134,14 +131,14 @@ class WorkerAgent(BaseAgent):
 
         # Define tool executor for ReAct loop
         async def tool_executor(tool_calls: List[Any]) -> List[Dict[str, Any]]:
-            return await self._execute_tools(
+            return await self.execute_tools(
                 tool_calls,
                 worker_process_result.tools_result,
                 worker_process_result.query_id,
             )
 
         # Call LLM with ReAct loop
-        result, llm_usage, llm_reasoning = await self._call_llm(
+        result, llm_usage, llm_reasoning = await self.call_llm(
             query_id=command_message.query_id,
             messages=messages,
             tools=groq_tools,
@@ -156,7 +153,7 @@ class WorkerAgent(BaseAgent):
 
         return worker_process_result
 
-    async def _execute_tools(
+    async def execute_tools(
         self,
         tool_calls: List[Any],
         tools_result_accumulator: List[ToolCallResultResponse],
@@ -165,13 +162,13 @@ class WorkerAgent(BaseAgent):
         """Execute tool calls and return results for LLM context."""
         results = []
         for tool_call in tool_calls:
-            result = await self._execute_single_tool(
+            result = await self.execute_single_tool(
                 tool_call, tools_result_accumulator, query_id
             )
             results.append(result)
         return results
 
-    async def _execute_single_tool(
+    async def execute_single_tool(
         self,
         tool_call: Any,
         accumulator: List[ToolCallResultResponse],
@@ -196,7 +193,7 @@ class WorkerAgent(BaseAgent):
                 )
 
                 if approval.action == ApprovalAction.REJECT:
-                    return self._build_rejection_result(
+                    return self.build_rejection_result(
                         tool_call, tool_name, parameters, accumulator, approval.reason
                     )
 
@@ -208,7 +205,7 @@ class WorkerAgent(BaseAgent):
 
             # Execute tool
             tool_result = await self.call_mcp_tool(tool_name, parameters)
-            tool_result = self._normalize_tool_result(tool_result)
+            tool_result = self.normalize_tool_result(tool_result)
 
             accumulator.append(
                 ToolCallResultResponse(
@@ -219,15 +216,13 @@ class WorkerAgent(BaseAgent):
             )
 
             # Broadcast and return
-            await self._broadcast_tool_result(
-                query_id, tool_name, parameters, tool_result
-            )
-            return self._build_tool_message(tool_call.id, tool_result)
+            await self.broadcast_tool_result(query_id, tool_name, parameters, tool_result)
+            return self.build_tool_message(tool_call.id, tool_result)
 
         except Exception as e:
-            return await self._handle_tool_error(tool_call, accumulator, query_id, e)
+            return await self.handle_tool_error(tool_call, accumulator, query_id, e)
 
-    def _normalize_tool_result(self, result: Any) -> Dict[str, Any]:
+    def normalize_tool_result(self, result: Any) -> Dict[str, Any]:
         """Normalize tool result to dict."""
         if result is None:
             return {"status": "success", "message": "No result returned"}
@@ -237,7 +232,7 @@ class WorkerAgent(BaseAgent):
             return json.loads(result)
         return result
 
-    def _build_tool_message(
+    def build_tool_message(
         self, tool_call_id: str, result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Build tool result message for LLM context."""
@@ -251,7 +246,7 @@ class WorkerAgent(BaseAgent):
 
         return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
-    def _build_rejection_result(
+    def build_rejection_result(
         self,
         tool_call: Any,
         tool_name: str,
@@ -277,22 +272,7 @@ class WorkerAgent(BaseAgent):
             "content": json.dumps(msg),
         }
 
-    async def _broadcast_tool_result(
-        self, query_id: str, tool_name: str, parameters: Dict, result: Dict
-    ):
-        """Broadcast tool execution to frontend."""
-        await self.publish_broadcast(
-            RedisChannels.get_query_updates_channel(query_id),
-            MessageType.TOOL_EXECUTION,
-            {
-                "tool_name": tool_name,
-                "parameters": parameters,
-                "result": result,
-                "agent_type": self.agent_type,
-            },
-        )
-
-    async def _handle_tool_error(
+    async def handle_tool_error(
         self, tool_call: Any, accumulator: List, query_id: str, error: Exception
     ) -> Dict[str, Any]:
         """Handle tool execution error."""
@@ -307,11 +287,7 @@ class WorkerAgent(BaseAgent):
             )
         )
 
-        await self.publish_broadcast(
-            RedisChannels.get_query_updates_channel(query_id),
-            MessageType.ERROR,
-            {"error": error_msg, "agent_type": self.agent_type},
-        )
+        await self.broadcast_error(query_id, error_msg)
 
         return {
             "role": "tool",
@@ -319,7 +295,7 @@ class WorkerAgent(BaseAgent):
             "content": json.dumps({"error": error_msg}),
         }
 
-    async def _worker_pull_loop(self):
+    async def worker_pull_loop(self):
         queue_key = RedisKeys.get_agent_queue(self.agent_type)
         BLPOP_TIMEOUT = 5  # seconds
 
@@ -327,7 +303,7 @@ class WorkerAgent(BaseAgent):
             f"{self.agent_type}[{self.instance_id}]: Starting pull loop from {queue_key}"
         )
 
-        while True:  # Continuous pull loop
+        while self._running:  # Check running flag
             try:
                 # BLPOP: Blocking pop from queue (efficient, no polling)
                 result = await self.redis.blpop(queue_key, timeout=BLPOP_TIMEOUT)
@@ -344,7 +320,7 @@ class WorkerAgent(BaseAgent):
                 )
 
                 # Get SharedData to build CommandMessage
-                shared_data = await self._get_shared_data(task_item.query_id)
+                shared_data = await self.get_shared_data_worker(task_item.query_id)
                 if not shared_data:
                     logger.warning(
                         f"{self.agent_type}[{self.instance_id}]: No shared data for "
@@ -361,8 +337,8 @@ class WorkerAgent(BaseAgent):
                     sub_query=task_item.sub_query,
                 )
 
-                # Process with distributed lock (handled in handle_command_message)
-                await self.handle_command_message(command_message)
+                # Process task directly
+                await self.process_task_with_timeout(command_message)
 
             except Exception as e:
                 logger.error(
@@ -374,7 +350,7 @@ class WorkerAgent(BaseAgent):
                 self._current_task_id = None
                 await asyncio.sleep(1)
 
-    async def _get_shared_data(self, query_id: str) -> SharedData | None:
+    async def get_shared_data_worker(self, query_id: str) -> SharedData | None:
         """Fetch SharedData from Redis."""
         try:
             raw = await self.redis.json().get(RedisKeys.get_shared_data_key(query_id))
@@ -382,74 +358,6 @@ class WorkerAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to get shared data for {query_id}: {e}")
             return None
-
-    async def listen_channels(self):
-        channels = await self.get_sub_channels()
-
-        while True:  # Reconnect loop
-            pubsub = self.redis.pubsub()
-            try:
-                await pubsub.subscribe(*channels)
-                async for message in pubsub.listen():
-                    if message["type"] != "message":
-                        continue
-
-                    try:
-                        command_message = CommandMessage.model_validate_json(
-                            message["data"]
-                        )
-                        if command_message.command == "stop":
-                            logger.info(
-                                f"{self.agent_type}[{self.instance_id}]: Received stop signal"
-                            )
-                            await self.stop()
-                            return
-                        # Add more control commands as needed
-                    except Exception as e:
-                        logger.debug(f"Ignoring non-command message: {e}")
-
-            except Exception as e:
-                logger.error(
-                    f"{self.agent_type}[{self.instance_id}]: Signal listener error: {e}"
-                )
-                await asyncio.sleep(1)
-            finally:
-                try:
-                    await pubsub.unsubscribe(*channels)
-                    await pubsub.aclose()
-                except Exception:
-                    pass
-
-    async def handle_command_message(self, command_message: CommandMessage):
-        """Handle incoming command from Manager with distributed lock."""
-        if command_message.command != "execute":
-            return
-
-        if not command_message.query_id or not command_message.sub_query:
-            logger.error(
-                f"{self.agent_type}[{self.instance_id}]: Missing query_id or sub_query"
-            )
-            return
-
-        # Distributed lock to prevent duplicate processing by multiple workers
-        lock_key = f"task_lock:{command_message.query_id}:{command_message.sub_query}"
-        lock_acquired = await self.redis.set(
-            lock_key,
-            self.instance_id,
-            nx=True,  # Only set if not exists
-            ex=310,  # Slightly longer than task timeout
-        )
-
-        if not lock_acquired:
-            logger.debug(
-                f"{self.agent_type}[{self.instance_id}]: Task already claimed by another worker"
-            )
-            return
-
-        try:
-            await self.process_task_with_timeout(command_message)
-        finally:
-            await self.redis.delete(lock_key)
 
     async def process_task_with_timeout(self, command_message: CommandMessage):
         """Process task with timeout and proper status management."""
@@ -494,7 +402,7 @@ class WorkerAgent(BaseAgent):
         error = None
 
         try:
-            await self._store_result_references(
+            await self.store_result_references(
                 command_message.query_id, response.tools_result, response.data_resources
             )
         except Exception as e:
@@ -552,15 +460,12 @@ class WorkerAgent(BaseAgent):
             f"{self.agent_type}[{self.instance_id}]: Starting worker agent (Pull Model)"
         )
 
+        self._running = True
         status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
         await self.redis.hset(status_key, self.instance_id, AgentStatus.IDLE.value)
 
         await self.init_prompt()
-
-        await asyncio.gather(
-            self._worker_pull_loop(),  # Pull tasks from queue
-            self.listen_channels(),  # Listen for control signals
-        )
+        await self.worker_pull_loop()
 
     async def init_prompt(self):
         if not self.mcp_server_url:
@@ -629,6 +534,8 @@ class WorkerAgent(BaseAgent):
     async def stop(self):
         logger.info(f"{self.agent_type}[{self.instance_id}]: Stopping worker agent")
 
+        self._running = False
+
         # Cleanup instance registration and status
         try:
             await self.redis.delete(f"worker:{self.agent_type}:{self.instance_id}")
@@ -656,7 +563,7 @@ class WorkerAgent(BaseAgent):
         if hasattr(super(), "stop"):
             await super().stop()
 
-    async def _store_result_references(
+    async def store_result_references(
         self,
         query_id: str,
         tool_results: List[ToolCallResultResponse],

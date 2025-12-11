@@ -10,8 +10,7 @@ class RedisChannels:
     QUERY_CHANNEL = "agent:query_channel"  # Orchestrator → Managers (new queries)
     TASK_UPDATES = "agent:task_updates"  # Workers → Orchestrator (task completion)
 
-    # Control signal channel per agent type (stop, reload, etc.)
-    # Worker Pull Model: NOT used for task dispatch anymore, only control signals
+    # ChatAgent command channel (Orchestrator → ChatAgent directly, not queue-based)
     COMMAND_CHANNEL = "agent:command_channel:{}"
 
     # Query completion notification

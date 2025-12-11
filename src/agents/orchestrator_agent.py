@@ -48,7 +48,7 @@ class OrchestratorAgent(BaseAgent):
     async def process_query(self, request: Request) -> Dict[str, Any]:
         try:
             await self.process(request)
-            completion_data: CompletionResponse = await self._wait_for_completion(
+            completion_data: CompletionResponse = await self.wait_for_completion(
                 request.query_id
             )
             return completion_data.model_dump()
@@ -59,21 +59,21 @@ class OrchestratorAgent(BaseAgent):
 
     async def process(self, request: Request) -> None:
         try:
-            validation_error = self._validate_request(request)
+            validation_error = self.validate_request(request)
             if validation_error:
                 raise ValueError(validation_error)
 
-            request = self._ensure_conversation_id(request)
-            history = await self._get_conversation_history(request)
-            messages = self._compose_llm_messages(request, history)
-            orchestration_result = await self._run_llm_orchestration(request, messages)
+            request = self.ensure_conversation_id(request)
+            history = await self.get_conversation_history(request)
+            messages = self.compose_llm_messages(request, history)
+            orchestration_result = await self.run_llm_orchestration(request, messages)
             logger.info(f"Orchestration result: {orchestration_result}")
             if request.conversation_id and orchestration_result:
                 await save_conversation_message(
                     self.redis, request.conversation_id, "user", request.query
                 )
 
-            error = self._validate_orchestration_result(orchestration_result)
+            error = self.validate_orchestration_result(orchestration_result)
             if error:
                 raise ValueError(error)
 
@@ -86,15 +86,15 @@ class OrchestratorAgent(BaseAgent):
                     f"routing to ChatAgent for conversational response"
                 )
                 # Route directly to ChatAgent and wait for its response
-                await self._route_to_chat_agent_directly(request)
+                await self.route_to_chat_agent_directly(request)
                 return  # ← Exit early, don't do complex orchestration
 
-            await self._initialize_shared_state(request, orchestration_result)
-            sub_query_dict = self._build_sub_query_dict(orchestration_result)
+            await self.initialize_shared_state(request, orchestration_result)
+            sub_query_dict = self.build_sub_query_dict(orchestration_result)
             if not sub_query_dict:
                 raise ValueError("No valid sub-queries found for orchestration")
 
-            await self._publish_orchestration_task(request, sub_query_dict)
+            await self.publish_orchestration_task(request, sub_query_dict)
 
             initial_update = TaskUpdate(
                 query_id=request.query_id,
@@ -123,19 +123,19 @@ class OrchestratorAgent(BaseAgent):
             logger.error(f"LLM orchestration failed: {e}")
             raise
 
-    def _validate_request(self, request: Request) -> Optional[str]:
+    def validate_request(self, request: Request) -> Optional[str]:
         if not request.query or not request.query.strip():
             return "Query cannot be empty"
         if not request.query_id or not request.query_id.strip():
             return "Query ID cannot be empty"
         return None
 
-    def _ensure_conversation_id(self, request: Request):
+    def ensure_conversation_id(self, request: Request):
         if not hasattr(request, "conversation_id") or not request.conversation_id:
             request.conversation_id = request.query_id
         return request
 
-    async def _get_conversation_history(self, request: Request) -> List[Any]:
+    async def get_conversation_history(self, request: Request) -> List[Any]:
         if request.conversation_id:
             conversation = await load_or_create_conversation(
                 self.redis, request.conversation_id
@@ -143,7 +143,7 @@ class OrchestratorAgent(BaseAgent):
             return conversation.get_recent_messages(limit=10)
         return []
 
-    def _compose_llm_messages(
+    def compose_llm_messages(
         self, request: Request, history: List[Any]
     ) -> List[Dict[str, Any]]:
         # Build prompt mỗi request - lấy dynamic từ registry
@@ -154,10 +154,10 @@ class OrchestratorAgent(BaseAgent):
             {"role": "user", "content": request.query},
         ]
 
-    async def _run_llm_orchestration(
+    async def run_llm_orchestration(
         self, request: Request, messages: List[Dict[str, Any]]
     ) -> OrchestratorResponse:
-        result, llm_usage, llm_reasoning = await self._call_llm(
+        result, llm_usage, llm_reasoning = await self.call_llm(
             query_id=request.query_id,
             messages=messages,
             response_schema=OrchestratorSchema,
@@ -165,7 +165,7 @@ class OrchestratorAgent(BaseAgent):
 
         # Broadcast reasoning steps as THINKING messages
         if result and hasattr(result, "reasoning_steps") and result.reasoning_steps:
-            await self._broadcast_reasoning_steps(
+            await self.broadcast_reasoning_steps(
                 request.query_id, result.reasoning_steps
             )
 
@@ -177,7 +177,7 @@ class OrchestratorAgent(BaseAgent):
             llm_reasoning=llm_reasoning,
         )
 
-    async def _broadcast_reasoning_steps(
+    async def broadcast_reasoning_steps(
         self, query_id: str, reasoning_steps: List[Any]
     ) -> None:
         """Broadcast each reasoning step to frontend via MessageType.THINKING."""
@@ -210,7 +210,7 @@ class OrchestratorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"Failed to broadcast reasoning step {i + 1}: {e}")
 
-    def _validate_orchestration_result(
+    def validate_orchestration_result(
         self, orchestration_result: OrchestratorResponse
     ) -> Optional[str]:
         """Validate orchestration result.
@@ -228,7 +228,7 @@ class OrchestratorAgent(BaseAgent):
 
         return None
 
-    async def _route_to_chat_agent_directly(self, request: Request) -> None:
+    async def route_to_chat_agent_directly(self, request: Request) -> None:
         """Route simple queries (no specialized agents) directly to ChatAgent.
 
         Used when orchestrator determines query needs conversation only,
@@ -291,7 +291,7 @@ class OrchestratorAgent(BaseAgent):
                 completion_channel, error_response, CompletionResponse
             )
 
-    async def _initialize_shared_state(
+    async def initialize_shared_state(
         self, request: Request, orchestration_result: OrchestratorResponse
     ) -> SharedData:
         shared_data = SharedData(
@@ -309,7 +309,7 @@ class OrchestratorAgent(BaseAgent):
                 shared_data.add_task(task)
         await save_shared_data(self.redis, request.query_id, shared_data)
 
-    def _build_sub_query_dict(
+    def build_sub_query_dict(
         self, orchestration_result: OrchestratorResponse
     ) -> Dict[str, List[str]]:
         sub_query_dict = {}
@@ -323,7 +323,7 @@ class OrchestratorAgent(BaseAgent):
                     sub_query_dict[agent_type] = sub_query_list
         return sub_query_dict
 
-    async def _publish_orchestration_task(
+    async def publish_orchestration_task(
         self, request: Request, sub_query_dict: Dict[str, List[str]]
     ):
         message = QueryTask(
@@ -333,7 +333,7 @@ class OrchestratorAgent(BaseAgent):
         )
         await self.publish_channel(RedisChannels.QUERY_CHANNEL, message, QueryTask)
 
-    async def _wait_for_completion(self, query_id: str) -> Dict[str, Any]:
+    async def wait_for_completion(self, query_id: str) -> Dict[str, Any]:
         completion_channel = RedisChannels.get_query_completion_channel(query_id)
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(completion_channel)
@@ -362,44 +362,35 @@ class OrchestratorAgent(BaseAgent):
             }
 
     async def listen_channels(self):
-        pubsub = self.redis.pubsub()
+        from src.utils.agent_helpers import listen_pubsub_channels
+
+        async def handler(channel: str, data: bytes):
+            if channel == RedisChannels.TASK_UPDATES:
+                task_update_message = TaskUpdate.model_validate_json(data)
+                await self.handle_task_update(task_update_message)
+
         channels = await self.get_sub_channels()
-        await pubsub.subscribe(*channels)
+        await listen_pubsub_channels(self.redis, channels, handler)
 
+    async def handle_task_update(self, task_update_message: TaskUpdate):
         try:
-            async for message in pubsub.listen():
-                if (
-                    message["channel"] == RedisChannels.TASK_UPDATES
-                    and message["type"] == "message"
-                ):
-                    task_update_message = TaskUpdate.model_validate_json(
-                        message["data"]
-                    )
-                    await self._handle_task_update(task_update_message)
-        except Exception as e:
-            logger.error(f"Redis error in listen_channels: {e}")
-        finally:
-            await pubsub.unsubscribe(*channels)
-
-    async def _handle_task_update(self, task_update_message: TaskUpdate):
-        try:
-            shared_data: SharedData = await self._update_shared_data_tasks(
+            shared_data: SharedData = await self.update_shared_data_tasks(
                 task_update_message
             )
             if not shared_data:
                 return
 
             if task_update_message.agent_type == CHAT_AGENT_TYPE:
-                await self._publish_final_completion(task_update_message)
+                await self.publish_final_completion(task_update_message)
             elif shared_data.is_complete:
-                await self._trigger_chat_agent(shared_data)
+                await self.trigger_chat_agent(shared_data)
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e}")
         except Exception as e:
             logger.error(f"Task update processing error: {e}")
 
-    async def _update_shared_data_tasks(
+    async def update_shared_data_tasks(
         self, task_update_message: TaskUpdate
     ) -> Optional[SharedData]:
         try:
@@ -443,7 +434,7 @@ class OrchestratorAgent(BaseAgent):
             )
             return None
 
-    async def _trigger_chat_agent(self, shared_data: SharedData):
+    async def trigger_chat_agent(self, shared_data: SharedData):
         logger.info(
             f"All tasks done for query {shared_data.query_id}, triggering ChatAgent"
         )
@@ -491,7 +482,7 @@ class OrchestratorAgent(BaseAgent):
                 completion_channel, error_response, CompletionResponse
             )
 
-    async def _publish_final_completion(self, task_update_message: TaskUpdate):
+    async def publish_final_completion(self, task_update_message: TaskUpdate):
         try:
             shared_data = await get_shared_data(
                 self.redis, task_update_message.query_id
@@ -532,7 +523,7 @@ class OrchestratorAgent(BaseAgent):
                 completion_key, completion_response, CompletionResponse
             )
 
-            await self._store_completion_metrics(
+            await self.store_completion_metrics(
                 task_update_message, shared_data, completion_response
             )
             await summarize_conversation(
@@ -545,9 +536,9 @@ class OrchestratorAgent(BaseAgent):
             )
 
             # Structured fallback response
-            await self._publish_fallback_completion(task_update_message, str(e))
+            await self.publish_fallback_completion(task_update_message, str(e))
 
-    async def _store_completion_metrics(
+    async def store_completion_metrics(
         self,
         task_update_message: TaskUpdate,
         shared_data: "SharedData",
@@ -599,7 +590,7 @@ class OrchestratorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to store completion metrics: {e}")
 
-    async def _publish_fallback_completion(
+    async def publish_fallback_completion(
         self, task_update_message: TaskUpdate, error_details: str
     ):
         try:
