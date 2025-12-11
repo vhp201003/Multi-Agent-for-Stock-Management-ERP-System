@@ -71,26 +71,26 @@
 }
 
 .theme-toggle-btn {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--text-secondary);
-  padding: 0.5rem;
-  border-radius: 10px;
+  padding: 0;
+  border-radius: 50%;
   font-size: 1.125rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.25s ease;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
 }
 
 .theme-toggle-btn:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--accent);
+  background: var(--bg-hover);
+  border-color: var(--border-secondary);
   color: var(--accent);
-  transform: rotate(180deg);
+  transform: rotate(90deg);
 }
 
 /* Search Bar */
@@ -484,6 +484,34 @@
   background: rgba(255, 0, 0, 0.1);
   border-color: #ff4444;
   color: #ff4444;
+}
+
+/* Admin Button - Matches ChatInput Toggles */
+.admin-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+}
+
+.admin-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--border-secondary);
+  transform: rotate(90deg);
+}
+
+.admin-btn:active {
+  transform: scale(0.95) rotate(90deg);
 }
 
 /* Responsive Design */

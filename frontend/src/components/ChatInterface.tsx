@@ -512,8 +512,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             modified_params: undefined,
           };
 
-          // Send auto-approval to backend
-          wsService.sendApprovalResponse(autoApprovalResponse);
+          // Send auto-approval to backend via REST API (more reliable)
+          try {
+            await apiService.submitApprovalResponse(autoApprovalResponse);
+            console.log(
+              "[ChatInterface] ✅ Auto-approval sent successfully via REST API"
+            );
+          } catch (error) {
+            console.error(
+              "[ChatInterface] ❌ Failed to send auto-approval:",
+              error
+            );
+            addToast("Failed to send auto-approval to backend", "error");
+          }
 
           // Mark as resolved immediately
           setResolvedApprovals((prev) => {
