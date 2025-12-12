@@ -493,6 +493,12 @@ class OrchestratorAgent(BaseAgent):
                 )
                 return
 
+            # Mark overall query status as completed
+            shared_data.status = "completed"
+            await save_shared_data(
+                self.redis, task_update_message.query_id, shared_data
+            )
+
             final_response_text = None
 
             if task_update_message.result:

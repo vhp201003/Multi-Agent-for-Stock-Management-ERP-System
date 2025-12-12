@@ -1,0 +1,22 @@
+[
+  {
+    "query": "Check current stock of BACK-0087 in Kho Hải Phòng - HP and forecast sales for the next month to see if we will have a shortage",
+    "expected_agents": ["inventory", "forecasting"],
+    "description": "Combine Inventory Check and Sales Forecasting"
+  },
+  {
+    "query": "I need 500 units of BACK-0056 urgently. Check if we have enough stock, and if not, check replenishment to create a purchase order",
+    "expected_agents": ["inventory", "ordering"],
+    "description": "Inventory Check triggering Replenishment/Ordering"
+  },
+  {
+    "query": "Analyze the sales trends of BACK-0043 and predict demand for next quarter to decide on stocking strategy",
+    "expected_agents": ["analytics", "forecasting"],
+    "description": "Historical Analysis combined with Future Prediction"
+  },
+  {
+    "query": "Check stock levels of BACK-0001, identify if it's a slow mover, and if so, don't reorder",
+    "expected_agents": ["inventory", "analytics"],
+    "description": "Inventory status combined with Slow Mover Analysis"
+  }
+]
