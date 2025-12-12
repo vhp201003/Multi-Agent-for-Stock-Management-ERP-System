@@ -1,0 +1,30 @@
+[
+  {
+    "query": "Check inventory for Balo Model 087 (BACK-0087)",
+    "expected_agents": ["inventory"]
+  },
+  {
+    "query": "Show me the stock history for item BACK-0056 in Kho Hải Phòng - HP for the last 30 days",
+    "expected_agents": ["inventory"]
+  },
+  {
+    "query": "Forecast sales demand for BACK-0043 for the next 6 months",
+    "expected_agents": ["forecasting"]
+  },
+  {
+    "query": "Analyze stock coverage for item BACK-0001 and check if we need to replenish",
+    "expected_agents": ["analytics"]
+  },
+  {
+    "query": "Identify slow moving items in Kho Hồ Chí Minh - HP",
+    "expected_agents": ["analytics"]
+  },
+  {
+    "query": "Check replenishment needs for BACK-0048 and suggest the best supplier",
+    "expected_agents": ["ordering"]
+  },
+  {
+    "query": "Create a stock transfer proposal for 10 units of BACK-0084 from Kho Đà Nẵng - HP to Kho Hà Nội - HP",
+    "expected_agents": ["inventory"]
+  }
+]
