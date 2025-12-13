@@ -27,6 +27,9 @@ async def get_shared_data(
         return None
 
 
+SHARED_DATA_TTL = 600
+
+
 async def save_shared_data(
     redis_client: redis.Redis, query_id: str, shared_data: SharedData
 ):
@@ -37,6 +40,7 @@ async def save_shared_data(
 
     try:
         await redis_client.json().set(key, Path.root_path(), shared_data.model_dump())
+        await redis_client.expire(key, SHARED_DATA_TTL)
     except redis.RedisError:
         raise
 
@@ -69,6 +73,7 @@ async def update_shared_data(
             merged_data = _merge_shared_data(existing_shared_data, update_data)
             validated = SharedData(**merged_data)
             await redis_client.json().set(key, Path.root_path(), validated.model_dump())
+            await redis_client.expire(key, SHARED_DATA_TTL)
         else:
             await save_shared_data(redis_client, query_id, update_data)
 

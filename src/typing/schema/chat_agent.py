@@ -48,18 +48,7 @@ class LLMMarkdownField(LLMLayoutField):
     )
     content: Optional[str] = Field(
         default="",
-        description=(
-            "REQUIRED: Markdown-formatted text content.\n\n"
-            "Supported formatting:\n"
-            "- Headings: ## Main Heading, ### Subheading\n"
-            "- Emphasis: **bold**, *italic*\n"
-            "- Lists: - item, 1. numbered\n"
-            "- Separators: ---\n"
-            "- Code: `inline code`, ```block```\n\n"
-            "Include business context, professional language, and actionable insights.\n"
-            "Match the user's query language (Vietnamese → Vietnamese content, English → English content).\n\n"
-            "**TIP**: Use this to introduce charts - provide context before visualization."
-        ),
+        description="REQUIRED: Markdown-formatted text content. Use this to introduce charts or summarize insights.",
     )
 
 
@@ -77,10 +66,19 @@ class BaseChartDataSource(BaseModel):
     )
 
 
+class TableDataSource(BaseChartDataSource):
+    columns: List[str] = Field(
+        ...,
+        description="List of EXACT field names (keys) to extract from data rows for columns.",
+    )
+    headers: Optional[List[str]] = Field(
+        None,
+        description="Optional list of human-readable headers. If not provided, uses column names.",
+    )
+
+
 # ============ SPECIFIC CHART SCHEMAS ============
 class BarChartDataSource(BaseChartDataSource):
-    """Vertical bar chart: categories on X-axis, values on Y-axis."""
-
     chart_type: Literal["barchart"] = "barchart"
     category_field: Optional[str] = Field(
         default=None,
@@ -93,8 +91,6 @@ class BarChartDataSource(BaseChartDataSource):
 
 
 class HorizontalBarChartDataSource(BaseChartDataSource):
-    """Horizontal bar chart: categories on Y-axis, values on X-axis. Better for many items with long names."""
-
     chart_type: Literal["horizontalbarchart"] = "horizontalbarchart"
     category_field: Optional[str] = Field(
         default=None,
@@ -106,8 +102,6 @@ class HorizontalBarChartDataSource(BaseChartDataSource):
 
 
 class LineChartDataSource(BaseChartDataSource):
-    """Line chart: X-axis (usually time/sequence), Y-axis (metric)."""
-
     chart_type: Literal["linechart"] = "linechart"
     x_field: Optional[str] = Field(
         default=None,
@@ -120,8 +114,6 @@ class LineChartDataSource(BaseChartDataSource):
 
 
 class PieChartDataSource(BaseChartDataSource):
-    """Pie chart: labels and their proportions."""
-
     chart_type: Literal["piechart"] = "piechart"
     label_field: Optional[str] = Field(
         default=None,
@@ -133,8 +125,6 @@ class PieChartDataSource(BaseChartDataSource):
 
 
 class ScatterPlotDataSource(BaseChartDataSource):
-    """Scatter plot: X-Y correlation with optional grouping and labeling."""
-
     chart_type: Literal["scatterplot"] = "scatterplot"
     x_field: Optional[str] = Field(
         default=None,
@@ -210,31 +200,7 @@ class LLMGraphField(LLMLayoutField):
         "piechart", "barchart", "horizontalbarchart", "linechart", "scatterplot"
     ] = Field(
         ...,
-        description=(
-            "REQUIRED: Chart type based on data structure (NOT domain):\n\n"
-            "- 'piechart': Show proportions/distribution\n"
-            "  When: Have categories + numeric values representing parts of whole\n"
-            "  Example: Product distribution, category breakdown, status counts\n"
-            "  Max: 8 items recommended\n\n"
-            "- 'barchart': Compare values across categories (vertical)\n"
-            "  When: Have categories + numeric values to compare side-by-side\n"
-            "  Example: Stock levels by product, sales by region, counts by type\n"
-            "  Max: 15 items recommended\n\n"
-            "- 'horizontalbarchart': Compare values across categories (horizontal)\n"
-            "  When: Have many categories (>5) with long names + numeric values\n"
-            "  Example: Product comparison, multi-item inventory levels, top performers\n"
-            "  Max: 20 items recommended (better for long labels)\n\n"
-            "- 'linechart': Show progression/trends over sequence\n"
-            "  When: Have ordered/sequential labels + numeric values\n"
-            "  Example: Time series, historical trends, sequential measurements\n"
-            "  Max: 50 points recommended\n\n"
-            "- 'scatterplot': Show correlation/relationship between two numeric variables\n"
-            "  When: Have two numeric fields to compare (X vs Y)\n"
-            "  Example: Price vs Sales, Quantity vs Revenue, Weight vs Cost\n"
-            "  Max: 100 points recommended\n"
-            "  Optional: Add group_field for colored clusters, name_field for tooltips\n\n"
-            "Select based on what insights the data provides, not what domain it's from."
-        ),
+        description="REQUIRED: Chart type based on data structure. Must be one of: 'piechart', 'barchart', 'horizontalbarchart', 'linechart', 'scatterplot'",
     )
     title: Optional[str] = Field(
         None,
@@ -254,72 +220,14 @@ class LLMGraphField(LLMLayoutField):
     )
     data_source: Optional[Union[ChartDataSource, Dict[str, Any]]] = Field(
         default=None,
-        description=(
-            "REQUIRED: Type-safe data source specification. MUST include 'chart_type' field matching graph_type.\n\n"
-            "CRITICAL: Always set 'chart_type' field first!\n\n"
-            "Schema by chart type:\n"
-            '- barchart: {"chart_type": "barchart", "agent_type": "...", "tool_name": "...", "category_field": "...", "value_field": "..."}\n'
-            '- horizontalbarchart: {"chart_type": "horizontalbarchart", "agent_type": "...", "tool_name": "...", "category_field": "...", "value_field": "..."}\n'
-            '- linechart: {"chart_type": "linechart", "agent_type": "...", "tool_name": "...", "x_field": "...", "y_field": "..."}\n'
-            '- piechart: {"chart_type": "piechart", "agent_type": "...", "tool_name": "...", "label_field": "...", "value_field": "..."}\n'
-            '- scatterplot: {"chart_type": "scatterplot", "agent_type": "...", "tool_name": "...", "x_field": "...", "y_field": "...", "name_field": "...", "group_field": "..."}\n\n'
-            "Steps:\n"
-            "1. Set chart_type to EXACTLY match graph_type\n"
-            "2. Identify agent_type and tool_name from AVAILABLE DATA section\n"
-            "3. Examine tool result structure for exact field names\n"
-            "4. Use correct field names for the chart type (see schemas above)\n\n"
-            "Example for scatterplot:\n"
-            "{\n"
-            '  "chart_type": "scatterplot",\n'
-            '  "agent_type": "analytics",\n'
-            '  "tool_name": "analyze_price_performance",\n'
-            '  "x_field": "standard_rate",\n'
-            '  "y_field": "total_qty_sold",\n'
-            '  "name_field": "item_name",\n'
-            '  "group_field": "item_group"\n'
-            "}\n\n"
-            "DO NOT guess field names - they must match exactly what's in the data."
-        ),
-    )
-    data: Optional[dict] = Field(
-        default=None,
-        description=(
-            "DO NOT SET THIS FIELD. Always use null/None.\n"
-            "Backend automatically fills this from data_source specification.\n"
-            "Format after auto-fill: {labels: [...], datasets: [{label, data}]}"
-        ),
+        description="REQUIRED: Type-safe data source specification. Must include 'chart_type' field matching graph_type.",
     )
 
 
 class LLMTableField(LLMLayoutField):
     """
-    Tabular data field for displaying structured records with multiple attributes.
-
-    **USE SPARINGLY**: Tables should be your LAST RESORT. Prefer charts/graphs for numeric data.
-
-    Use tables ONLY when:
-    - Data is primarily text-based (names, descriptions, IDs)
-    - Multiple diverse attributes per item that don't fit chart format
-    - Charts cannot effectively convey the information
-    - User explicitly asks for detailed tabular view
-
-    **AVOID tables for:**
-    - Numeric comparisons (use barchart instead)
-    - Time series data (use linechart instead)
-    - Distribution data (use piechart instead)
-
-    Format:
-    {
-        "field_type": "table",
-        "title": "Product Details",
-        "data": {
-            "headers": ["Product", "SKU", "Stock", "Status"],
-            "rows": [
-                ["Laptop", "LT-001", "45", "In Stock"],
-                ["Mouse", "MS-002", "120", "In Stock"]
-            ]
-        }
-    }
+    Tabular data field for displaying structured records.
+    Use when exact details, text attributes, or mixed data types are needed.
     """
 
     field_type: Literal["table"] = Field(
@@ -333,35 +241,13 @@ class LLMTableField(LLMLayoutField):
             "Examples: 'Product Details', 'Chi Tiết Sản Phẩm'"
         ),
     )
-    data: Optional[dict] = Field(
+    data_source: Optional[TableDataSource] = Field(
         default=None,
-        description=(
-            "Table data structure.\n\n"
-            "Must be object with:\n"
-            "- 'headers': Array of column header strings\n"
-            "- 'rows': Array of arrays (each inner array is one row)\n\n"
-            "Example:\n"
-            "{\n"
-            '  "headers": ["Name", "Quantity", "Status"],\n'
-            '  "rows": [\n'
-            '    ["Product A", "50", "Active"],\n'
-            '    ["Product B", "30", "Low Stock"]\n'
-            "  ]\n"
-            "}\n\n"
-            "Use the same language as user's query for headers and values."
-        ),
+        description="REQUIRED: Type-safe data source specification. Must include 'columns' to extract.",
     )
 
 
 class ChatAgentSchema(BaseSchema):
-    """
-    CRITICAL: This schema defines the ONLY valid JSON structure for responses.
-    You MUST return EXACTLY: {"layout": [...]}
-
-    DO NOT add any extra fields like "summary", "metadata", "thinking", etc.
-    DO NOT return just an array - must be object with "layout" key.
-    """
-
     layout: List[
         Union[
             LLMMarkdownField,

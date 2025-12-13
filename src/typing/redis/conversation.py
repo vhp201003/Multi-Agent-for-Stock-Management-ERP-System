@@ -32,7 +32,9 @@ class ConversationData(BaseModel):
     summary_updated_at: Optional[datetime] = Field(
         default=None, description="When summary was last updated"
     )
-    user_id: Optional[str] = Field(default=None, description="User ID owning this conversation")
+    user_id: Optional[str] = Field(
+        default=None, description="User ID owning this conversation"
+    )
 
     def add_message(
         self, role: str, content: str, metadata: Optional[dict] = None

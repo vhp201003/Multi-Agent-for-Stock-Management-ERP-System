@@ -61,7 +61,7 @@ async def create_conversation_handler(
         conversation = await create_conversation(
             redis, request.conversation_id, request.title, user_id
         )
-        return _conversation_to_response(conversation)
+        return conversation_to_response(conversation)
     except Exception as e:
         logger.error(f"Failed to create conversation: {e}")
         raise HTTPException(status_code=500, detail=f"Creation failed: {str(e)}")
@@ -86,7 +86,7 @@ async def get_conversation_handler(
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        return _conversation_to_response(conversation, include_messages)
+        return conversation_to_response(conversation, include_messages)
     except HTTPException:
         raise
     except Exception as e:
@@ -109,7 +109,7 @@ async def list_conversations_handler(
         )
 
         responses = [
-            _conversation_to_response(conv, include_messages=False)
+            conversation_to_response(conv, include_messages=False)
             for conv in sorted_conversations
         ]
 
@@ -140,7 +140,7 @@ async def update_conversation_handler(
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        return _conversation_to_response(conversation)
+        return conversation_to_response(conversation)
     except HTTPException:
         raise
     except Exception as e:
@@ -172,7 +172,7 @@ async def delete_conversation_handler(
 
 
 # Helper Functions
-def _conversation_to_response(
+def conversation_to_response(
     conversation: Conversation, include_messages: bool = False
 ) -> ConversationResponse:
     """Convert Conversation object to API response."""

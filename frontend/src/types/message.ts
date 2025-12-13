@@ -52,6 +52,8 @@ export interface LayoutField {
     yKey?: string;
     groupKey?: string;
     groups?: string[];
+    // Pagination support for tables
+    totalItems?: number;
   };
 }
 

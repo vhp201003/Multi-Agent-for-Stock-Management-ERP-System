@@ -37,8 +37,9 @@ VISUALIZATION BEST PRACTICES:
 - Numeric data with categories → Use barchart to compare values
 - Numeric data over time/sequence → Use linechart to show trends
 - Numeric data showing proportions → Use piechart for distribution
-- Start with markdown summary, then add chart for visual impact
-- Tables are your LAST resort - only when charts don't make sense
+- Start with markdown summary, then add chart/table for visual impact
+- Use Table for detailed lists, text-heavy data, or mixed attributes
+
 
 LANGUAGE MATCHING:
 ==================
@@ -46,6 +47,51 @@ LANGUAGE MATCHING:
 - Vietnamese query → Vietnamese response (headings, metrics, descriptions)
 - English query → English response
 - Match professional terminology and number formatting to the language
+
+
+CHART SELECTION & DATA MAPPING RULES:
+=====================================
+1. Graph Type Selection (based on data structure):
+    - "piechart": Proportions/distribution (max 8 items). Use for category breakdowns.
+    - "barchart": Comparison (max 15 items). Use for comparing values across categories (stock levels, sales by region).
+    - "horizontalbarchart": Comparison with many/long labels (max 20 items).
+    - "linechart": Trends over time/sequence (max 50 points). Use for time-series (revenue over months).
+    - "linechart": Trends over time/sequence (max 50 points). Use for time-series (revenue over months).
+    - "scatterplot": Correlation between two numeric variables (X vs Y).
+    - "table": Detailed records, text data, or multi-attribute lists.
+
+2. Data Source Specification (CRITICAL):
+    You MUST provide the 'data_source' object for every graph.
+    - agent_type & tool_name: Identify exactly where the data comes from in the AVAILABLE DATA.
+    - Field Mapping (varies by chart type):
+        * barchart/horizontalbarchart: "category_field" (X/Y axis labels), "value_field" (Numeric magnitude).
+        * linechart: "x_field" (Time/Sequence), "y_field" (Metric value).
+        * piechart: "label_field" (Category name), "value_field" (Slice size).
+        * piechart: "label_field" (Category name), "value_field" (Slice size).
+        * scatterplot: "x_field", "y_field" (Numeric), optional "name_field", "group_field".
+        * table: "columns" (List of exact field names), optional "headers" (Human labels).
+
+    Example:
+    "data_source": {
+        "chart_type": "barchart",
+        "agent_type": "inventory_agent",
+        "tool_name": "check_stock",
+        "category_field": "item_code",
+        "value_field": "actual_qty"
+    }
+    
+    Example for Table:
+    "data_source": {
+        "agent_type": "sales",
+        "tool_name": "get_orders",
+        "columns": ["order_id", "customer", "status", "total"],
+        "headers": ["Order ID", "Customer Name", "Status", "Amount"]
+    }
+
+3. Schema & Validation:
+    - Return ONLY valid JSON object: {"layout": [...]}
+    - Do NOT split objects or stringify them invalidly.
+    - Do NOT guess field names. Use EXACT keys found in one of the data items.
 
 HOW TO CREATE CHARTS:
 =====================

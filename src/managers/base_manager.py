@@ -10,6 +10,7 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
+from src.utils.agent_helpers import listen_pubsub_channels
 from src.utils.redis_lock import redis_lock
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,7 @@ class BaseManager:
     def __init__(self, agent_type: str):
         self.agent_type = agent_type
         self._running = False
-        self._redis_manager = get_async_redis_connection()
-        self.redis = self._redis_manager.client
+        self.redis = get_async_redis_connection().client
 
     async def start(self):
         self._running = True
@@ -32,14 +32,11 @@ class BaseManager:
     # ==================== PUB/SUB LISTENER ====================
 
     async def listen_channels(self):
-        """Listen for queries and task updates."""
-        from src.utils.agent_helpers import listen_pubsub_channels
-
         async def handler(channel: str, data: bytes):
             if channel == RedisChannels.QUERY_CHANNEL:
-                await self._on_query(QueryTask.model_validate_json(data))
+                await self.on_query(QueryTask.model_validate_json(data))
             elif channel == RedisChannels.TASK_UPDATES:
-                await self._on_task_update(TaskUpdate.model_validate_json(data))
+                await self.on_task_update(TaskUpdate.model_validate_json(data))
 
         await listen_pubsub_channels(
             self.redis,
@@ -48,12 +45,11 @@ class BaseManager:
             lambda: self._running,
         )
 
-    async def _on_query(self, data: QueryTask):
-        """Query received → queue tasks for this agent."""
+    async def on_query(self, data: QueryTask):
         if self.agent_type not in data.agents_needed:
             return
 
-        shared_data = await self._get_shared_data(data.query_id)
+        shared_data = await self.get_shared_data(data.query_id)
         if not shared_data:
             logger.error(
                 f"Manager {self.agent_type}: No shared data for {data.query_id}"
@@ -73,19 +69,18 @@ class BaseManager:
             # Deps OK → active, else → pending
             queue = (
                 RedisKeys.get_agent_queue(self.agent_type)
-                if self._deps_ok(task, shared_data)
+                if self.is_dependency_oke(task, shared_data)
                 else RedisKeys.get_agent_pending_queue(self.agent_type)
             )
             await self.redis.rpush(queue, item.model_dump_json())
 
         logger.info(f"Manager {self.agent_type}: Queued {len(tasks)} tasks")
 
-    async def _on_task_update(self, update: TaskUpdate):
-        """Task completed → check if pending tasks can be promoted."""
+    async def on_task_update(self, update: TaskUpdate):
         if not update.query_id:
             return
 
-        shared_data = await self._get_shared_data(update.query_id)
+        shared_data = await self.get_shared_data(update.query_id)
         if not shared_data:
             return
 
@@ -129,7 +124,7 @@ class BaseManager:
         if not pending_raw:
             return
 
-        shared_data = await self._get_shared_data(query_id)
+        shared_data = await self.get_shared_data(query_id)
         if not shared_data:
             return
 
@@ -141,8 +136,8 @@ class BaseManager:
             if task.query_id != query_id:
                 continue
 
-            task_node = self._find_task(task, shared_data)
-            if task_node and self._deps_ok(task_node, shared_data):
+            task_node = self.find_task(task, shared_data)
+            if task_node and self.is_dependency_oke(task_node, shared_data):
                 ready_tasks.append((raw, task))
 
         if not ready_tasks:
@@ -196,8 +191,7 @@ class BaseManager:
 
         return False
 
-    def _deps_ok(self, task_node, shared_data: SharedData) -> bool:
-        """Check if all dependencies completed."""
+    def is_dependency_oke(self, task_node, shared_data: SharedData) -> bool:
         deps = getattr(task_node, "dependencies", None) or []
         for dep_id in deps:
             dep = shared_data.tasks.get(dep_id)
@@ -205,91 +199,12 @@ class BaseManager:
                 return False
         return True
 
-    def _find_task(self, item: TaskQueueItem, shared_data: SharedData):
-        """Find task node by task_id or sub_query."""
+    def find_task(self, item: TaskQueueItem, shared_data: SharedData):
         for t in shared_data.get_tasks_for_agent(self.agent_type):
             if t.task_id == item.task_id or t.sub_query == item.sub_query:
                 return t
         return None
 
-    async def _get_shared_data(self, query_id: str) -> SharedData | None:
-        """Fetch SharedData from Redis."""
+    async def get_shared_data(self, query_id: str) -> SharedData | None:
         raw = await self.redis.json().get(RedisKeys.get_shared_data_key(query_id))
         return SharedData(**raw) if raw else None
-
-    async def get_queue_stats(self) -> dict:
-        """Get queue statistics for monitoring."""
-        active_key = RedisKeys.get_agent_queue(self.agent_type)
-        pending_key = RedisKeys.get_agent_pending_queue(self.agent_type)
-
-        active_count = await self.redis.llen(active_key)
-        pending_count = await self.redis.llen(pending_key)
-
-        # Group by query_id
-        pending_raw = await self.redis.lrange(pending_key, 0, -1)
-        pending_by_query = {}
-
-        for raw in pending_raw:
-            try:
-                task = TaskQueueItem.model_validate_json(raw)
-                query_id = task.query_id
-                pending_by_query[query_id] = pending_by_query.get(query_id, 0) + 1
-            except Exception:
-                pass
-
-        return {
-            "agent_type": self.agent_type,
-            "active_queue_size": active_count,
-            "pending_queue_size": pending_count,
-            "pending_by_query": pending_by_query,
-        }
-
-    async def check_stuck_pending_tasks(self) -> list:
-        """
-        Check for tasks stuck in pending queue.
-
-        Returns list of potentially stuck tasks (dependencies satisfied but still pending).
-        Useful for monitoring and debugging race conditions.
-        """
-        pending_key = RedisKeys.get_agent_pending_queue(self.agent_type)
-        pending_raw = await self.redis.lrange(pending_key, 0, -1)
-
-        stuck_tasks = []
-
-        for raw in pending_raw:
-            try:
-                task = TaskQueueItem.model_validate_json(raw)
-
-                # Check if dependencies are actually satisfied
-                shared_data = await self._get_shared_data(task.query_id)
-                if not shared_data:
-                    continue
-
-                task_node = self._find_task(task, shared_data)
-                if not task_node:
-                    stuck_tasks.append(
-                        {
-                            "task_id": task.task_id,
-                            "query_id": task.query_id,
-                            "sub_query": task.sub_query[:100],
-                            "reason": "Task node not found in SharedData",
-                        }
-                    )
-                    continue
-
-                # Check if dependencies are satisfied but task still pending
-                if self._deps_ok(task_node, shared_data):
-                    stuck_tasks.append(
-                        {
-                            "task_id": task.task_id,
-                            "query_id": task.query_id,
-                            "sub_query": task.sub_query[:100],
-                            "reason": "Dependencies satisfied but still in pending queue (possible race condition victim)",
-                            "dependencies": getattr(task_node, "dependencies", []),
-                        }
-                    )
-
-            except Exception as e:
-                logger.error(f"Error checking stuck task: {e}")
-
-        return stuck_tasks

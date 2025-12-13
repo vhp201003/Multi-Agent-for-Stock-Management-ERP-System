@@ -31,6 +31,7 @@ from src.utils.shared_data_utils import (
     find_task_id,
     get_dependency_context,
     get_shared_data,
+    truncate_results,
     update_shared_data,
 )
 
@@ -216,14 +217,15 @@ class WorkerAgent(BaseAgent):
             )
 
             # Broadcast and return
-            await self.broadcast_tool_result(query_id, tool_name, parameters, tool_result)
+            await self.broadcast_tool_result(
+                query_id, tool_name, parameters, tool_result
+            )
             return self.build_tool_message(tool_call.id, tool_result)
 
         except Exception as e:
             return await self.handle_tool_error(tool_call, accumulator, query_id, e)
 
     def normalize_tool_result(self, result: Any) -> Dict[str, Any]:
-        """Normalize tool result to dict."""
         if result is None:
             return {"status": "success", "message": "No result returned"}
         if isinstance(result, str):
@@ -235,14 +237,12 @@ class WorkerAgent(BaseAgent):
     def build_tool_message(
         self, tool_call_id: str, result: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Build tool result message for LLM context."""
-        try:
-            content = encode(result)
-        except Exception:
-            content = json.dumps(result)
+        truncated = truncate_results(result, max_items=10, max_depth=3)
 
-        if len(content) > 20000:
-            content = content[:20000] + f"... (truncated {len(content) - 20000} chars)"
+        try:
+            content = encode(truncated)
+        except Exception:
+            content = json.dumps(truncated, ensure_ascii=False)
 
         return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
@@ -254,7 +254,6 @@ class WorkerAgent(BaseAgent):
         accumulator: List,
         reason: Optional[str],
     ) -> Dict[str, Any]:
-        """Build rejection result when user rejects tool."""
         msg = {
             "status": "rejected",
             "reason": reason or "User rejected this action",
@@ -275,7 +274,6 @@ class WorkerAgent(BaseAgent):
     async def handle_tool_error(
         self, tool_call: Any, accumulator: List, query_id: str, error: Exception
     ) -> Dict[str, Any]:
-        """Handle tool execution error."""
         logger.error(f"{self.agent_type}: Tool call failed: {error}")
         error_msg = f"Tool call failed for {tool_call} with {json.loads(getattr(tool_call.function, 'arguments', '{}'))} : {str(error)}"
 
@@ -297,7 +295,7 @@ class WorkerAgent(BaseAgent):
 
     async def worker_pull_loop(self):
         queue_key = RedisKeys.get_agent_queue(self.agent_type)
-        BLPOP_TIMEOUT = 5  # seconds
+        BLPOP_TIMEOUT = 10  # seconds
 
         logger.info(
             f"{self.agent_type}[{self.instance_id}]: Starting pull loop from {queue_key}"
@@ -305,7 +303,6 @@ class WorkerAgent(BaseAgent):
 
         while self._running:  # Check running flag
             try:
-                # BLPOP: Blocking pop from queue (efficient, no polling)
                 result = await self.redis.blpop(queue_key, timeout=BLPOP_TIMEOUT)
 
                 if not result:
@@ -319,7 +316,6 @@ class WorkerAgent(BaseAgent):
                     f"{task_item.sub_query[:50]}... (query_id: {task_item.query_id})"
                 )
 
-                # Get SharedData to build CommandMessage
                 shared_data = await self.get_shared_data_worker(task_item.query_id)
                 if not shared_data:
                     logger.warning(
@@ -328,7 +324,6 @@ class WorkerAgent(BaseAgent):
                     )
                     continue
 
-                # Build CommandMessage for processing
                 command_message = CommandMessage(
                     agent_type=self.agent_type,
                     command="execute",
@@ -337,7 +332,6 @@ class WorkerAgent(BaseAgent):
                     sub_query=task_item.sub_query,
                 )
 
-                # Process task directly
                 await self.process_task_with_timeout(command_message)
 
             except Exception as e:
@@ -345,13 +339,11 @@ class WorkerAgent(BaseAgent):
                     f"{self.agent_type}[{self.instance_id}]: Pull loop error: {e}",
                     exc_info=True,
                 )
-                # Reset state to prevent stale query_id issues
                 self._current_query_id = None
                 self._current_task_id = None
                 await asyncio.sleep(1)
 
     async def get_shared_data_worker(self, query_id: str) -> SharedData | None:
-        """Fetch SharedData from Redis."""
         try:
             raw = await self.redis.json().get(RedisKeys.get_shared_data_key(query_id))
             return SharedData(**raw) if raw else None
@@ -360,10 +352,8 @@ class WorkerAgent(BaseAgent):
             return None
 
     async def process_task_with_timeout(self, command_message: CommandMessage):
-        """Process task with timeout and proper status management."""
         status_key = RedisKeys.get_agent_instance_status_key(self.agent_type)
 
-        # Set THIS instance to PROCESSING
         await self.redis.hset(
             status_key, self.instance_id, AgentStatus.PROCESSING.value
         )
@@ -385,13 +375,11 @@ class WorkerAgent(BaseAgent):
         except Exception as e:
             logger.error(f"{self.agent_type}[{self.instance_id}]: Task error: {e}")
         finally:
-            # Always reset THIS instance to IDLE
             await self.redis.hset(status_key, self.instance_id, AgentStatus.IDLE.value)
 
     async def publish_task_completion(
         self, command_message: CommandMessage, response: WorkerAgentProcessResponse
     ):
-        """Publish task completion to TASK_UPDATES channel."""
         task_id = await find_task_id(
             self.redis,
             command_message.query_id,
@@ -569,7 +557,6 @@ class WorkerAgent(BaseAgent):
         tool_results: List[ToolCallResultResponse],
         resource_results: List[ResourceCallResponse],
     ) -> None:
-        """Store result_id → full result mapping in SharedData for tracing"""
         try:
             shared = await get_shared_data(self.redis, query_id)
             if not shared:
