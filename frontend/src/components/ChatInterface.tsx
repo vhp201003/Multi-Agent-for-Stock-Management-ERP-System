@@ -65,6 +65,129 @@ declare global {
   }
 }
 
+
+const PaginatedTable: React.FC<{ headers: string[]; rows: any[][]; totalItems?: number }> = ({
+  headers,
+  rows,
+  totalItems,
+}) => {
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  const totalPages = Math.ceil(rows.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, rows.length);
+  const currentRows = rows.slice(startIndex, endIndex);
+
+  // Generate page numbers to display
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    const maxVisible = 5;
+    
+    if (totalPages <= maxVisible + 2) {
+      // Show all pages
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      // Show first, last, and pages around current
+      pages.push(1);
+      
+      if (currentPage > 3) pages.push('...');
+      
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+      
+      for (let i = start; i <= end; i++) pages.push(i);
+      
+      if (currentPage < totalPages - 2) pages.push('...');
+      
+      pages.push(totalPages);
+    }
+    return pages;
+  };
+
+  if (rows.length === 0) return null;
+
+  const displayTotalItems = totalItems || rows.length;
+
+  return (
+    <div className="paginated-table-container">
+      <table>
+        <thead>
+          <tr>
+            {headers.map((header, i) => (
+              <th key={i}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {currentRows.map((row, rowIndex) => (
+            <tr key={startIndex + rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex}>{
+                    typeof cell === 'object' && cell !== null 
+                    ? JSON.stringify(cell) 
+                    : String(cell)
+                }</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      
+      {/* Always show pagination footer */}
+      <div className="pagination-controls">
+        {/* Previous Button */}
+        <button
+          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+          className="pagination-btn"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Trước
+        </button>
+
+        {/* Page Numbers */}
+        {totalPages > 1 && (
+          <div className="pagination-pages">
+            {getPageNumbers().map((page, idx) => (
+              typeof page === 'number' ? (
+                <button
+                  key={idx}
+                  onClick={() => setCurrentPage(page)}
+                  className={`pagination-page-btn ${currentPage === page ? 'active' : ''}`}
+                >
+                  {page}
+                </button>
+              ) : (
+                <span key={idx} className="pagination-ellipsis">...</span>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* Next Button */}
+        <button
+          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages || totalPages === 1}
+          className="pagination-btn"
+        >
+          Sau
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+
+        {/* Info */}
+        <div className="pagination-info">
+          <span>Hiển thị <strong>{startIndex + 1}-{endIndex}</strong> / <strong>{displayTotalItems}</strong> mục</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface ChatInterfaceProps {
   conversationId: string;
   onConversationChange?: (conversationId: string) => void;
@@ -1304,24 +1427,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <div key={index} className="layout-table">
             {field.title && <h4>{field.title}</h4>}
             {field.data && field.data.headers && field.data.rows && (
-              <table>
-                <thead>
-                  <tr>
-                    {field.data.headers.map((header, i) => (
-                      <th key={i}>{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {field.data.rows.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {row.map((cell, cellIndex) => (
-                        <td key={cellIndex}>{String(cell)}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <PaginatedTable 
+                headers={field.data.headers} 
+                rows={field.data.rows}
+                totalItems={field.data.totalItems}
+              />
             )}
           </div>
         );

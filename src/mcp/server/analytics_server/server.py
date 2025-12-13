@@ -250,7 +250,8 @@ class AnalyticsMCPServer(BaseMCPServer):
             description="Time grouping: 'daily', 'monthly', or 'yearly'",
         ),
         status: Optional[str] = Field(
-            None, description="Sales Order status filter (e.g., 'Completed', 'Draft')"
+            None,
+            description="Sales Order status filter. Valid values: Draft, On Hold, To Deliver and Bill, To Bill, To Deliver, Completed, Cancelled, Closed",
         ),
     ) -> SalesOrderStatsOutput:
         try:

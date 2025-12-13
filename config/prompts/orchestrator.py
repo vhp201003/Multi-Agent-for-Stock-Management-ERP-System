@@ -260,8 +260,7 @@ Query: "Hello, what can you do?"
 """
 
 
-def _format_agent_descriptions(agents_info: Dict[str, Any]) -> str:
-    """Format agent info dict into prompt-friendly string."""
+def format_agent_descriptions(agents_info: Dict[str, Any]) -> str:
     agents_desc = []
     for name, info in agents_info.items():
         if name == "orchestrator":
@@ -269,18 +268,15 @@ def _format_agent_descriptions(agents_info: Dict[str, Any]) -> str:
 
         desc = info.get("description", "No description")
 
-        # Include tools with descriptions
         tools = info.get("tools", [])
         tools_str = ""
         if tools:
             if isinstance(tools[0], dict):
-                # Format: tool_name (description)
                 tools_str = "Tools: " + "; ".join(
                     f"{t.get('name', 'unknown')} ({t.get('description', 'no desc')})"
                     for t in tools
                 )
             else:
-                # Old format (backward compat)
                 tools_str = "Tools: " + ", ".join(str(t) for t in tools)
 
         agents_desc.append(
@@ -292,9 +288,7 @@ def _format_agent_descriptions(agents_info: Dict[str, Any]) -> str:
     return "\n".join(agents_desc)
 
 
-def _get_agents_info() -> Dict[str, Any]:
-    """Lấy agents info: ưu tiên registry, fallback về file."""
-    # Thử lấy từ registry trước
+def get_agents_info() -> Dict[str, Any]:
     try:
         from src.agents.registry import get_all_agents
 
@@ -306,14 +300,13 @@ def _get_agents_info() -> Dict[str, Any]:
 
 
 def build_orchestrator_prompt(schema_model) -> str:
-    """Build orchestrator system prompt với agent descriptions từ registry."""
-    agents_info = _get_agents_info()
-    agent_descriptions = _format_agent_descriptions(agents_info)
+    agents_info = get_agents_info()
+    agent_descriptions = format_agent_descriptions(agents_info)
 
     try:
         if hasattr(schema_model, "model_json_schema"):
             schema = schema_model.model_json_schema()
-            schema = _minimize_schema_for_prompt(schema)
+            schema = minimize_schema_for_prompt(schema)
         else:
             schema = schema_model
     except Exception:
@@ -337,7 +330,7 @@ def build_orchestrator_prompt(schema_model) -> str:
     )
 
 
-def _minimize_schema_for_prompt(schema: dict) -> dict:
+def minimize_schema_for_prompt(schema: dict) -> dict:
     essential_keys = ["type", "items", "properties", "required", "$ref"]
 
     def clean_dict(d: dict) -> dict:

@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -20,12 +19,12 @@ from src.typing.redis.constants import MessageType
 from src.typing.request import ChatRequest, Request
 from src.typing.schema import OrchestratorSchema
 from src.utils import get_shared_data, save_shared_data
+from src.utils.agent_helpers import listen_pubsub_channels
 from src.utils.converstation import (
     load_or_create_conversation,
     save_conversation_message,
     summarize_conversation,
 )
-from src.utils.shared_data_utils import truncate_results
 
 from .base_agent import BaseAgent
 
@@ -37,7 +36,6 @@ AGENT_TYPE = "orchestrator"
 class OrchestratorAgent(BaseAgent):
     def __init__(self):
         super().__init__(agent_type=AGENT_TYPE)
-        # Prompts sẽ được build lại mỗi request, lấy dynamic từ registry
 
     async def get_pub_channels(self) -> List[str]:
         return [RedisChannels.QUERY_CHANNEL]
@@ -67,7 +65,6 @@ class OrchestratorAgent(BaseAgent):
             history = await self.get_conversation_history(request)
             messages = self.compose_llm_messages(request, history)
             orchestration_result = await self.run_llm_orchestration(request, messages)
-            logger.info(f"Orchestration result: {orchestration_result}")
             if request.conversation_id and orchestration_result:
                 await save_conversation_message(
                     self.redis, request.conversation_id, "user", request.query
@@ -81,13 +78,8 @@ class OrchestratorAgent(BaseAgent):
                 not orchestration_result.result.agents_needed
                 or len(orchestration_result.result.agents_needed) == 0
             ):
-                logger.info(
-                    f"No specialized agents needed for query {request.query_id}, "
-                    f"routing to ChatAgent for conversational response"
-                )
-                # Route directly to ChatAgent and wait for its response
                 await self.route_to_chat_agent_directly(request)
-                return  # ← Exit early, don't do complex orchestration
+                return
 
             await self.initialize_shared_state(request, orchestration_result)
             sub_query_dict = self.build_sub_query_dict(orchestration_result)
@@ -96,25 +88,12 @@ class OrchestratorAgent(BaseAgent):
 
             await self.publish_orchestration_task(request, sub_query_dict)
 
-            initial_update = TaskUpdate(
-                query_id=request.query_id,
-                sub_query="Query orchestration started",
-                status=TaskStatus.PROCESSING,
-                result={
-                    "agents_needed": list(sub_query_dict.keys()),
-                    "task_dependency": orchestration_result.result.task_dependency,
-                },
-                llm_usage={},
-                agent_type="orchestrator",
-            )
-
-            from src.typing.redis.constants import MessageType
-
             await self.publish_broadcast(
                 RedisChannels.get_query_updates_channel(request.query_id),
                 MessageType.ORCHESTRATOR,
                 {
-                    **initial_update.model_dump(),
+                    "agents_needed": list(sub_query_dict.keys()),
+                    "task_dependency": orchestration_result.result.task_dependency,
                     "agent_type": "orchestrator",
                 },
             )
@@ -146,7 +125,6 @@ class OrchestratorAgent(BaseAgent):
     def compose_llm_messages(
         self, request: Request, history: List[Any]
     ) -> List[Dict[str, Any]]:
-        # Build prompt mỗi request - lấy dynamic từ registry
         prompt = build_orchestrator_prompt(OrchestratorSchema)
         return [
             {"role": "system", "content": prompt},
@@ -163,7 +141,6 @@ class OrchestratorAgent(BaseAgent):
             response_schema=OrchestratorSchema,
         )
 
-        # Broadcast reasoning steps as THINKING messages
         if result and hasattr(result, "reasoning_steps") and result.reasoning_steps:
             await self.broadcast_reasoning_steps(
                 request.query_id, result.reasoning_steps
@@ -180,7 +157,6 @@ class OrchestratorAgent(BaseAgent):
     async def broadcast_reasoning_steps(
         self, query_id: str, reasoning_steps: List[Any]
     ) -> None:
-        """Broadcast each reasoning step to frontend via MessageType.THINKING."""
         for i, step in enumerate(reasoning_steps):
             try:
                 step_data = {
@@ -196,54 +172,32 @@ class OrchestratorAgent(BaseAgent):
                     "agent_type": self.agent_type,
                 }
 
-                await asyncio.sleep(0.3)  # Thêm độ trễ nhỏ để tránh gửi quá nhanh
-
                 await self.publish_broadcast(
                     RedisChannels.get_query_updates_channel(query_id),
                     MessageType.THINKING,
                     step_data,
                 )
 
-                logger.debug(
-                    f"Broadcast reasoning step {i + 1}/{len(reasoning_steps)}: {step.step}"
-                )
             except Exception as e:
                 logger.warning(f"Failed to broadcast reasoning step {i + 1}: {e}")
 
     def validate_orchestration_result(
         self, orchestration_result: OrchestratorResponse
     ) -> Optional[str]:
-        """Validate orchestration result.
-
-        Returns error string if validation fails, None if OK.
-        Note: Empty agents_needed is VALID (indicates simple query for ChatAgent)
-        """
         if orchestration_result.error:
             return orchestration_result.error
 
-        # Empty agents_needed is OK - means route to ChatAgent for conversation
-        # Only fail if result is completely missing
         if not orchestration_result.result:
             return "Orchestration returned no result"
 
         return None
 
     async def route_to_chat_agent_directly(self, request: Request) -> None:
-        """Route simple queries (no specialized agents) directly to ChatAgent.
-
-        Used when orchestrator determines query needs conversation only,
-        not data retrieval or domain-specific analysis.
-
-        Args:
-            request: Original user request with query, query_id, conversation_id
-        """
         try:
             logger.info(
                 f"Routing simple query {request.query_id} to ChatAgent (no agents needed)"
             )
 
-            # ✅ CRITICAL: Create minimal SharedData so ChatAgent can process
-            # Without this, ChatAgent returns fallback and doesn't publish completion
             minimal_shared_data = SharedData(
                 original_query=request.query,
                 query_id=request.query_id,
@@ -253,14 +207,12 @@ class OrchestratorAgent(BaseAgent):
             )
             await save_shared_data(self.redis, request.query_id, minimal_shared_data)
 
-            # Create minimal context for ChatAgent - just the original query
             empty_context = {
                 "original_query": request.query,
                 "agents_completed": [],
                 "results": {},
             }
 
-            # Create ChatRequest for ChatAgent
             chat_message = ChatRequest(
                 query_id=request.query_id,
                 conversation_id=request.conversation_id,
@@ -268,25 +220,22 @@ class OrchestratorAgent(BaseAgent):
                 context=empty_context,
             )
 
-            # Publish to ChatAgent channel
             chat_channel = RedisChannels.get_command_channel(CHAT_AGENT_TYPE)
             await self.publish_channel(chat_channel, chat_message, ChatRequest)
 
-            logger.info(
-                f"Successfully routed simple query {request.query_id} to ChatAgent"
-            )
-
         except Exception as e:
             logger.error(f"Failed to route to ChatAgent for {request.query_id}: {e}")
-            # Publish error response
+
             error_response = CompletionResponse.response_error(
                 query_id=request.query_id,
                 error=f"Failed to process simple query: {str(e)}",
                 conversation_id=request.conversation_id,
             )
+
             completion_channel = RedisChannels.get_query_completion_channel(
                 request.query_id
             )
+
             await self.publish_channel(
                 completion_channel, error_response, CompletionResponse
             )
@@ -362,8 +311,6 @@ class OrchestratorAgent(BaseAgent):
             }
 
     async def listen_channels(self):
-        from src.utils.agent_helpers import listen_pubsub_channels
-
         async def handler(channel: str, data: bytes):
             if channel == RedisChannels.TASK_UPDATES:
                 task_update_message = TaskUpdate.model_validate_json(data)
@@ -450,7 +397,7 @@ class OrchestratorAgent(BaseAgent):
             filtered_context = {
                 "original_query": shared_data.original_query,
                 "agents_completed": shared_data.agents_needed,
-                "results": truncate_results(all_results),
+                "results": all_results,
             }
 
             chat_message = ChatRequest(

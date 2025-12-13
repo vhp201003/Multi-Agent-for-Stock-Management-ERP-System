@@ -128,7 +128,7 @@ Always return valid SummaryAgentSchema JSON with 'summary' field only.
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=300,
+            max_tokens=1024,
         )
 
         summary = response.choices[0].message.content.strip()
