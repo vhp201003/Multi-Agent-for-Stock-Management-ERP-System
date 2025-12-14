@@ -24,12 +24,13 @@ import { useAuth } from "../context/AuthContext";
 import Toast, { type ToastMessage } from "./Toast";
 import ChatInput from "./ChatInput";
 import ApprovalCard from "./ApprovalCard";
+import QuickActionPills from "./QuickActionPills";
 import { processLayoutWithData } from "../utils/chartDataExtractor";
 import {
   normalizeConversationMessages,
   normalizeLocalStorageMessages,
 } from "../utils/messageNormalizer";
-import { getConversation } from "../services/conversation";
+import { getConversation, getQuickActions } from "../services/conversation";
 import type { Message, LayoutField, TaskUpdate } from "../types/message";
 import type { ApprovalRequest, ApprovalResponse } from "../types/approval";
 import type { WebSocketMessage } from "../services/websocket";
@@ -205,6 +206,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [quickActions, setQuickActions] = useState<string[]>([]);
   // HITL: Track resolved approvals (approval_id -> action taken)
   const [resolvedApprovals, setResolvedApprovals] = useState<
     Map<string, ApprovalResponse["action"]>
@@ -242,6 +244,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Fetch quick actions for the current conversation
+  const fetchQuickActions = useCallback(async (convId: string) => {
+    try {
+      const response = await getQuickActions(convId);
+      if (response && response.suggestions && response.suggestions.length > 0) {
+        setQuickActions(response.suggestions);
+      } else {
+        setQuickActions([]);
+      }
+    } catch (error) {
+      console.error("[ChatInterface] Failed to fetch quick actions:", error);
+      setQuickActions([]);
+    }
   }, []);
 
   // HITL: Handle approval response from inline card
@@ -379,6 +396,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               backendConversation.messages
             );
             setMessages(normalizedMessages);
+            // Fetch quick actions for this conversation
+            fetchQuickActions(propConversationId);
             // Clear flag after a short delay to allow messages to settle
             setTimeout(() => {
               isLoadingConversation.current = false;
@@ -413,6 +432,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 normalizedMessages.length
               );
               setMessages(normalizedMessages);
+              // Fetch quick actions for this conversation
+              fetchQuickActions(propConversationId);
               // Clear flag after a short delay
               setTimeout(() => {
                 isLoadingConversation.current = false;
@@ -443,7 +464,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     };
 
     loadConversation();
-  }, [propConversationId]);
+  }, [propConversationId, fetchQuickActions]);
 
   useEffect(() => {
     // Cleanup WebSocket khi component unmount
@@ -568,6 +589,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         });
 
         setLoading(false);
+
+        // Fetch quick actions after query completes (with 2s delay for backend processing)
+        if (conversationId) {
+          setTimeout(() => {
+            fetchQuickActions(conversationId);
+          }, 2000);
+        }
 
         // Save conversation immediately after final response
         if (conversationId && window.saveConversation) {
@@ -1872,6 +1900,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </div>
 
       <div className="chat-input-container">
+        {quickActions.length > 0 && (
+          <QuickActionPills
+            suggestions={quickActions}
+            onSelectSuggestion={handleSendMessage}
+            loading={loading}
+          />
+        )}
         <ChatInput onSendMessage={handleSendMessage} loading={loading} />
       </div>
 

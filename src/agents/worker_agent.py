@@ -8,8 +8,8 @@ from toon import encode
 
 from config.prompts.worker import build_worker_agent_prompt
 from config.settings import get_agent_config
-from src.agents.registry import register_agent, unregister_agent
 from src.mcp.client import MCPClient
+from src.services.registry import register_agent, unregister_agent
 from src.typing import (
     ResourceCallResponse,
     ToolCallResultResponse,

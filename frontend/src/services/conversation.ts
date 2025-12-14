@@ -36,6 +36,11 @@ export interface ConversationListResponse {
   total: number;
 }
 
+export interface QuickActionsResponse {
+  conversation_id: string;
+  suggestions: string[];
+}
+
 /**
  * Create a new conversation
  */
@@ -178,4 +183,37 @@ export const deleteConversation = async (conversationId: string): Promise<void> 
     }
     throw new Error(`Failed to delete conversation: ${response.statusText}`);
   }
+};
+
+/**
+ * Get quick action suggestions for a conversation
+ */
+export const getQuickActions = async (
+  conversationId: string
+): Promise<QuickActionsResponse | null> => {
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(
+    `${API_BASE}/conversations/${conversationId}/quick-actions`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    // Return null if no quick actions available (404 or 500)
+    console.warn(`Failed to get quick actions: ${response.statusText}`);
+    return null;
+  }
+
+  const data = await response.json();
+
+  // Return null if suggestions array is empty or null
+  if (!data.suggestions || data.suggestions.length === 0) {
+    return null;
+  }
+
+  return data;
 };

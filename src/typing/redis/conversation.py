@@ -32,6 +32,9 @@ class ConversationData(BaseModel):
     summary_updated_at: Optional[datetime] = Field(
         default=None, description="When summary was last updated"
     )
+    quick_actions: Optional[List[str]] = Field(
+        default=None, description="AI-generated quick action suggestions (max 3)"
+    )
     user_id: Optional[str] = Field(
         default=None, description="User ID owning this conversation"
     )
@@ -55,4 +58,8 @@ class ConversationData(BaseModel):
     def update_summary(self, summary: str) -> None:
         self.summary = summary
         self.summary_updated_at = datetime.now()
+        self.updated_at = datetime.now()
+
+    def update_quick_actions(self, quick_actions: List[str]) -> None:
+        self.quick_actions = quick_actions
         self.updated_at = datetime.now()

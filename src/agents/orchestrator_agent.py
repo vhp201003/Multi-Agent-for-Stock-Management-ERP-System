@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from config.prompts import build_orchestrator_prompt
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
+from src.services.quick_actions import generate_quick_actions
+from src.services.summary import summarize_conversation
 from src.typing.llm_response import OrchestratorResponse
 from src.typing.redis import (
     CompletionResponse,
@@ -23,7 +25,6 @@ from src.utils.agent_helpers import listen_pubsub_channels
 from src.utils.converstation import (
     load_or_create_conversation,
     save_conversation_message,
-    summarize_conversation,
 )
 
 from .base_agent import BaseAgent
@@ -468,19 +469,20 @@ class OrchestratorAgent(BaseAgent):
                 response={"final_response": final_response_text},
             )
 
-            completion_key = RedisChannels.get_query_completion_channel(
-                task_update_message.query_id
-            )
-
-            await self.publish_channel(
-                completion_key, completion_response, CompletionResponse
-            )
-
             await self.store_completion_metrics(
                 task_update_message, shared_data, completion_response
             )
-            await summarize_conversation(
-                self.redis, self.llm, shared_data.conversation_id
+
+            await summarize_conversation(shared_data.conversation_id)
+
+            await generate_quick_actions(shared_data.conversation_id)
+
+            await self.publish_channel(
+                RedisChannels.get_query_completion_channel(
+                    task_update_message.query_id
+                ),
+                completion_response,
+                CompletionResponse,
             )
 
         except Exception as e:

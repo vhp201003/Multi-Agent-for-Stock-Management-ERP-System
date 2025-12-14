@@ -9,12 +9,14 @@ from typing import List, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from src.services.quick_actions import generate_quick_actions
 from src.utils.converstation import (
     Conversation,
     create_conversation,
     delete_conversation,
     get_conversation,
     list_conversations,
+    load_or_create_conversation,
     update_conversation_title,
 )
 
@@ -50,6 +52,13 @@ class ConversationResponse(BaseModel):
 class ConversationListResponse(BaseModel):
     conversations: List[ConversationResponse]
     total: int
+
+
+class QuickActionsResponse(BaseModel):
+    conversation_id: str
+    suggestions: List[str] = Field(
+        ..., description="List of 3 contextual quick action suggestions"
+    )
 
 
 # Endpoint Handlers
@@ -169,6 +178,61 @@ async def delete_conversation_handler(
     except Exception as e:
         logger.error(f"Failed to delete conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")
+
+
+async def get_quick_actions_handler(
+    redis, llm_client, conversation_id: str, user_id: Optional[str] = None
+) -> QuickActionsResponse:
+    """Get or generate quick action suggestions for a conversation.
+
+    Args:
+        redis: Redis client
+        llm_client: LLM client for generating suggestions
+        conversation_id: Conversation ID to get quick actions for
+        user_id: Optional user ID for ownership validation
+
+    Returns:
+        QuickActionsResponse with suggestions
+
+    Raises:
+        HTTPException: If conversation not found or generation fails
+    """
+    try:
+        # Verify conversation exists and user has access
+        conversation_data = await load_or_create_conversation(
+            redis, conversation_id, user_id
+        )
+
+        # Check if we have cached quick actions
+        if conversation_data.quick_actions:
+            logger.info(
+                f"Returning cached quick actions for conversation {conversation_id}"
+            )
+            return QuickActionsResponse(
+                conversation_id=conversation_id,
+                suggestions=conversation_data.quick_actions,
+            )
+
+        # Generate new quick actions
+        suggestions = await generate_quick_actions(conversation_id)
+
+        if not suggestions:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate quick actions. Not enough conversation context.",
+            )
+
+        return QuickActionsResponse(
+            conversation_id=conversation_id, suggestions=suggestions
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get quick actions for {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Quick actions retrieval failed: {str(e)}"
+        )
 
 
 # Helper Functions

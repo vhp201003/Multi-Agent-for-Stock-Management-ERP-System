@@ -17,6 +17,7 @@ from config.settings import (
 )
 from src.api import admin_endpoints, auth_endpoints, conversation_endpoints, endpoints
 from src.api.lifespan import lifespan
+from src.communication.llm import get_groq_client
 from src.typing import Request
 from src.utils.colored_logging import setup_colored_logging
 
@@ -59,6 +60,7 @@ async def query_status_endpoint(query_id: str):
 @app.get("/health")
 async def health_endpoint():
     return await endpoints.health_check()
+
 
 # new
 @app.post("/approval-response")
@@ -147,6 +149,24 @@ async def delete_conversation(conversation_id: str, user_id: str = Query(None)):
     try:
         return await conversation_endpoints.delete_conversation_handler(
             redis_client, conversation_id, user_id
+        )
+    finally:
+        await redis_client.aclose()
+
+
+@app.get(
+    "/conversations/{conversation_id}/quick-actions",
+    response_model=conversation_endpoints.QuickActionsResponse,
+)
+async def get_quick_actions(conversation_id: str, user_id: str = Query(None)):
+    """Get or generate quick action suggestions for a conversation."""
+    redis_client = redis.Redis(
+        host=get_redis_host(), port=get_redis_port(), decode_responses=True
+    )
+    try:
+        llm_client = get_groq_client().get_client()
+        return await conversation_endpoints.get_quick_actions_handler(
+            redis_client, llm_client, conversation_id, user_id
         )
     finally:
         await redis_client.aclose()

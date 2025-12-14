@@ -13,6 +13,7 @@ from .chat_agent import (
     ScatterPlotDataSource,
 )
 from .orchestrator import OrchestratorSchema, TaskNode
+from .quick_actions import QuickActionsSchema
 from .summary_agent import SummaryAgentSchema
 from .tool_call import ToolCallSchema
 
@@ -31,6 +32,7 @@ __all__ = [
     "LLMGraphField",
     "LLMTableField",
     "SummaryAgentSchema",
+    "QuickActionsSchema",
     "ToolCallSchema",
     "ScatterPlotDataSource",
 ]
