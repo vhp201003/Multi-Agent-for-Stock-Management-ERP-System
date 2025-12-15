@@ -211,7 +211,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [resolvedApprovals, setResolvedApprovals] = useState<
     Map<string, ApprovalResponse["action"]>
   >(new Map());
-  const { hitlMode } = useAuth();
+  const { hitlMode, useCache } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const chatMessagesRef = React.useRef<HTMLDivElement>(null);
@@ -1071,7 +1071,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         const response = await apiService.submitQuery(
           queryId,
           queryText,
-          currentConversationId
+          currentConversationId,
+          useCache
         );
 
         // Push final response to queue
@@ -1088,7 +1089,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         addToast("Failed to send message. Please try again.", "error");
       }
     },
-    [loading, conversationId, addToQueue, addToast, onConversationChange]
+    [loading, conversationId, addToQueue, addToast, onConversationChange, useCache]
   );
 
   // Render graph/chart

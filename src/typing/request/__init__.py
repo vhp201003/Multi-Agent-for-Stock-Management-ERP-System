@@ -8,6 +8,7 @@ class Request(BaseModel):
     query_id: str
     conversation_id: Optional[str] = None
     query: Optional[str] = None
+    use_cache: bool = True
     timestamp: Optional[datetime] = datetime.now()
 
 

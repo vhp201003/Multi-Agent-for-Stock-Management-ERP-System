@@ -9,7 +9,7 @@ interface ChatInputProps {
 
 const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSendMessage, loading }) => {
   const [input, setInput] = useState('');
-  const { hitlMode, toggleHitlMode } = useAuth();
+  const { hitlMode, toggleHitlMode, useCache, toggleUseCache } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(() => {
@@ -38,6 +38,10 @@ const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSendMessage, loading
     toggleHitlMode();
   }, [toggleHitlMode]);
 
+  const handleCacheToggle = useCallback(() => {
+    toggleUseCache();
+  }, [toggleUseCache]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -64,6 +68,18 @@ const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSendMessage, loading
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
             </svg>
           )}
+        </button>
+        <button
+          className={`cache-toggle ${useCache ? 'enabled' : 'disabled'}`}
+          onClick={handleCacheToggle}
+          title={useCache ? 'Cache: ON - Faster responses' : 'Cache: OFF - Always fetch new data'}
+          type="button"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
         </button>
         <textarea
           ref={textareaRef}

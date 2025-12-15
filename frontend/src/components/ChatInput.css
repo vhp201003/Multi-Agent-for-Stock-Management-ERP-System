@@ -68,6 +68,41 @@
   background: rgba(16, 185, 129, 0.1);
 }
 
+/* Cache Toggle Button */
+.cache-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cache-toggle:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text-primary);
+}
+
+.cache-toggle.enabled {
+  color: var(--info, #3b82f6);
+}
+.cache-toggle.enabled:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.cache-toggle.disabled {
+  color: var(--text-tertiary, #9ca3af);
+}
+.cache-toggle.disabled:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+}
+
 /* Chat Input Field */
 .chat-input {
   flex: 1;

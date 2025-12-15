@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "semantic_cache"
 SIMILARITY_THRESHOLD = 0.90  # Độ giống nhau 90% mới coi là Cache Hit
+CACHE_TTL_SECONDS = 3 * 60 * 60  # 3 hours - dữ liệu ERP dễ lỗi thời
 
 # Conversation indexing constants
 CONVERSATION_COLLECTION_NAME = "conversation_messages"
@@ -43,7 +44,7 @@ class SemanticCacheService:
             logger.error(f"Failed to ensure Qdrant collection: {e}")
 
     async def search_cache(self, query_text: str) -> Optional[Dict[str, Any]]:
-        """Tìm kiếm câu trả lời đã cache"""
+        """Tìm kiếm câu trả lời đã cache, return None nếu expired (> 3 tiếng)"""
         try:
             # 1. Vector hóa câu hỏi
             vector = self.embedder.embed_query(query_text)
@@ -59,12 +60,21 @@ class SemanticCacheService:
             # 3. Kiểm tra độ tương đồng
             if search_result and search_result[0].score >= SIMILARITY_THRESHOLD:
                 payload = search_result[0].payload
-                logger.info(
-                    f"✅ Cache HIT for query: '{query_text}' (Score: {search_result[0].score:.4f})"
-                )
+
+                # 4. Kiểm tra TTL - cache expires sau 3 tiếng
+                cached_timestamp = payload.get("timestamp")
+                if cached_timestamp:
+                    cached_time = datetime.fromisoformat(cached_timestamp)
+                    age_seconds = (datetime.now() - cached_time).total_seconds()
+
+                    if age_seconds > CACHE_TTL_SECONDS:
+                        logger.debug(
+                            f"Cache expired for query (age: {age_seconds / 3600:.1f}h)"
+                        )
+                        return None
+
                 return payload.get("response_data")
 
-            logger.info(f"❌ Cache MISS for query: '{query_text}'")
             return None
 
         except Exception as e:
@@ -167,7 +177,9 @@ class ConversationIndexService:
                     field_schema=models.PayloadSchemaType.DATETIME,
                 )
 
-                logger.info(f"✓ Created Qdrant collection: {CONVERSATION_COLLECTION_NAME}")
+                logger.info(
+                    f"✓ Created Qdrant collection: {CONVERSATION_COLLECTION_NAME}"
+                )
         except Exception as e:
             logger.error(f"✗ Failed to ensure Qdrant collection: {e}")
 
@@ -213,7 +225,12 @@ class ConversationIndexService:
 
                             # Extract key text fields from tool results
                             if isinstance(tool_result, dict):
-                                for key in ["summary", "description", "result", "message"]:
+                                for key in [
+                                    "summary",
+                                    "description",
+                                    "result",
+                                    "message",
+                                ]:
                                     if val := tool_result.get(key):
                                         parts.append(str(val))
 
@@ -305,7 +322,9 @@ class ConversationIndexService:
                 "role": message.role,
                 "content": message.content,
                 "timestamp": message.timestamp.isoformat(),
-                "agent_type": message.metadata.get("agent_type") if message.metadata else None,
+                "agent_type": message.metadata.get("agent_type")
+                if message.metadata
+                else None,
                 "searchable_text": searchable_text,
                 "full_metadata": message.metadata,
                 **extracted_meta,
@@ -423,10 +442,12 @@ class ConversationIndexService:
 
             results = []
             for hit in search_result:
-                results.append({
-                    "score": hit.score,
-                    "message": hit.payload,
-                })
+                results.append(
+                    {
+                        "score": hit.score,
+                        "message": hit.payload,
+                    }
+                )
 
             logger.info(
                 f"✓ Found {len(results)} messages for query: '{query_text[:50]}...' "
@@ -458,7 +479,9 @@ class ConversationIndexService:
             return True
 
         except Exception as e:
-            logger.error(f"✗ Failed to delete messages for conversation {conversation_id}: {e}")
+            logger.error(
+                f"✗ Failed to delete messages for conversation {conversation_id}: {e}"
+            )
             return False
 
 

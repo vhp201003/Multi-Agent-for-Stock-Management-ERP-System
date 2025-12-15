@@ -17,12 +17,14 @@ export type ThemeMode = "dark" | "light";
 export interface UserSettings {
   hitl_mode: HITLMode;
   theme: ThemeMode;
+  use_cache: boolean;
 }
 
 export interface QueryRequest {
   query_id: string; // Frontend tạo và gửi
   query: string;
   conversation_id?: string; // Gửi từ message thứ 2 trở đi
+  use_cache?: boolean; // Enable/disable semantic cache
 }
 
 export interface QueryResponse {
@@ -97,7 +99,8 @@ class ApiService {
   async submitQuery(
     queryId: string,
     query: string,
-    conversationId?: string
+    conversationId?: string,
+    useCache: boolean = true
   ): Promise<QueryResponse> {
     // Try both 'authToken' (new) and 'token' (legacy) for compatibility
     const token =
@@ -107,12 +110,14 @@ class ApiService {
     console.log("[API] submitQuery:", {
       queryId,
       conversationId,
+      useCache,
       hasToken: !!token,
     });
 
     const requestData: QueryRequest = {
       query_id: queryId,
       query,
+      use_cache: useCache,
       ...(conversationId && { conversation_id: conversationId }),
     };
 

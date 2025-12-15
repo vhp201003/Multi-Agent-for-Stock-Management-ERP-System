@@ -27,6 +27,9 @@ class UserSettings(BaseModel):
     theme: ThemeMode = Field(
         default=ThemeMode.DARK, description="UI theme (dark/light)"
     )
+    use_cache: bool = Field(
+        default=True, description="Enable semantic cache for faster responses"
+    )
 
 
 class UserBase(BaseModel):
@@ -57,6 +60,7 @@ class UserSettingsUpdate(BaseModel):
 
     hitl_mode: Optional[HITLMode] = None
     theme: Optional[ThemeMode] = None
+    use_cache: Optional[bool] = None
 
 
 class Token(BaseModel):

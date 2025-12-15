@@ -8,21 +8,17 @@ from typing import Optional
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from src.agents.orchestrator_agent import OrchestratorAgent
 from src.api.lifespan import agent_manager
-from src.services.quick_actions import generate_quick_actions
-from src.services.summary import summarize_conversation
-from src.typing import Request
+from src.services.handle_query import (
+    QueryValidationError,
+)
+from src.services.handle_query import (
+    handle_query as handle_query_service,
+)
 from src.typing.redis import (
-    CompletionResponse,
     RedisChannels,
     RedisKeys,
     SharedData,
-)
-from src.typing.schema import ChatAgentSchema, LLMMarkdownField
-from src.utils.converstation import save_conversation_message
-from src.utils.shared_data_utils import (
-    get_shared_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,159 +34,11 @@ class ApprovalResponseRequest(BaseModel):
     reason: Optional[str] = None
 
 
-def validate_query_request(request: Request) -> Optional[str]:
-    if not request.query or not request.query.strip():
-        return "Query cannot be empty"
-
-    if len(request.query) > 10000:
-        return "Query too long (max 10,000 characters)"
-
-    # query_id và conversation_id sẽ được frontend quản lý, backend chỉ validate
-    if request.query_id and not re.match(r"^[a-zA-Z0-9_-]+$", request.query_id):
-        return "Invalid query ID format (alphanumeric, underscore, hyphen only)"
-
-    if request.conversation_id and not re.match(
-        r"^[a-zA-Z0-9_-]+$", request.conversation_id
-    ):
-        return "Invalid conversation ID format (alphanumeric, underscore, hyphen only)"
-
-    return None
-
-
-async def store_completion_metrics(shared_data: SharedData):
+async def handle_query(request):
     try:
-        redis_client = agent_manager.redis_client
-        agent_results = {}
-        for agent_type in shared_data.agents_needed:
-            results = shared_data.get_agent_results(agent_type)
-            if results:
-                agent_results[agent_type] = results
-
-        # Internal metrics payload
-        internal_metrics = {
-            "query_id": shared_data.query_id,
-            "agent_results": agent_results,
-            "llm_usage": {},
-        }
-
-        for usage_key, llm_usage in shared_data.llm_usage.items():
-            if hasattr(llm_usage, "model_dump"):
-                internal_metrics["llm_usage"][usage_key] = llm_usage.model_dump()
-
-        # Store with TTL for monitoring/billing
-        metrics_key = f"metrics:{shared_data.query_id}"
-        await redis_client.json().set(metrics_key, "$", internal_metrics)
-        await redis_client.expire(metrics_key, 86400)  # 24 hours
-
-        logger.debug(f"Stored completion metrics for {shared_data.query_id}")
-
-    except Exception as e:
-        logger.error(f"Failed to store completion metrics: {e}")
-
-
-def ensure_conversation_id(request: Request):
-    if not hasattr(request, "conversation_id") or not request.conversation_id:
-        request.conversation_id = request.query_id
-    return request
-
-
-async def wait_for_completion(query_id: str) -> ChatAgentSchema:
-    completion_channel = RedisChannels.get_query_completion_channel(query_id)
-    redis_client = agent_manager.redis_client
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(completion_channel)
-    try:
-        start_time = datetime.now().timestamp()
-        max_wait_time = 300.0  # 5 minutes
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                chat_result: ChatAgentSchema = ChatAgentSchema.model_validate_json(
-                    message["data"]
-                )
-                return chat_result
-            if (datetime.now().timestamp() - start_time) > max_wait_time:
-                return ChatAgentSchema(
-                    layout=[
-                        LLMMarkdownField(
-                            content="""
-                            Sorry, the request timed out after waiting for 5 minutes.
-                            Please try again or contact support if the issue persists.
-                            """
-                        )
-                    ]
-                )
-    except Exception:
-        return ChatAgentSchema(
-            layout=[
-                LLMMarkdownField(
-                    content="""
-                    An error occurred while waiting for the completion response.
-                    Please try again later.
-                    """
-                )
-            ]
-        )
-    finally:
-        await pubsub.unsubscribe(completion_channel)
-        await pubsub.aclose()
-
-
-async def handle_query(request: Request):
-    try:
-        request = ensure_conversation_id(request)
-        validation_error = validate_query_request(request)
-
-        if validation_error:
-            raise HTTPException(status_code=400, detail=validation_error)
-
-        redis_client = agent_manager.redis_client
-        orchestrator: OrchestratorAgent = agent_manager.agents.get("orchestrator")
-        await orchestrator.process(request)
-        chat_result: ChatAgentSchema = await wait_for_completion(request.query_id)
-        chat_response_dict: dict = chat_result.model_dump()
-        result = CompletionResponse.response_success(
-            query_id=request.query_id,
-            response=chat_response_dict,
-            conversation_id=request.conversation_id,
-        )
-        if request.conversation_id and result:
-            content_dict = {
-                k: v for k, v in chat_response_dict.items() if k != "full_data"
-            }
-            await save_conversation_message(
-                redis_client,
-                request.conversation_id,
-                "user",
-                request.query,
-            )
-
-            await save_conversation_message(
-                redis_client,
-                request.conversation_id,
-                "assistant",
-                json.dumps(content_dict, ensure_ascii=False),
-                metadata={
-                    "full_data": chat_response_dict.get("full_data"),
-                },
-            )
-
-        shared_data = await get_shared_data(redis_client, request.query_id)
-        await store_completion_metrics(shared_data)
-
-        await summarize_conversation(request.conversation_id)
-
-        await generate_quick_actions(request.conversation_id)
-
-        return result.model_dump()
-
-    except Exception as e:
-        result = CompletionResponse.response_error(
-            query_id=request.query_id,
-            error=f"Internal server error: {str(e)}",
-            conversation_id=request.conversation_id,
-        )
-        logger.exception(f"Critical error processing query {request.query_id}: {e}")
-        return result.model_dump()
+        return await handle_query_service(request)
+    except QueryValidationError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 
 async def websocket_handler(websocket: WebSocket, query_id: str):

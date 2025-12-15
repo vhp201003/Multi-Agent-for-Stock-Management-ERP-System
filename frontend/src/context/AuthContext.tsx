@@ -25,6 +25,8 @@ interface AuthContextType {
   toggleHitlMode: () => Promise<void>;
   theme: ThemeMode;
   toggleTheme: () => Promise<void>;
+  useCache: boolean;
+  toggleUseCache: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -39,6 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [hitlMode, setHitlMode] = useState<HITLMode>("review");
   const [theme, setTheme] = useState<ThemeMode>("dark");
+  const [useCache, setUseCache] = useState<boolean>(true);
 
   // Apply theme to document
   useEffect(() => {
@@ -59,6 +62,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           // Set theme from user settings
           if (userData.settings?.theme) {
             setTheme(userData.settings.theme);
+          }
+          // Set cache mode from user settings
+          if (userData.settings?.use_cache !== undefined) {
+            setUseCache(userData.settings.use_cache);
           }
         })
         .catch(() => logout());
@@ -81,6 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setUser(null);
     setHitlMode("review");
     setTheme("dark");
+    setUseCache(true);
     console.log("[Auth] Logout successful, token removed");
   };
 
@@ -130,6 +138,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [token, theme, user]);
 
+  const toggleUseCache = useCallback(async () => {
+    const newValue = !useCache;
+    setUseCache(newValue);
+
+    if (!token) return;
+
+    try {
+      const updatedSettings = await apiService.updateUserSettings(token, {
+        use_cache: newValue,
+      });
+
+      if (user) {
+        setUser({ ...user, settings: updatedSettings });
+      }
+    } catch (error) {
+      console.error("Failed to update cache setting:", error);
+      setUseCache(useCache);
+    }
+  }, [token, useCache, user]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -142,6 +170,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         toggleHitlMode,
         theme,
         toggleTheme,
+        useCache,
+        toggleUseCache,
       }}
     >
       {children}
