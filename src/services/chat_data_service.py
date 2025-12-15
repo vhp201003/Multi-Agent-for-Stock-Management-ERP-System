@@ -7,17 +7,6 @@ logger = logging.getLogger(__name__)
 
 
 def reconstruct_full_data(shared_data: SharedData) -> Dict[str, Any]:
-    """Reconstruct full_data from result_references.
-
-    Workers store full tool results in shared_data.result_references.
-    This method builds full_data dict for frontend consumption.
-
-    Args:
-        shared_data: SharedData containing result_references
-
-    Returns:
-        Dict organized as {agent_type: {tool_name: tool_result}}
-    """
     full_data: Dict[str, Any] = {}
 
     if not shared_data or not shared_data.result_references:

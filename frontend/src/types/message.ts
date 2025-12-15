@@ -73,6 +73,9 @@ export interface TaskUpdate {
   message?: string;
   sub_query?: string;
   result?: any;
+  // Orchestrator planning info
+  agents_needed?: string[];
+  task_dependency?: Record<string, any>;
   // Reasoning step data (orchestrator CoT)
   step_number?: number;
   total_steps?: number;

@@ -14,14 +14,14 @@ from src.typing import BaseMessage, BaseSchema
 from src.typing.approval import ApprovalAction, ApprovalRequest, ApprovalResponse
 from src.typing.mcp.base import HITLMetadata
 from src.typing.redis.constants import MessageType, RedisChannels
+from src.typing.redis.shared_data import LLMUsage
+from src.utils.shared_data_utils import update_shared_data_field
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
-
 # Debug directory for LLM responses
 DEBUG_DIR = Path("debug_llm_responses")
-LLM_CALL_MAX_RETRIES = 3
+LLM_CALL_MAX_RETRIES = 5
 LLM_CALL_RETRY_DELAY = 0.5
 
 
@@ -100,21 +100,10 @@ class BaseAgent(ABC):
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(response_channel)
 
-        logger.info(
-            f"{self.agent_type}: Subscribed to approval channel, now broadcasting request for '{tool_name}' "
-            f"(approval_id: {approval_request.approval_id}, timeout: {hitl.timeout_seconds}s)"
-        )
-
-        # Broadcast to frontend AFTER subscribing
         await self.publish_broadcast(
             RedisChannels.get_query_updates_channel(query_id),
             MessageType.APPROVAL_REQUIRED,
             approval_request.model_dump(),
-        )
-
-        logger.info(
-            f"{self.agent_type}: Waiting for approval on '{tool_name}' "
-            f"(approval_id: {approval_request.approval_id})"
         )
 
         # Wait for response
@@ -124,21 +113,11 @@ class BaseAgent(ABC):
                     if message["type"] != "message":
                         continue
 
-                    logger.debug(
-                        f"{self.agent_type}: Received message on approval channel: {message['data'][:100]}..."
-                    )
-
                     try:
                         response = ApprovalResponse.model_validate_json(message["data"])
 
                         # Match approval_id to handle multiple pending approvals
                         if response.approval_id == approval_request.approval_id:
-                            logger.info(
-                                f"{self.agent_type}: ✅ Received matching approval response: "
-                                f"{response.action.value} for '{tool_name}' (approval_id: {response.approval_id})"
-                            )
-
-                            # Broadcast resolution
                             await self.publish_broadcast(
                                 RedisChannels.get_query_updates_channel(query_id),
                                 MessageType.APPROVAL_RESOLVED,
@@ -148,24 +127,11 @@ class BaseAgent(ABC):
                                     "tool_name": tool_name,
                                 },
                             )
-
                             return response
-                        else:
-                            logger.debug(
-                                f"{self.agent_type}: Received approval for different request: "
-                                f"{response.approval_id} (expected: {approval_request.approval_id})"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Invalid approval response: {e}, data: {message['data']}"
-                        )
+                    except Exception:
                         continue
 
         except asyncio.TimeoutError:
-            logger.warning(
-                f"{self.agent_type}: Approval timeout for '{tool_name}' "
-                f"after {hitl.timeout_seconds}s"
-            )
             return ApprovalResponse(
                 approval_id=approval_request.approval_id,
                 query_id=query_id,
@@ -187,20 +153,107 @@ class BaseAgent(ABC):
             debug_file = agent_dir / f"{query_id}.json"
             with open(debug_file, "w") as f:
                 json.dump(response_data, f, indent=2, default=str)
+        except Exception:
+            pass
 
-            logger.debug(f"Saved LLM response debug to {debug_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save debug response: {e}")
+    def build_llm_call_kwargs(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]],
+        response_schema: Optional[Type[BaseSchema]],
+        tool_choice: Optional[str],
+    ) -> Dict[str, Any]:
+        llm_params = self.config.get_llm_params()
+        call_kwargs = {
+            **llm_params,
+            "messages": messages,
+        }
 
-    def validate_response_schema(
-        self, content: Optional[str], response_schema: Type[BaseSchema]
-    ) -> BaseSchema:
-        data = json.loads(content) if content else {}
+        if tools:
+            call_kwargs["tools"] = tools
+            call_kwargs["tool_choice"] = tool_choice
 
-        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
-            data = data[0]
+        if response_schema and not tools:
+            call_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema.__name__,
+                    "schema": response_schema.model_json_schema(),
+                },
+            }
 
-        return response_schema.model_validate(data)
+        return call_kwargs
+
+    def extract_llm_usage(self, response: Any) -> Optional[Dict[str, Any]]:
+        raw_usage = getattr(response, "usage", None)
+        if not raw_usage:
+            return None
+
+        return {
+            "completion_tokens": getattr(raw_usage, "completion_tokens", None),
+            "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
+            "total_tokens": getattr(raw_usage, "total_tokens", None),
+            "completion_time": getattr(raw_usage, "completion_time", None),
+            "prompt_time": getattr(raw_usage, "prompt_time", None),
+            "queue_time": getattr(raw_usage, "queue_time", None),
+            "total_time": getattr(raw_usage, "total_time", None),
+        }
+
+    async def accumulate_llm_usage(
+        self, query_id: str, llm_usage: Dict[str, Any]
+    ) -> None:
+        try:
+            usage_key = f"{self.agent_type}"
+            json_path = f".llm_usage.{usage_key}"
+
+            from src.utils.shared_data_utils import get_shared_data_field
+
+            existing_usage = await get_shared_data_field(
+                self.redis, query_id, json_path
+            )
+
+            if existing_usage and isinstance(existing_usage, (dict, list)):
+                # Handle Redis JSON returning list
+                if isinstance(existing_usage, list) and len(existing_usage) > 0:
+                    existing_usage = existing_usage[0]
+
+                if isinstance(existing_usage, dict):
+                    # Accumulate numeric fields
+                    llm_usage = {
+                        "completion_tokens": (
+                            existing_usage.get("completion_tokens") or 0
+                        )
+                        + (llm_usage.get("completion_tokens") or 0),
+                        "prompt_tokens": (existing_usage.get("prompt_tokens") or 0)
+                        + (llm_usage.get("prompt_tokens") or 0),
+                        "total_tokens": (existing_usage.get("total_tokens") or 0)
+                        + (llm_usage.get("total_tokens") or 0),
+                        "completion_time": (existing_usage.get("completion_time") or 0)
+                        + (llm_usage.get("completion_time") or 0),
+                        "prompt_time": (existing_usage.get("prompt_time") or 0)
+                        + (llm_usage.get("prompt_time") or 0),
+                        "queue_time": (existing_usage.get("queue_time") or 0)
+                        + (llm_usage.get("queue_time") or 0),
+                        "total_time": (existing_usage.get("total_time") or 0)
+                        + (llm_usage.get("total_time") or 0),
+                    }
+
+            usage_obj = LLMUsage(**llm_usage)
+            await update_shared_data_field(
+                self.redis, query_id, json_path, usage_obj.model_dump()
+            )
+        except Exception:
+            pass
+
+    async def broadcast_reasoning(self, query_id: str, llm_reasoning: str) -> None:
+        await self.publish_broadcast(
+            RedisChannels.get_query_updates_channel(query_id),
+            MessageType.THINKING,
+            {
+                "reasoning": llm_reasoning,
+                "agent_type": self.agent_type,
+            },
+        )
 
     async def call_llm(
         self,
@@ -215,34 +268,19 @@ class BaseAgent(ABC):
             raise ValueError("No Groq API key provided")
 
         try:
-            llm_params = self.config.get_llm_params()
-
-            call_kwargs = {
-                **llm_params,
-                "messages": messages,
-            }
-
-            if tools:
-                call_kwargs["tools"] = tools
-                call_kwargs["tool_choice"] = tool_choice
-
-            if response_schema and not tools:
-                call_kwargs["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_schema.__name__,
-                        "schema": response_schema.model_json_schema(),
-                    },
-                }
+            call_kwargs = self.build_llm_call_kwargs(
+                messages, tools, response_schema, tool_choice
+            )
 
             # --- ReAct Loop ---
             turn_count = 0
             MAX_TURNS = 10
+            llm_usage = None
+            llm_reasoning = None
 
             while True:
                 turn_count += 1
                 if turn_count > MAX_TURNS:
-                    logger.warning(f"ReAct loop exceeded max turns ({MAX_TURNS})")
                     break
 
                 response = None
@@ -251,28 +289,18 @@ class BaseAgent(ABC):
                 # Retry loop for both LLM call AND validation
                 for attempt in range(1, LLM_CALL_MAX_RETRIES + 1):
                     try:
-                        # 1. Call LLM API
                         response = await self.llm.chat.completions.create(**call_kwargs)
 
-                        # 2. Parse response content
                         choice = response.choices[0]
                         message = choice.message
                         content = message.content
 
-                        # 3. Validate schema if required
                         if response_schema and not message.tool_calls:
-                            parsed_result = self.validate_response_schema(
-                                content, response_schema
-                            )
+                            parsed_result = response_schema.model_validate_json(content)
 
                         break
 
                     except (json.JSONDecodeError, ValidationError) as e:
-                        logger.warning(
-                            f"{self.agent_type}: Schema validation failed "
-                            f"(attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {e}"
-                        )
-
                         if attempt < LLM_CALL_MAX_RETRIES:
                             error_msg = (
                                 f"Your previous response had invalid format. "
@@ -282,67 +310,38 @@ class BaseAgent(ABC):
                             messages.append({"role": "user", "content": error_msg})
                             call_kwargs["messages"] = messages
                             await asyncio.sleep(LLM_CALL_RETRY_DELAY)
-                            continue  # Retry with error feedback
-                        else:
-                            # Exhausted retries
-                            logger.error(
-                                f"{self.agent_type}: Schema validation failed after "
-                                f"{LLM_CALL_MAX_RETRIES} attempts"
-                            )
-                            raise
+                            continue
+                        raise  # Raise after exhausting retries
 
-                    except Exception as call_error:
-                        logger.warning(
-                            f"{self.agent_type}: LLM call failed (attempt {attempt}/{LLM_CALL_MAX_RETRIES}): {call_error}"
-                        )
-                        if attempt == LLM_CALL_MAX_RETRIES:
-                            logger.error(f"{self.agent_type}: Exhausted LLM retries")
-                            raise
-                        await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+                    except Exception as e:
+                        logger.error(f"LLM call failed: {e}")
+                        if attempt < LLM_CALL_MAX_RETRIES:
+                            await asyncio.sleep(LLM_CALL_RETRY_DELAY)
+                            continue
+                        raise RuntimeError(
+                            f"LLM call failed after {LLM_CALL_MAX_RETRIES} retries: {e}"
+                        ) from e
 
-                assert response is not None  # For mypy guard
+                assert response is not None
 
-                # Debug logging
                 if query_id:
                     self.save_llm_response_debug(query_id, response.model_dump())
 
-                # Re-extract message (already extracted in retry loop, but need for non-schema paths)
                 choice = response.choices[0]
                 message = choice.message
                 content = message.content
                 tool_calls = message.tool_calls
 
-                raw_usage = getattr(response, "usage", None)
-                llm_usage = None
-                if raw_usage:
-                    llm_usage = {
-                        "completion_tokens": getattr(
-                            raw_usage, "completion_tokens", None
-                        ),
-                        "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
-                        "total_tokens": getattr(raw_usage, "total_tokens", None),
-                        "completion_time": getattr(raw_usage, "completion_time", None),
-                        "prompt_time": getattr(raw_usage, "prompt_time", None),
-                        "queue_time": getattr(raw_usage, "queue_time", None),
-                        "total_time": getattr(raw_usage, "total_time", None),
-                    }
+                turn_usage = self.extract_llm_usage(response)
+                if turn_usage:
+                    llm_usage = turn_usage
+                    if query_id:
+                        await self.accumulate_llm_usage(query_id, turn_usage)
 
                 llm_reasoning = getattr(message, "reasoning", None)
-
-                # Broadcast reasoning if available
                 if llm_reasoning and query_id:
-                    from src.typing.redis.constants import MessageType
+                    await self.broadcast_reasoning(query_id, llm_reasoning)
 
-                    await self.publish_broadcast(
-                        RedisChannels.get_query_updates_channel(query_id),
-                        MessageType.THINKING,
-                        {
-                            "reasoning": llm_reasoning,
-                            "agent_type": self.agent_type,
-                        },
-                    )
-
-                # If LLM wants to call tools, execute them and continue the loop
                 if tool_calls and tools and tool_executor:
                     assistant_msg = {
                         "role": "assistant",
@@ -354,22 +353,15 @@ class BaseAgent(ABC):
                     messages.append(assistant_msg)
 
                     tool_results = await tool_executor(tool_calls)
-
                     for tool_result in tool_results:
                         messages.append(tool_result)
 
                     call_kwargs["messages"] = messages
-                    # Continue loop - let LLM process tool results
                     continue
 
-                # Only break when LLM is done (finish_reason == "stop")
                 if choice.finish_reason == "stop":
                     break
 
-                # For other finish reasons (length, etc.), also break but log warning
-                logger.warning(
-                    f"LLM finished with reason: {choice.finish_reason}, breaking loop"
-                )
                 break
 
             result = parsed_result if parsed_result is not None else content
@@ -382,8 +374,7 @@ class BaseAgent(ABC):
 
             return result, llm_usage, llm_reasoning
 
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+        except Exception:
             raise
 
     @abstractmethod
@@ -411,8 +402,8 @@ class BaseAgent(ABC):
 
             await self.redis.publish(channel, message.model_dump_json())
 
-        except Exception as e:
-            logger.error(f"Message publish failed for {channel}: {e}")
+        except Exception:
+            pass
 
     async def publish_broadcast(
         self,
@@ -426,8 +417,8 @@ class BaseAgent(ABC):
 
             message = BroadcastMessage(type=message_type, data=data)
             await self.redis.publish(channel, message.model_dump_json())
-        except Exception as e:
-            logger.error(f"Broadcast publish failed for {channel}: {e}")
+        except Exception:
+            pass
 
     async def broadcast_tool_result(
         self, query_id: str, tool_name: str, parameters: Dict, result: Dict

@@ -4,12 +4,29 @@
  * Matches backend logic: Navigate full_data using data_source config
  */
 
+/**
+ * Chart Data Source - Matches backend schemas
+ *
+ * Chart Type Field Mapping:
+ * - barchart/horizontalbarchart: category_field (label), value_field (value)
+ * - linechart: x_field (label), y_field (value)
+ * - piechart: label_field (label), value_field (value)
+ * - scatterplot: x_field, y_field, name_field (optional), group_field (optional)
+ */
 interface ChartDataSource {
   agent_type: string;
   tool_name: string;
-  label_field: string;
-  value_field: string;
+  chart_type?: string;
   data_path?: string;
+
+  // Field names (vary by chart type)
+  label_field?: string;      // piechart
+  value_field?: string;      // piechart, barchart, horizontalbarchart
+  category_field?: string;   // barchart, horizontalbarchart
+  x_field?: string;          // linechart, scatterplot
+  y_field?: string;          // linechart, scatterplot
+  name_field?: string;       // scatterplot (point labels/tooltips)
+  group_field?: string;      // scatterplot (grouping/coloring)
 }
 
 interface TableDataSource {
@@ -147,26 +164,55 @@ export function extractChartData(
     const labels: string[] = [];
     const values: number[] = [];
 
-    // Handle alias for label_field (category_field is common from LLM)
-    const labelField = dataSource.label_field || (dataSource as any).category_field;
+    // Handle different field names based on chart type
+    // Chart Type → (Label Field, Value Field)
+    // - barchart/horizontalbarchart → (category_field, value_field)
+    // - linechart → (x_field, y_field)
+    // - piechart → (label_field, value_field)
+    // - scatterplot → (x_field, y_field) [name_field & group_field for advanced features]
+    const dsAny = dataSource as any;
+    const labelField =
+      dsAny.x_field ||           // linechart, scatterplot
+      dsAny.category_field ||    // barchart, horizontalbarchart
+      dsAny.label_field ||       // piechart
+      dataSource.label_field;    // fallback
+
+    const valueField =
+      dsAny.y_field ||           // linechart, scatterplot
+      dsAny.value_field ||       // barchart, horizontalbarchart, piechart
+      dataSource.value_field;    // fallback
+
     if (!labelField) {
-        console.warn("No label_field or category_field specified in data_source");
+        console.warn("[chartDataExtractor] No label field specified", {
+          tried: ['x_field', 'category_field', 'label_field'],
+          dataSource
+        });
         return null;
     }
+
+    if (!valueField) {
+        console.warn("[chartDataExtractor] No value field specified", {
+          tried: ['y_field', 'value_field'],
+          dataSource
+        });
+        return null;
+    }
+
+    console.log(`[chartDataExtractor] Extracting ${graphType} data: label="${labelField}", value="${valueField}"`);
 
     for (const item of rawData) {
       if (!item || typeof item !== 'object') continue;
 
       const labelValue = item[labelField];
-      const valueValue = item[dataSource.value_field];
+      const valueValue = item[valueField];
 
       if (labelValue === undefined || labelValue === null) continue;
       if (valueValue === undefined || valueValue === null) continue;
 
       // Convert to appropriate types
       const labelStr = String(labelValue);
-      const valueNum = typeof valueValue === 'number' 
-        ? valueValue 
+      const valueNum = typeof valueValue === 'number'
+        ? valueValue
         : parseFloat(String(valueValue));
 
       if (isNaN(valueNum)) continue;
@@ -186,9 +232,9 @@ export function extractChartData(
     const limitedValues = values.slice(0, maxPoints);
 
     // Step 6: Return standardized format
-    const valueFieldLabel = dataSource.value_field
+    const valueFieldLabel = valueField
       .replace(/_/g, ' ')
-      .replace(/\b\w/g, c => c.toUpperCase());
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
 
     return {
       labels: limitedLabels,
@@ -355,9 +401,11 @@ export function extractTableData(
  */
 function getMaxPointsForChartType(graphType: string): number {
   const limits: Record<string, number> = {
-    piechart: 8,   // Too many slices are hard to read
-    barchart: 15,  // Balance visibility and detail
-    linechart: 50, // Can handle more points for trends
+    piechart: 8,              // Too many slices are hard to read
+    barchart: 15,             // Balance visibility and detail
+    horizontalbarchart: 15,   // Same as barchart
+    linechart: 50,            // Can handle more points for trends
+    scatterplot: 100,         // Can show many points effectively
   };
   return limits[graphType] || 20;
 }

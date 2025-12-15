@@ -221,6 +221,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const initialLoadDone = React.useRef(false);
   const isLoadingConversation = React.useRef(false);
   const skipLoadForNewConversation = React.useRef<string | null>(null);
+  const [showInfoModal, setShowInfoModal] = useState(false);
   
 
 
@@ -546,13 +547,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             if (typeof response === "string") {
               contentText = response;
             } else if (typeof response === "object") {
-              const finalResponse =
-                (response as Record<string, any>).response?.final_response ||
-                (response as Record<string, any>).final_response;
+              // Response is now directly the chat response (no final_response wrapper)
+              const chatResponse =
+                (response as Record<string, any>).response || response;
 
-              if (finalResponse?.layout) {
-                layout = finalResponse.layout;
-                fullData = finalResponse.full_data;
+              if (chatResponse?.layout) {
+                layout = chatResponse.layout;
+                fullData = chatResponse.full_data;
                 if (layout && fullData) {
                   const processedLayout = processLayoutWithData(
                     layout as unknown as Record<string, unknown>[],
@@ -1600,12 +1601,74 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </button>
         )}
         <h2>Multi-Agent Stock Management</h2>
-        {conversationId && (
-          <span className="conversation-id">
-            Conversation: {conversationId.slice(0, 8)}
-          </span>
-        )}
+        <div className="header-actions">
+          {conversationId && (
+            <span className="conversation-id">
+              Conversation: {conversationId.slice(0, 8)}
+            </span>
+          )}
+          <button
+            className="info-btn"
+            onClick={() => setShowInfoModal(true)}
+            title="Hướng dẫn sử dụng"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 16v-4M12 8h.01"/>
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Info Modal */}
+      {showInfoModal && (
+        <div className="info-modal-overlay" onClick={() => setShowInfoModal(false)}>
+          <div className="info-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="info-modal-header">
+              <h3>Hướng dẫn sử dụng</h3>
+              <button className="info-modal-close" onClick={() => setShowInfoModal(false)}>×</button>
+            </div>
+            <div className="info-modal-content">
+              <div className="info-section">
+                <h4>Inventory Agent</h4>
+                <ul>
+                  <li>Kiểm tra tồn kho theo sản phẩm hoặc kho</li>
+                  <li>Xem lịch sử nhập/xuất kho</li>
+                  <li>Đề xuất điều chuyển hàng giữa các kho</li>
+                  <li>Tạo phiếu điều chuyển kho</li>
+                </ul>
+              </div>
+              <div className="info-section">
+                <h4>Analytics Agent</h4>
+                <ul>
+                  <li>Phân tích sản phẩm bán chạy nhất</li>
+                  <li>Phân tích sản phẩm bán chậm</li>
+                  <li>So sánh doanh số giữa các kỳ</li>
+                  <li>Phân tích Pareto (80/20)</li>
+                  <li>Phân tích độ phủ tồn kho</li>
+                </ul>
+              </div>
+              <div className="info-section">
+                <h4>Forecasting Agent</h4>
+                <ul>
+                  <li>Dự báo doanh số tháng tới</li>
+                  <li>Dự báo nhu cầu tồn kho</li>
+                </ul>
+              </div>
+              <div className="info-section">
+                <h4>Ordering Agent</h4>
+                <ul>
+                  <li>Kiểm tra nhu cầu bổ sung hàng</li>
+                  <li>Tính toán số lượng đặt hàng tối ưu</li>
+                  <li>Chọn nhà cung cấp tốt nhất</li>
+                  <li>Tạo đơn đặt hàng</li>
+                  <li>Theo dõi biến động giá</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="chat-messages" ref={chatMessagesRef}>
         <div>
@@ -1815,42 +1878,34 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                               </div>
                             )}
 
-                          {/* Show LLM reasoning for orchestrator */}
-                          {update.result &&
-                            isOrchestrator &&
-                            typeof update.result === "object" && (
-                              <div className="step-reasoning">
-                                {update.result.agents_needed && (
-                                  <div className="reasoning-item">
-                                    <strong>Agents needed:</strong>{" "}
-                                    {update.result.agents_needed.join(", ")}
-                                  </div>
-                                )}
-                                {update.result.task_dependency && (
-                                  <details className="task-dependency-details">
-                                    <summary className="task-dependency-summary">
-                                      <strong>Tasks planned:</strong>{" "}
-                                      {
-                                        Object.values(
-                                          update.result.task_dependency
-                                        ).flat().length
-                                      }{" "}
-                                      task(s)
-                                      <span className="result-toggle">▼</span>
-                                    </summary>
-                                    <div className="task-dependency-full">
-                                      <pre>
-                                        {JSON.stringify(
-                                          update.result.task_dependency,
-                                          null,
-                                          2
-                                        )}
-                                      </pre>
-                                    </div>
-                                  </details>
-                                )}
+                          {/* Show orchestrator planning info */}
+                          {isOrchestrator && update.agents_needed && update.agents_needed.length > 0 && (
+                            <div className="orchestrator-planning">
+                              <div className="planning-agents">
+                                <span className="planning-label">Agents:</span>
+                                <div className="agent-badges">
+                                  {update.agents_needed.map((agent: string) => (
+                                    <span key={agent} className="agent-badge">
+                                      {agent}
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
-                            )}
+                              {update.task_dependency && (
+                                <div className="planning-tasks">
+                                  {Object.entries(update.task_dependency).map(([agentType, tasks]: [string, any]) => (
+                                    <div key={agentType} className="task-group">
+                                      {(tasks as any[]).map((task: any, idx: number) => (
+                                        <div key={task.task_id || idx} className="task-item">
+                                          <span className="task-query">{task.sub_query}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {update.llm_usage && (
                             <div className="step-tokens">

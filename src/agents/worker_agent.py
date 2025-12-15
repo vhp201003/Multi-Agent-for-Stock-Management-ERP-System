@@ -365,7 +365,9 @@ class WorkerAgent(BaseAgent):
             )
 
             async with asyncio.timeout(300.0):
-                response = await self.process(command_message)
+                response: WorkerAgentProcessResponse = await self.process(
+                    command_message
+                )
                 await self.publish_task_completion(command_message, response)
 
         except asyncio.TimeoutError:

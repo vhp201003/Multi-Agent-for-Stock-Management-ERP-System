@@ -1,12 +1,15 @@
 import logging
+import os
 from typing import Optional
 
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
 _embedding_instance: Optional["EmbeddingManager"] = None
 _lock = __import__("threading").Lock()
+
+DEFAULT_DIMENSION = 768  # Dimension for 'models/text-embedding-004'
 
 
 def get_embedding_model() -> "EmbeddingManager":
@@ -32,49 +35,65 @@ def get_embedding_model() -> "EmbeddingManager":
 class EmbeddingManager:
     def __init__(
         self,
-        model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        device: Optional[str] = None,
+        model_name: str = "models/text-embedding-004",
+        api_key: Optional[str] = None,
     ):
         self.model_name = model_name
-        self.device = device
-        self.model: Optional[SentenceTransformer] = None
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self._is_loaded = False
+        self._dimension = DEFAULT_DIMENSION
 
     def load_model(self) -> bool:
         try:
-            if self.device:
-                self.model = SentenceTransformer(self.model_name, device=self.device)
-            else:
-                self.model = SentenceTransformer(self.model_name)
+            if not self.api_key:
+                raise ValueError("GEMINI_API_KEY not found in environment variables")
 
+            genai.configure(api_key=self.api_key)
             self._is_loaded = True
+            logger.info(
+                f"✓ Gemini embedding model '{self.model_name}' configured successfully"
+            )
             return True
 
         except Exception as e:
             self._is_loaded = False
-            logger.error(f"✗ Failed to load embedding model: {e}")
-            raise RuntimeError(f"Cannot load model '{self.model_name}': {e}") from e
+            logger.error(f"✗ Failed to configure Gemini embedding model: {e}")
+            raise RuntimeError(
+                f"Cannot configure Gemini model '{self.model_name}': {e}"
+            ) from e
 
     def is_loaded(self) -> bool:
-        return self._is_loaded and self.model is not None
+        return self._is_loaded
 
     def embed(self, text: str, normalize: bool = True) -> list[float]:
         if not self.is_loaded():
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
         try:
-            embedding = self.model.encode(
-                text,
-                convert_to_numpy=True,
-                normalize_embeddings=normalize,
+            result = genai.embed_content(
+                model=self.model_name,
+                content=text,
+                task_type="retrieval_document",
             )
-            return embedding.tolist()
+            return result["embedding"]
         except Exception as e:
             logger.error(f"Error encoding text: {e}")
             raise
 
     def embed_query(self, query: str, normalize: bool = True) -> list[float]:
-        return self.embed(query, normalize=normalize)
+        if not self.is_loaded():
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        try:
+            result = genai.embed_content(
+                model=self.model_name,
+                content=query,
+                task_type="retrieval_query",
+            )
+            return result["embedding"]
+        except Exception as e:
+            logger.error(f"Error encoding query: {e}")
+            raise
 
     def embed_batch(
         self,
@@ -89,13 +108,15 @@ class EmbeddingManager:
             return []
 
         try:
-            embeddings = self.model.encode(
-                texts,
-                convert_to_numpy=True,
-                normalize_embeddings=normalize,
-                show_progress_bar=show_progress,
-            )
-            return embeddings.tolist()
+            embeddings = []
+            for text in texts:
+                result = genai.embed_content(
+                    model=self.model_name,
+                    content=text,
+                    task_type="retrieval_document",
+                )
+                embeddings.append(result["embedding"])
+            return embeddings
         except Exception as e:
             logger.error(f"Error encoding batch: {e}")
             raise
@@ -104,11 +125,10 @@ class EmbeddingManager:
         if not self.is_loaded():
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        return self.model.get_sentence_embedding_dimension()
+        return self._dimension
 
     def __del__(self):
         try:
-            if self.model is not None:
-                self._is_loaded = False
+            self._is_loaded = False
         except Exception:
             pass

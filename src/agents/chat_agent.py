@@ -1,16 +1,18 @@
 import json
 import logging
-from typing import List, Optional
+from typing import List
 
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 from src.agents.base_agent import BaseAgent
 from src.services.chat_data_service import reconstruct_full_data
-from src.typing.llm_response import ChatResponse
-from src.typing.redis import RedisChannels, TaskStatus, TaskUpdate
+from src.typing.redis import RedisChannels
 from src.typing.request import ChatRequest
 from src.typing.schema import ChatAgentSchema, LLMMarkdownField
-from src.utils.converstation import save_conversation_message
-from src.utils.shared_data_utils import get_shared_data, truncate_results
+from src.utils.shared_data_utils import (
+    get_shared_data,
+    save_shared_data,
+    truncate_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,39 +43,27 @@ class ChatAgent(BaseAgent):
 
     async def handle_command_message(self, chat_request: ChatRequest):
         try:
-            response: ChatResponse = await self.process(chat_request)
-            await self.publish_completion(response, chat_request.query)
+            query_id = chat_request.query_id
+            chat_result: ChatAgentSchema = await self.process(chat_request)
 
-            if response.result:
-                result_dict = response.result.model_dump()
+            # mark the shared data as completed
+            shared_data = await get_shared_data(self.redis, query_id)
+            shared_data.status = "completed"
+            await save_shared_data(self.redis, query_id, shared_data)
 
-                content_dict = {
-                    k: v for k, v in result_dict.items() if k != "full_data"
-                }
-
-                await save_conversation_message(
-                    self.redis,
-                    chat_request.conversation_id,
-                    "assistant",
-                    json.dumps(content_dict, ensure_ascii=False),
-                    metadata={
-                        "full_data": result_dict.get("full_data"),
-                    },
-                )
-            else:
-                await save_conversation_message(
-                    self.redis,
-                    chat_request.conversation_id,
-                    "assistant",
-                    "No response",
-                )
+            # Publish the chat result
+            await self.publish_channel(
+                RedisChannels.get_query_completion_channel(query_id),
+                chat_result,
+                ChatAgentSchema,
+            )
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in command message: {e}")
         except Exception as e:
             logger.error(f"Error executing chat request: {e}")
 
-    async def process(self, request: ChatRequest) -> ChatResponse:
+    async def process(self, request: ChatRequest) -> ChatAgentSchema:
         try:
             shared_data = await get_shared_data(self.redis, request.query_id)
             if not shared_data:
@@ -82,6 +72,7 @@ class ChatAgent(BaseAgent):
                 )
 
             raw_context = request.context or {}
+
             llm_context = {
                 **raw_context,
                 "results": truncate_results(raw_context.get("results", {})),
@@ -97,83 +88,41 @@ class ChatAgent(BaseAgent):
                 },
             ]
 
-            result, llm_usage, llm_reasoning = await self.call_llm(
+            result, _, _ = await self.call_llm(
                 query_id=request.query_id,
                 messages=messages,
                 response_schema=ChatAgentSchema,
             )
 
             if not result:
-                return self.create_fallback_response(
-                    request.query_id, request.conversation_id
-                )
+                return self.create_fallback_response()
 
-            result.full_data = reconstruct_full_data(shared_data)
+            setattr(result, "full_data", reconstruct_full_data(shared_data))
 
-            return ChatResponse(
-                query_id=request.query_id,
-                conversation_id=request.conversation_id,
-                result=result,
-                llm_usage=llm_usage,
-                llm_reasoning=llm_reasoning,
-            )
+            return result
 
         except Exception as e:
             logger.error(f"Chat processing failed: {e}")
-            return self.create_error_response(
-                str(e), request.query_id, request.conversation_id
-            )
+            return self.create_error_response(str(e))
 
-    async def publish_completion(self, response: ChatResponse, sub_query: str):
-        try:
-            task_update = TaskUpdate(
-                query_id=response.query_id,
-                task_id=f"{self.agent_type}_{response.query_id}",
-                agent_type=self.agent_type,
-                sub_query=sub_query,
-                status=TaskStatus.DONE,
-                result={
-                    "final_response": response.result.model_dump()
-                    if response.result
-                    else {"error": "No response"}
-                },
-                llm_usage=response.llm_usage or {},
-            )
-            await self.publish_channel(
-                RedisChannels.TASK_UPDATES, task_update, TaskUpdate
-            )
-        except Exception as e:
-            logger.error(f"Failed to publish completion for {response.query_id}: {e}")
-
-    def create_fallback_response(
-        self, query_id: str, conversation_id: Optional[str]
-    ) -> ChatResponse:
-        return ChatResponse(
-            query_id=query_id,
-            conversation_id=conversation_id,
-            result=ChatAgentSchema(
-                layout=[
-                    LLMMarkdownField(
-                        content="## Response\n\nI received your query but couldn't process it. Please try again."
-                    )
-                ]
-            ),
+    def create_fallback_response(self) -> ChatAgentSchema:
+        return ChatAgentSchema(
+            layout=[
+                LLMMarkdownField(
+                    content="## Response\n\nI received your query but couldn't process it. Please try again."
+                )
+            ]
         )
 
-    def create_error_response(
-        self, error: str, query_id: str, conversation_id: Optional[str]
-    ) -> ChatResponse:
-        return ChatResponse(
-            query_id=query_id,
-            conversation_id=conversation_id,
-            result=ChatAgentSchema(
+    def create_error_response(self, error: str) -> ChatAgentSchema:
+        return (
+            ChatAgentSchema(
                 layout=[
                     LLMMarkdownField(
                         content=f"## Processing Error\n\nSorry, I encountered an error: {error}"
                     )
                 ]
             ),
-            llm_usage={},
         )
 
     async def start(self):

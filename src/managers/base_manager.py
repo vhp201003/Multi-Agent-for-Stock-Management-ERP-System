@@ -10,6 +10,7 @@ from src.typing.redis import (
     TaskStatus,
     TaskUpdate,
 )
+from src.typing.redis.constants import BroadcastMessage, MessageType
 from src.utils.agent_helpers import listen_pubsub_channels
 from src.utils.redis_lock import redis_lock
 
@@ -45,6 +46,21 @@ class BaseManager:
             lambda: self._running,
         )
 
+    async def broadcast_thinking(self, query_id: str, message: str) -> None:
+        """Broadcast thinking/status message to frontend."""
+        try:
+            broadcast = BroadcastMessage(
+                type=MessageType.THINKING,
+                data={
+                    "reasoning": message,
+                    "agent_type": self.agent_type,
+                },
+            )
+            channel = RedisChannels.get_query_updates_channel(query_id)
+            await self.redis.publish(channel, broadcast.model_dump_json())
+        except Exception:
+            pass
+
     async def on_query(self, data: QueryTask):
         if self.agent_type not in data.agents_needed:
             return
@@ -60,6 +76,9 @@ class BaseManager:
         if not tasks:
             return
 
+        active_count = 0
+        pending_count = 0
+
         for task in tasks:
             item = TaskQueueItem(
                 query_id=data.query_id,
@@ -67,12 +86,24 @@ class BaseManager:
                 task_id=task.task_id,
             )
             # Deps OK → active, else → pending
+            is_ready = self.is_dependency_oke(task, shared_data)
             queue = (
                 RedisKeys.get_agent_queue(self.agent_type)
-                if self.is_dependency_oke(task, shared_data)
+                if is_ready
                 else RedisKeys.get_agent_pending_queue(self.agent_type)
             )
             await self.redis.rpush(queue, item.model_dump_json())
+
+            if is_ready:
+                active_count += 1
+            else:
+                pending_count += 1
+
+        # Broadcast task status to frontend
+        await self.broadcast_thinking(
+            data.query_id,
+            f"Đã nhận {len(tasks)} task(s) - {active_count} sẵn sàng, {pending_count} đang chờ dependencies",
+        )
 
         logger.info(f"Manager {self.agent_type}: Queued {len(tasks)} tasks")
 

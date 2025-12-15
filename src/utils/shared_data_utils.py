@@ -123,6 +123,9 @@ async def get_shared_data_field(
     try:
         return await redis_client.json().get(key, Path(json_path))
     except redis.RedisError as e:
+        # Path does not exist is not an error - return None
+        if "does not exist" in str(e):
+            return None
         logger.error(f"Redis error getting field {json_path} for {query_id}: {e}")
         raise
 
