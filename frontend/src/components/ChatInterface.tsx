@@ -362,6 +362,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             propConversationId
           );
           setConversationId(propConversationId);
+          setQuickActions([]);
           skipLoadForNewConversation.current = null;
           isLoadingConversation.current = false;
           return;
@@ -369,6 +370,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         isLoadingConversation.current = true; // Set flag when loading
         setConversationId(propConversationId);
+        setQuickActions([]);
         console.log(
           "[ChatInterface] Loading conversation:",
           propConversationId
@@ -458,6 +460,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       } else {
         setConversationId(undefined);
         setMessages([]);
+        setQuickActions([]); // Clear quick actions when no conversation
         answeredQueriesRef.current.clear();
         isLoadingConversation.current = false;
       }
@@ -513,17 +516,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   
 
   const processQueue = useCallback(async () => {
-    if (isProcessingQueue.current) return;
+    if (isProcessingQueue.current) {
+      return;
+    }
     isProcessingQueue.current = true;
 
     while (messageQueue.current.length > 0) {
       const item = messageQueue.current.shift();
 
-      if (!item) continue;
+      if (!item) {
+        continue;
+      }
+
 
       // Handle Final Response
       if (item.type === "final_response") {
-        const { response, queryId } = item;
+        const { response, queryId, conversationId: itemConversationId } = item;
 
         setMessages((prevMessages) => {
           const filtered = prevMessages.filter(
@@ -590,18 +598,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         setLoading(false);
 
-        // Fetch quick actions after query completes (with 2s delay for backend processing)
-        if (conversationId) {
-          setTimeout(() => {
-            fetchQuickActions(conversationId);
-          }, 2000);
+        // Fetch quick actions immediately after query completes
+        // Note: Orchestrator generates quick actions BEFORE sending final response,
+        // so they're already in cache - fetch immediately!
+        if (itemConversationId) {
+          console.log("[ChatInterface] ✅ Fetching quick actions immediately");
+          fetchQuickActions(itemConversationId); // Orchestrator already generated fresh ones in cache
+        } else {
+          console.warn("[ChatInterface] ❌ Cannot fetch quick actions - conversationId is undefined in item!");
         }
 
         // Save conversation immediately after final response
-        if (conversationId && window.saveConversation) {
+        if (itemConversationId && window.saveConversation) {
           console.log(
             "[ChatInterface] Saving conversation after final response:",
-            conversationId
+            itemConversationId
           );
           // Use setTimeout to ensure state has updated
           setTimeout(() => {
@@ -624,7 +635,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 );
 
                 window.saveConversation!(
-                  conversationId,
+                  itemConversationId,
                   userMsg?.content || "New conversation",
                   assistantMsg?.content || "Response received",
                   currentMessages,

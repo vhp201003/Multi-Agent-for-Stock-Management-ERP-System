@@ -1,6 +1,6 @@
 /* Modern Chat Input - Sleek & Responsive */
 .chat-input-container {
-  padding: 1rem 1.5rem 2rem;
+  padding: 1rem 1.5rem 0.75rem; /* Reduced bottom padding to move input down */
   background: linear-gradient(to top, var(--bg-primary) 80%, transparent);
   position: sticky;
   bottom: 0;

@@ -151,7 +151,7 @@ async def generate_quick_actions(
     """
     try:
         redis_client = get_async_redis_connection().client
-        llm_client = get_groq_client()
+        llm_client = get_groq_client().get_client()
         conversation = await load_or_create_conversation(redis_client, conversation_id)
 
         # Get recent messages (last 6 to extract last 2 user queries + responses)

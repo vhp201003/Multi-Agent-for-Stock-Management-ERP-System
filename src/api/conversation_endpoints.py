@@ -181,13 +181,12 @@ async def delete_conversation_handler(
 
 
 async def get_quick_actions_handler(
-    redis, llm_client, conversation_id: str, user_id: Optional[str] = None
+    redis, conversation_id: str, user_id: Optional[str] = None
 ) -> QuickActionsResponse:
     """Get or generate quick action suggestions for a conversation.
 
     Args:
         redis: Redis client
-        llm_client: LLM client for generating suggestions
         conversation_id: Conversation ID to get quick actions for
         user_id: Optional user ID for ownership validation
 

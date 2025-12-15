@@ -197,10 +197,9 @@ export const getQuickActions = async (
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(
-    `${API_BASE}/conversations/${conversationId}/quick-actions`,
-    { headers }
-  );
+  const url = new URL(`${API_BASE}/conversations/${conversationId}/quick-actions`);
+
+  const response = await fetch(url.toString(), { headers });
 
   if (!response.ok) {
     // Return null if no quick actions available (404 or 500)

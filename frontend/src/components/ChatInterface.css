@@ -85,6 +85,7 @@
 .chat-messages > div {
   width: 100%;
   padding: 2rem;
+  padding-bottom: 10rem; /* Reduced - input moved closer to bottom */
   box-sizing: border-box;
 }
 
@@ -989,6 +990,11 @@
     padding: 0 1rem 1rem 1rem;
   }
 
+  .chat-messages > div {
+    padding: 1.5rem;
+    padding-bottom: 9rem; /* Reduced - input moved closer to bottom */
+  }
+
   .message-user .message-content {
     max-width: 85%;
     padding: 0.8rem 1rem;
@@ -1077,6 +1083,11 @@
 
   .chat-messages {
     padding: 0 0.75rem 0.75rem 0.75rem;
+  }
+
+  .chat-messages > div {
+    padding: 1rem;
+    padding-bottom: 8rem; /* Reduced - input moved closer to bottom */
   }
 
   .message {
