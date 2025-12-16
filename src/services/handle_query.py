@@ -193,8 +193,6 @@ async def save_to_conversation_history(
 async def process_cached_response(
     request: Request, cached_response: Dict[str, Any]
 ) -> Dict[str, Any]:
-    logger.info(f"Semantic cache hit for query: {request.query[:50]}...")
-
     result = CompletionResponse.response_success(
         query_id=request.query_id,
         response=cached_response,
@@ -215,8 +213,6 @@ async def process_cached_response(
 
 
 async def process_new_query(request: Request) -> Dict[str, Any]:
-    logger.info(f"Cache miss, processing query: {request.query[:50]}...")
-
     redis_client = agent_manager.redis_client
     orchestrator: OrchestratorAgent = agent_manager.agents.get("orchestrator")
 
@@ -279,13 +275,11 @@ async def handle_query(request: Request) -> Dict[str, Any]:
         if validation_error:
             raise QueryValidationError(validation_error)
 
-        # Only search cache if enabled
         if request.use_cache:
             cached_response = await semantic_cache.search_cache(request.query)
             if cached_response:
                 return await process_cached_response(request, cached_response)
 
-        # Cache miss or disabled - process normally
         return await process_new_query(request)
 
     except QueryValidationError:

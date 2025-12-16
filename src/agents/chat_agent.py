@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import List
+from typing import Any, Dict, List
 
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 from src.agents.base_agent import BaseAgent
@@ -8,6 +8,7 @@ from src.services.chat_data_service import reconstruct_full_data
 from src.typing.redis import RedisChannels
 from src.typing.request import ChatRequest
 from src.typing.schema import ChatAgentSchema, LLMMarkdownField
+from src.utils.converstation import load_or_create_conversation
 from src.utils.shared_data_utils import (
     get_shared_data,
     save_shared_data,
@@ -25,6 +26,29 @@ class ChatAgent(BaseAgent):
 
     async def get_sub_channels(self) -> List[str]:
         return [RedisChannels.get_command_channel(AGENT_TYPE)]
+
+    async def get_conversation_history(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        if conversation_id:
+            conversation = await load_or_create_conversation(
+                self.redis, conversation_id
+            )
+            return conversation.get_recent_messages(limit=10)
+        return []
+
+    def compose_llm_messages(
+        self, query: str, context: Dict[str, Any], history: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        messages = [
+            {"role": "system", "content": build_system_prompt()},
+            *history,
+            {
+                "role": "user",
+                "content": build_chat_agent_prompt(query=query, context=context),
+            },
+        ]
+        return messages
 
     async def listen_channels(self):
         pubsub = self.redis.pubsub()
@@ -71,6 +95,8 @@ class ChatAgent(BaseAgent):
                     request.query_id, request.conversation_id
                 )
 
+            history = await self.get_conversation_history(request.conversation_id)
+
             raw_context = request.context or {}
 
             llm_context = {
@@ -78,17 +104,9 @@ class ChatAgent(BaseAgent):
                 "results": truncate_results(raw_context.get("results", {})),
             }
 
-            messages = [
-                {"role": "system", "content": build_system_prompt()},
-                {
-                    "role": "user",
-                    "content": build_chat_agent_prompt(
-                        query=request.query, context=llm_context
-                    ),
-                },
-            ]
+            messages = self.compose_llm_messages(request.query, llm_context, history)
 
-            result, _, _ = await self.call_llm(
+            result = await self.call_llm(
                 query_id=request.query_id,
                 messages=messages,
                 response_schema=ChatAgentSchema,

@@ -275,7 +275,6 @@ class BaseAgent(ABC):
             # --- ReAct Loop ---
             turn_count = 0
             MAX_TURNS = 10
-            llm_usage = None
             llm_reasoning = None
 
             while True:
@@ -334,7 +333,6 @@ class BaseAgent(ABC):
 
                 turn_usage = self.extract_llm_usage(response)
                 if turn_usage:
-                    llm_usage = turn_usage
                     if query_id:
                         await self.accumulate_llm_usage(query_id, turn_usage)
 
@@ -366,13 +364,7 @@ class BaseAgent(ABC):
 
             result = parsed_result if parsed_result is not None else content
 
-            if tools and tool_calls and not tool_executor:
-                result = {
-                    "tool_calls": [t.model_dump() for t in tool_calls],
-                    "content": content,
-                }
-
-            return result, llm_usage, llm_reasoning
+            return result
 
         except Exception:
             raise

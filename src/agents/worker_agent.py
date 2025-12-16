@@ -139,15 +139,12 @@ class WorkerAgent(BaseAgent):
             )
 
         # Call LLM with ReAct loop
-        result, llm_usage, llm_reasoning = await self.call_llm(
+        result = await self.call_llm(
             query_id=command_message.query_id,
             messages=messages,
             tools=groq_tools,
             tool_executor=tool_executor,
         )
-
-        worker_process_result.llm_reasoning = llm_reasoning
-        worker_process_result.llm_usage = llm_usage
 
         if isinstance(result, str):
             logger.debug(f"{self.agent_type}: Final LLM response: {result}")
