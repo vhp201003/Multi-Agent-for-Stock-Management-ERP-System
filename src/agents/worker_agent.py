@@ -138,6 +138,11 @@ class WorkerAgent(BaseAgent):
                 worker_process_result.query_id,
             )
 
+        await self.broadcast_reasoning(
+            command_message.query_id,
+            f"Process sub query: {sub_query}",
+        )
+
         # Call LLM with ReAct loop
         result = await self.call_llm(
             query_id=command_message.query_id,

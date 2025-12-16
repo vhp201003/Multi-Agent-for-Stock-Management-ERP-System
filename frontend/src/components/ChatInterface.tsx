@@ -25,6 +25,7 @@ import Toast, { type ToastMessage } from "./Toast";
 import ChatInput from "./ChatInput";
 import ApprovalCard from "./ApprovalCard";
 import QuickActionPills from "./QuickActionPills";
+import { WorkerColumnsDisplay } from "./WorkerColumnsDisplay";
 import { processLayoutWithData } from "../utils/chartDataExtractor";
 import {
   normalizeConversationMessages,
@@ -211,6 +212,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [resolvedApprovals, setResolvedApprovals] = useState<
     Map<string, ApprovalResponse["action"]>
   >(new Map());
+  // Parallel Execution: Track worker agents for this query
+  const [agentsNeeded, setAgentsNeeded] = useState<string[]>([]);
+  const [showWorkerColumns, setShowWorkerColumns] = useState(false);
   const { hitlMode, useCache } = useAuth();
   const answeredQueriesRef = React.useRef<Set<string>>(new Set());
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
@@ -327,13 +331,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     const lastMessage = messages[messages.length - 1];
     const isUserMessage = lastMessage?.type === "user";
+    const isThinking = loading || (lastMessage?.updates && lastMessage.updates.length > 0);
 
     // Only auto-scroll if user near bottom to avoid fighting manual scroll
     let isNearBottom = true;
+    let distanceToBottom = 0;
+    
     if (container) {
-      const distanceToBottom =
+      distanceToBottom =
         container.scrollHeight - container.clientHeight - container.scrollTop;
-      isNearBottom = distanceToBottom < 200;
+      // Very generous threshold while thinking to ensure we catch up
+      const threshold = isThinking ? 1000 : 200;
+        isNearBottom = distanceToBottom < threshold;
     }
 
     // Always scroll if the last message is from the user
@@ -342,10 +351,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
 
+    // Aggressive scroll during thinking
+    if (isThinking && isNearBottom) {
+       // Use 'auto' for instant update to prevent lag during rapid streams
+       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+       return;
+    }
+
     if (isNearBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages]);
+  }, [messages, loading]);
 
   useEffect(() => {
     scrollToBottom();
@@ -827,6 +843,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ...message.data,
             agent_type: message.data.agent_type || "orchestrator",
           };
+          // Extract agents_needed for parallel visualization
+          if (message.data.agents_needed && message.data.agents_needed.length > 0) {
+            setAgentsNeeded(message.data.agents_needed);
+            setShowWorkerColumns(true);
+          }
           break;
         case "tool_execution":
           uiUpdate = {
@@ -1006,6 +1027,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleSendMessage = useCallback(
     async (inputText: string) => {
       if (!inputText.trim() || loading) return;
+
+      // Reset worker columns state for new query
+      setAgentsNeeded([]);
+      setShowWorkerColumns(false);
 
       const queryId = generateId();
       let currentConversationId = conversationId;
@@ -1673,14 +1698,54 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       <div className="chat-messages" ref={chatMessagesRef}>
         <div>
-          {messages.map((message, _messageIndex) => (
+          {messages.map((message, index) => {
+            // Calculate execution time for assistant messages
+            let executionTimeDisplay = null;
+            if (message.type === 'assistant') {
+              // Search backwards for the most recent user message
+              let prevUserMsg = null;
+              for (let i = index - 1; i >= 0; i--) {
+                if (messages[i].type === 'user') {
+                  prevUserMsg = messages[i];
+                  break;
+                }
+              }
+
+              if (prevUserMsg) {
+                const startTime = new Date(prevUserMsg.timestamp).getTime();
+                let endTime = new Date(message.timestamp).getTime();
+                
+                // If we have updates, find the latest timestamp
+                if (message.updates && message.updates.length > 0) {
+                  message.updates.forEach(u => {
+                     // updates might have timestamp string
+                     if ((u as any).timestamp) {
+                       const t = new Date((u as any).timestamp).getTime();
+                       if (!isNaN(t) && t > endTime) endTime = t;
+                     }
+                  });
+                }
+                
+                // Only show if positive duration
+                const duration = endTime - startTime;
+                if (duration > 0) {
+                  executionTimeDisplay = (
+                    <span className="execution-time" style={{ marginLeft: '8px', opacity: 0.7 }}>
+                      ({(duration / 1000).toFixed(1)}s)
+                    </span>
+                  );
+                }
+              }
+            }
+
+            return (
             <div key={message.id} className={`message message-${message.type}`}>
               <div className="message-content">
                 {/* Hiển thị layout nếu có */}
                 {message.layout && message.layout.length > 0 ? (
                   <div className="structured-response">
-                    {message.layout.map((field, index) =>
-                      renderLayoutField(field, index)
+                    {message.layout.map((field, layoutIndex) =>
+                      renderLayoutField(field, layoutIndex)
                     )}
                   </div>
                 ) : (
@@ -1688,34 +1753,45 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 )}
                 <div className="message-time">
                   {message.timestamp.toLocaleTimeString()}
+                  {executionTimeDisplay}
                 </div>
               </div>
 
-              {/* Hiển thị thinking process (task updates) - Collapsible */}
+              {/* Hiển thị thinking process - Parallel Columns or Collapsible */}
               {message.updates && message.updates.length > 0 && (
-                <details
-                  className="thinking-process"
-                  open={message.isThinkingExpanded ?? false}
-                  onToggle={(e) => {
-                    if ((e.target as HTMLDetailsElement).open) {
-                      setMessages((prev) =>
-                        prev.map((m) =>
-                          m.id === message.id
-                            ? { ...m, isThinkingExpanded: true }
-                            : m
-                        )
-                      );
-                    } else {
-                      setMessages((prev) =>
-                        prev.map((m) =>
-                          m.id === message.id
-                            ? { ...m, isThinkingExpanded: false }
-                            : m
-                        )
-                      );
-                    }
-                  }}
-                >
+                <>
+                  {/* Show parallel columns if we have agents_needed */}
+                  {showWorkerColumns && agentsNeeded.length > 0 ? (
+                    <WorkerColumnsDisplay
+                      agents_needed={agentsNeeded}
+                      messageUpdates={message.updates}
+                      isComplete={message.type === "assistant"}
+                    />
+                  ) : (
+                    /* Fallback to collapsible details */
+                    <details
+                      className="thinking-process"
+                      open={message.isThinkingExpanded ?? false}
+                      onToggle={(e) => {
+                        if ((e.target as HTMLDetailsElement).open) {
+                          setMessages((prev) =>
+                            prev.map((m) =>
+                              m.id === message.id
+                                ? { ...m, isThinkingExpanded: true }
+                                : m
+                            )
+                          );
+                        } else {
+                          setMessages((prev) =>
+                            prev.map((m) =>
+                              m.id === message.id
+                                ? { ...m, isThinkingExpanded: false }
+                                : m
+                            )
+                          );
+                        }
+                      }}
+                    >
                   <summary
                     className="thinking-header"
                     onClick={(e) => e.stopPropagation()}
@@ -1920,6 +1996,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     })}
                   </div>
                 </details>
+                  )}
+                </>
               )}
 
               {/* Render approval cards separately below thinking process */}
@@ -1954,7 +2032,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   </div>
                 )}
             </div>
-          ))}
+            );
+          })}
           {loading && (
             <div className="message message-system">
               <div className="message-content">

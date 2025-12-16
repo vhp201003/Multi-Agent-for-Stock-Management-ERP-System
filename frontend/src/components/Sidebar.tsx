@@ -133,6 +133,27 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [loadConversations, user]);
 
+  // Helper to save to localStorage with quota protection
+  const saveToLocalStorage = (key: string, conversationsToSave: Conversation[]) => {
+    try {
+      // Create a lightweight version for localStorage
+      // Strip 'messages' array to save space, keeping only metadata
+      const lightweightData = conversationsToSave.map(conv => ({
+        ...conv,
+        messages: [] // Don't store full history in localStorage list to avoid QuotaExceededError
+      }));
+      
+      localStorage.setItem(key, JSON.stringify(lightweightData));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.error('[Sidebar] localStorage quota exceeded! Unable to save conversation list.');
+        // Optional: Try to clear old items or warn user
+      } else {
+        console.error('[Sidebar] Failed to save to localStorage:', error);
+      }
+    }
+  };
+
   // Create a new conversation entry (for new chat)
   const createNewConversation = React.useCallback(
     (id: string, title: string = "New conversation") => {
@@ -149,7 +170,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       ];
       setConversations(updated);
       const key = getLocalStorageKey();
-      localStorage.setItem(key, JSON.stringify(updated));
+      saveToLocalStorage(key, updated);
       console.log(`[Sidebar] Created new conversation for user ${user?.id}`);
     },
     [conversations, user]
@@ -162,6 +183,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         const existingIndex = prevConvs.findIndex((c) => c.id === id);
         const key = getLocalStorageKey();
 
+        let updated: Conversation[];
         if (existingIndex === -1) {
           // New conversation - add to top
           const newConv: Conversation = {
@@ -171,12 +193,10 @@ const Sidebar: React.FC<SidebarProps> = ({
             timestamp: new Date(),
             messages,
           };
-          const updated = [newConv, ...prevConvs];
-          localStorage.setItem(key, JSON.stringify(updated));
-          return updated;
+          updated = [newConv, ...prevConvs];
         } else {
           // Update existing - keep position
-          const updated = [...prevConvs];
+          updated = [...prevConvs];
           updated[existingIndex] = {
             ...updated[existingIndex],
             title,
@@ -184,10 +204,10 @@ const Sidebar: React.FC<SidebarProps> = ({
             messages,
             // Don't update timestamp - keep original position
           };
-          const key = getLocalStorageKey();
-          localStorage.setItem(key, JSON.stringify(updated));
-          return updated;
         }
+        
+        saveToLocalStorage(key, updated);
+        return updated;
       });
     },
     [user]
@@ -217,74 +237,38 @@ const Sidebar: React.FC<SidebarProps> = ({
         messages,
       };
 
-      // Read current conversations from localStorage to avoid race conditions
-      const key = getLocalStorageKey();
-      const savedConversations = localStorage.getItem(key);
-      const currentConversations = savedConversations
-        ? JSON.parse(savedConversations)
-        : [];
+      setConversations((currentConversations) => {
+        let updated: Conversation[];
 
-      let updated: Conversation[];
-
-      if (moveToTop) {
-        // Move to top (for new messages)
-        updated = [
-          conversation,
-          ...currentConversations.filter((c: Conversation) => c.id !== id),
-        ];
-        setConversations(updated);
-        localStorage.setItem(key, JSON.stringify(updated));
-        console.log(
-          "[Sidebar] Saved to top, total conversations:",
-          updated.length
-        );
-      } else {
-        // Update in place (for final response or reload)
-        const existingIndex = currentConversations.findIndex(
-          (c: Conversation) => c.id === id
-        );
-        if (existingIndex === -1) {
-          // New conversation
-          updated = [conversation, ...currentConversations];
-          setConversations(updated);
-          localStorage.setItem(key, JSON.stringify(updated));
-          console.log(
-            "[Sidebar] Created new conversation, total:",
-            updated.length
-          );
+        if (moveToTop) {
+          // Move to top (for new messages)
+          updated = [
+            conversation,
+            ...currentConversations.filter((c) => c.id !== id),
+          ];
         } else {
-          // Update existing
-          updated = [...currentConversations];
-          updated[existingIndex] = {
-            ...updated[existingIndex],
-            title,
-            lastMessage,
-            messages,
-            timestamp: updated[existingIndex].timestamp, // Keep original timestamp
-          };
-          setConversations(updated);
-          localStorage.setItem(key, JSON.stringify(updated));
-          console.log(
-            "[Sidebar] Updated existing conversation at index:",
-            existingIndex,
-            "messages:",
-            messages.length
+          // Update in place (for final response or reload)
+          const existingIndex = currentConversations.findIndex(
+            (c) => c.id === id
           );
+          if (existingIndex === -1) {
+            updated = [conversation, ...currentConversations];
+          } else {
+            updated = [...currentConversations];
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              title,
+              lastMessage,
+              messages,
+              timestamp: updated[existingIndex].timestamp,
+            };
+          }
         }
-      }
-
-      // Verify save
-      const verified = localStorage.getItem(key);
-      if (verified) {
-        const parsed = JSON.parse(verified);
-        const found = parsed.find((c: Conversation) => c.id === id);
-        console.log(
-          "[Sidebar] Verification - conversation found:",
-          !!found,
-          "with messages:",
-          found?.messages?.length
-        );
-      }
+        
+        const key = getLocalStorageKey();
+        saveToLocalStorage(key, updated);
+        return updated;
+      });
     },
     [user]
   );
@@ -303,7 +287,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const updated = conversations.filter((c) => c.id !== id);
     setConversations(updated);
     const key = getLocalStorageKey();
-    localStorage.setItem(key, JSON.stringify(updated));
+    saveToLocalStorage(key, updated);
     console.log(`[Sidebar] Deleted conversation ${id} for user ${user?.id}`);
 
     if (currentConversationId === id) {

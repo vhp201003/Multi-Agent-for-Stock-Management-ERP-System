@@ -81,6 +81,7 @@ export interface TaskUpdate {
   total_steps?: number;
   explanation?: string;
   conclusion?: string;
+  reasoning?: string;
   llm_usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;

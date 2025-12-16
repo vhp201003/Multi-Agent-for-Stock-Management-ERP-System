@@ -10,7 +10,7 @@
       "reasoning_effort": "medium"
     },
     "inventory": {
-      "model": "openai/gpt-oss-120b",
+      "model": "openai/gpt-oss-20b",
       "mcp_server_url": "http://localhost:8011/mcp",
       "temperature": 0.5,
       "top_p": 0.9,
@@ -20,7 +20,7 @@
       "reasoning_effort": "low"
     },
     "analytics": {
-      "model": "openai/gpt-oss-120b",
+      "model": "openai/gpt-oss-20b",
       "mcp_server_url": "http://localhost:8012/mcp",
       "temperature": 0.6,
       "top_p": 0.9,
@@ -40,7 +40,7 @@
       "reasoning_effort": "medium"
     },
     "ordering": {
-      "model": "openai/gpt-oss-120b",
+      "model": "openai/gpt-oss-20b",
       "mcp_server_url": "http://localhost:8014/mcp",
       "temperature": 0.5,
       "top_p": 0.9,

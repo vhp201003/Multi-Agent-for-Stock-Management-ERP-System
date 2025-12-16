@@ -99,12 +99,6 @@ class BaseManager:
             else:
                 pending_count += 1
 
-        # Broadcast task status to frontend
-        await self.broadcast_thinking(
-            data.query_id,
-            f"Đã nhận {len(tasks)} task(s) - {active_count} sẵn sàng, {pending_count} đang chờ dependencies",
-        )
-
         logger.info(f"Manager {self.agent_type}: Queued {len(tasks)} tasks")
 
     async def on_task_update(self, update: TaskUpdate):
