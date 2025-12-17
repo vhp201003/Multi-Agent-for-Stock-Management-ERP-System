@@ -340,8 +340,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (container) {
       distanceToBottom =
         container.scrollHeight - container.clientHeight - container.scrollTop;
-      // Very generous threshold while thinking to ensure we catch up
-      const threshold = isThinking ? 1000 : 200;
+      // Ultra generous threshold while thinking (2000px) because WorkerColumnsDisplay can get tall fast
+      const threshold = isThinking ? 2000 : 200;
         isNearBottom = distanceToBottom < threshold;
     }
 
@@ -352,9 +352,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     // Aggressive scroll during thinking
-    if (isThinking && isNearBottom) {
-       // Use 'auto' for instant update to prevent lag during rapid streams
-       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    if (isThinking) {
+      // If we are showing WorkerColumnsDisplay (system message with updates), force scroll 
+      // if we are vaguely near the bottom. The user wants to see the activity.
+       if (isNearBottom) {
+          messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+       }
        return;
     }
 

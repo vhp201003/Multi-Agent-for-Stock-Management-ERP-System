@@ -10,6 +10,7 @@ export const Login: React.FC = () => {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -19,7 +20,7 @@ export const Login: React.FC = () => {
     setError("");
     try {
       const data = await apiService.login({ email, password });
-      login(data.access_token);
+      login(data.access_token, rememberMe);
       navigate("/");
     } catch (err) {
       console.error(err);
@@ -209,7 +210,11 @@ export const Login: React.FC = () => {
 
             <div className="form-footer">
               <label className="remember-me">
-                <input type="checkbox" />
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                />
                 <span>Remember me</span>
               </label>
               <a href="#" className="forgot-password">

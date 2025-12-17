@@ -5,7 +5,6 @@ import './WorkerColumnsDisplay.css';
 interface WorkerColumn {
   agent_type: string;
   updates: TaskUpdate[];
-  status: 'idle' | 'processing' | 'done' | 'failed';
 }
 
 interface WorkerColumnsDisplayProps {
@@ -21,7 +20,6 @@ interface WorkerColumnsDisplayProps {
 export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
   agents_needed,
   messageUpdates,
-  isComplete,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [orchestratorExpanded, setOrchestratorExpanded] = useState(true);
@@ -42,7 +40,6 @@ export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
         columns.set(agent, {
           agent_type: agent,
           updates: [],
-          status: 'idle',
         });
       });
 
@@ -54,32 +51,8 @@ export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
       if (update.agent_type && columns.has(update.agent_type)) {
         const column = columns.get(update.agent_type)!;
         column.updates.push(update);
-
-        // Update status logic
-        // 1. If we see a 'failed' status, marks as failed immediately
-        if (update.status === 'failed') {
-          column.status = 'failed';
-        }
-        // 2. If we see 'done', mark as done (unless already failed)
-        else if ((update.status === 'done' || update.status === 'auto_approved') && column.status !== 'failed') {
-          column.status = 'done';
-        }
-        // 3. If currently idle/processing, update to processing (unless already done/failed)
-        else if (update.status === 'processing' && column.status !== 'done' && column.status !== 'failed') {
-          column.status = 'processing';
-        }
       }
     });
-
-    // Post-processing: If overall task is complete, force all non-failed workers to 'done'
-    // This fixes cases where the last message was 'thinking' but the backend finished the task.
-    if (isComplete) {
-      for (const column of columns.values()) {
-        if (column.status !== 'failed') {
-          column.status = 'done';
-        }
-      }
-    }
 
     return Array.from(columns.values());
   };
@@ -96,25 +69,12 @@ export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
     return names[agent_type] || agent_type;
   };
 
-  const getStatusLabel = (status: string): string => {
-    const labels: Record<string, string> = {
-      idle: 'Pending',
-      processing: 'Processing...',
-      done: 'Completed',
-      failed: 'Failed',
-    };
-    return labels[status] || status;
-  };
+
 
   const columns = getWorkerColumns();
 
   // Summary for collapsed state
-  const activeWorkers = columns.filter(c => c.status === 'processing').length;
-  const completedWorkers = columns.filter(c => c.status === 'done').length;
-  const totalWorkers = columns.length;
-  const summaryText = isComplete 
-    ? "Completed successfully" 
-    : `Processing: ${activeWorkers}/${totalWorkers} agents active`;
+
 
   return (
     <div className="worker-columns-container">
@@ -245,18 +205,10 @@ export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
 
             <div className="columns-grid">
               {columns.map((column) => (
-                <div
-                  key={column.agent_type}
-                  className={`worker-column ${column.status} ${
-                    isComplete && column.agent_type === 'chat' ? 'highlight' : ''
-                  }`}
-                >
+                  <div className="worker-column">
                   {/* Column Header */}
                   <div className="column-header">
                     <span className="agent-name">{getAgentDisplayName(column.agent_type)}</span>
-                    <span className={`status-indicator ${column.status}`}>
-                       {getStatusLabel(column.status)}
-                    </span>
                   </div>
 
                   {/* Column Body */}
@@ -292,28 +244,92 @@ export const WorkerColumnsDisplay: React.FC<WorkerColumnsDisplayProps> = ({
                             </div>
 
                             {/* Tool Results */}
-                            {update.result && typeof update.result === 'object' && (
-                              <div className="tool-result">
-                                <details>
-                                  <summary>
-                                    View Output ({Object.keys(update.result).length} fields)
-                                  </summary>
-                                  <pre>{JSON.stringify(update.result, null, 2)}</pre>
-                                </details>
+                            {/* Tool Results */}
+                            {update.result &&
+                            update.result.tool_results &&
+                            Array.isArray(update.result.tool_results) ? (
+                              <div className="tool-usage-container">
+                                {update.result.tool_results.map(
+                                  (tool: any, toolIdx: number) => (
+                                    <div
+                                      key={toolIdx}
+                                      className="tool-execution-item"
+                                    >
+                                      <div className="tool-header">
+                                        <span className="icon">
+                                          <svg
+                                            width="14"
+                                            height="14"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth="2"
+                                          >
+                                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                                          </svg>
+                                        </span>
+                                        <span className="tool-name">
+                                          Used Tool: <strong>{tool.tool_name}</strong>
+                                        </span>
+                                      </div>
+                                      {tool.parameters && (
+                                        <div className="tool-params">
+                                          <div className="text-secondary">
+                                            Params:
+                                          </div>
+                                          <pre className="params-json">
+                                            {JSON.stringify(
+                                              tool.parameters,
+                                              null,
+                                              2
+                                            )}
+                                          </pre>
+                                        </div>
+                                      )}
+                                      <div className="tool-result">
+                                        <details>
+                                          <summary>
+                                            View Result (
+                                            {Object.keys(tool.tool_result || {})
+                                              .length}{" "}
+                                            fields)
+                                          </summary>
+                                          <pre>
+                                            {JSON.stringify(
+                                              tool.tool_result,
+                                              null,
+                                              2
+                                            )}
+                                          </pre>
+                                        </details>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
                               </div>
+                            ) : (
+                              /* Fallback for other results */
+                              update.result &&
+                              typeof update.result === "object" && (
+                                <div className="tool-result">
+                                  <details>
+                                    <summary>
+                                      View Output (
+                                      {Object.keys(update.result).length} fields)
+                                    </summary>
+                                    <pre>
+                                      {JSON.stringify(update.result, null, 2)}
+                                    </pre>
+                                  </details>
+                                </div>
+                              )
                             )}
                           </div>
                         ))}
                       </div>
                     )}
 
-                    {/* Completion Status */}
-                    {column.status === 'done' && column.updates.length > 0 && (
-                      <div className="status-banner success">Task Completed</div>
-                    )}
-                    {column.status === 'failed' && column.updates.length > 0 && (
-                      <div className="status-banner error">Task Failed</div>
-                    )}
+
                   </div>
                 </div>
               ))}

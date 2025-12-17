@@ -353,6 +353,11 @@
   background: var(--bg-tertiary);
   transition: background 0.2s;
   outline: none;
+  list-style: none; /* Remove default triangle */
+  
+  &::-webkit-details-marker {
+    display: none; /* Safari */
+  }
   
   &:hover {
     background: var(--bg-hover);
@@ -404,4 +409,58 @@
   font-size: 0.8rem;
   font-family: monospace;
   color: var(--text-tertiary);
+}
+
+/* Tool Usage Styles */
+.tool-usage-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.tool-execution-item {
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--accent), transparent 95%);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.tool-header .icon {
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+}
+
+.tool-name {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+.tool-name strong {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tool-params {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-secondary);
+  font-size: 0.75rem;
+}
+
+.params-json {
+  margin: 0.25rem 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
 }

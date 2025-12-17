@@ -145,8 +145,8 @@ class ForecastingMCPServer(BaseMCPServer):
 
     async def predict_sales_forecast(
         self,
-        item_code: str = Field(
-            ..., description="Item code to predict (e.g., 'RCK-0128')"
+        item_code: str | None = Field(
+            default=None, description="Item code to predict (e.g., 'RCK-0128')"
         ),
         item_name: str | None = Field(
             default=None, description="Item name to predict (e.g., 'Rocking Chair')"

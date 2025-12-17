@@ -103,8 +103,12 @@ class ApiService {
     useCache: boolean = true
   ): Promise<QueryResponse> {
     // Try both 'authToken' (new) and 'token' (legacy) for compatibility
+    // Try both 'authToken' (new) and 'token' (legacy) for compatibility
     const token =
-      localStorage.getItem("authToken") || localStorage.getItem("token");
+      localStorage.getItem("authToken") ||
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("authToken") ||
+      sessionStorage.getItem("token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     console.log("[API] submitQuery:", {
@@ -131,7 +135,10 @@ class ApiService {
 
   async getQueryStatus(queryId: string): Promise<QueryStatus> {
     const token =
-      localStorage.getItem("authToken") || localStorage.getItem("token");
+      localStorage.getItem("authToken") ||
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("authToken") ||
+      sessionStorage.getItem("token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const response = await this.client.get<QueryStatus>(`/query/${queryId}`, {
       headers,
@@ -177,7 +184,10 @@ class ApiService {
       approvalResponse
     );
     const token =
-      localStorage.getItem("authToken") || localStorage.getItem("token");
+      localStorage.getItem("authToken") ||
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("authToken") ||
+      sessionStorage.getItem("token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     const response = await this.client.post(

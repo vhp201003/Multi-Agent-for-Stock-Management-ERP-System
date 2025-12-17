@@ -18,7 +18,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (token: string) => void;
+  login: (token: string, rememberMe?: boolean) => void;
   logout: () => void;
   isAuthenticated: boolean;
   hitlMode: HITLMode;
@@ -35,9 +35,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [user, setUser] = useState<User | null>(null);
-  // Try both 'authToken' (new) and 'token' (legacy)
+  // Try both 'authToken' (new) and 'token' (legacy) from both localStorage and sessionStorage
   const [token, setToken] = useState<string | null>(
-    localStorage.getItem("authToken") || localStorage.getItem("token")
+    localStorage.getItem("authToken") ||
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("authToken") ||
+      sessionStorage.getItem("token")
   );
   const [hitlMode, setHitlMode] = useState<HITLMode>("review");
   const [theme, setTheme] = useState<ThemeMode>("dark");
@@ -72,18 +75,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [token]);
 
-  const login = (newToken: string) => {
-    // Store in both keys for backward compatibility
-    localStorage.setItem("authToken", newToken);
-    localStorage.setItem("token", newToken);
+  const login = (newToken: string, rememberMe: boolean = true) => {
+    // Clear existing tokens to avoid conflicts
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("token");
+    sessionStorage.removeItem("authToken");
+    sessionStorage.removeItem("token");
+
+    if (rememberMe) {
+      // Store in localStorage for persistent session
+      localStorage.setItem("authToken", newToken);
+      localStorage.setItem("token", newToken);
+    } else {
+      // Store in sessionStorage for temporary session
+      sessionStorage.setItem("authToken", newToken);
+      sessionStorage.setItem("token", newToken);
+    }
+
     setToken(newToken);
     console.log("[Auth] Login successful, token stored");
   };
 
   const logout = () => {
-    // Remove both keys
+    // Remove keys from both storages
     localStorage.removeItem("authToken");
     localStorage.removeItem("token");
+    sessionStorage.removeItem("authToken");
+    sessionStorage.removeItem("token");
+
     setToken(null);
     setUser(null);
     setHitlMode("review");

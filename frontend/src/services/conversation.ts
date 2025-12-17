@@ -51,7 +51,11 @@ export const createConversation = async (
   conversationId: string,
   title?: string
 ): Promise<Conversation> => {
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
   };
@@ -87,7 +91,11 @@ export const getConversation = async (
     url.searchParams.set('include_messages', 'true');
   }
 
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -116,7 +124,11 @@ export const listConversations = async (
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('offset', offset.toString());
 
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -138,7 +150,11 @@ export const updateConversationTitle = async (
   conversationId: string,
   title: string
 ): Promise<Conversation> => {
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
   };
@@ -166,7 +182,11 @@ export const updateConversationTitle = async (
  * Delete a conversation
  */
 export const deleteConversation = async (conversationId: string): Promise<void> => {
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -191,7 +211,11 @@ export const deleteConversation = async (conversationId: string): Promise<void> 
 export const getQuickActions = async (
   conversationId: string
 ): Promise<QuickActionsResponse | null> => {
-  const token = localStorage.getItem('token');
+  const token =
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    sessionStorage.getItem("token");
   const headers: HeadersInit = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
