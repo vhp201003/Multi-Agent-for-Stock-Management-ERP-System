@@ -147,10 +147,13 @@ class BaseAgent(ABC):
         self, query_id: str, response_data: Dict[str, Any]
     ) -> None:
         try:
-            agent_dir = DEBUG_DIR / self.agent_type
-            agent_dir.mkdir(parents=True, exist_ok=True)
+            query_dir = DEBUG_DIR / self.agent_type / query_id
+            query_dir.mkdir(parents=True, exist_ok=True)
 
-            debug_file = agent_dir / f"{query_id}.json"
+            import time
+
+            timestamp = int(time.time() * 1000)
+            debug_file = query_dir / f"{timestamp}.json"
             with open(debug_file, "w") as f:
                 json.dump(response_data, f, indent=2, default=str)
         except Exception:

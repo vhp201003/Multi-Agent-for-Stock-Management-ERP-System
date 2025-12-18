@@ -48,42 +48,42 @@ class AnalyticsMCPServer(BaseMCPServer):
         self.add_tool(
             self.analyze_top_performers,
             name="analyze_top_performers",
-            description="Analyze top-performing items by quantity or revenue with sparkline trends",
+            description="Identify best-selling items by quantity or revenue during a period. Defaults to last 30 days, all warehouses, and POS+Online channels. Returns top items with sales trends and market share percentages.",
             structured_output=True,
         )
 
         self.add_tool(
             self.analyze_slow_movers,
             name="analyze_slow_movers",
-            description="Identify slow-moving items with sell-through rate, GMROI, and actionable suggestions",
+            description="Find low-velocity items with current stock. Analyzes sell-through rate, profitability (GMROI), and suggests markdown or bundling actions. Only includes items with existing stock and minimum age (default: 30+ days).",
             structured_output=True,
         )
 
         self.add_tool(
             self.track_movers_shakers,
             name="track_movers_shakers",
-            description="Track items with significant growth or decline between two periods",
+            description="Compare sales performance between two time periods to identify items with biggest growth or decline. Defaults to current month vs previous month. Shows percentage change in quantity or revenue.",
             structured_output=True,
         )
 
         self.add_tool(
             self.perform_pareto_analysis,
             name="perform_pareto_analysis",
-            description="Perform Pareto analysis (80/20 rule) on revenue contribution",
+            description="Apply 80/20 rule to identify which items drive 80% of revenue. Defaults to last 30 days. Shows cumulative contribution percentage and count of vital items.",
             structured_output=True,
         )
 
         self.add_tool(
             self.analyze_stock_coverage,
             name="analyze_stock_coverage",
-            description="Analyze stock coverage (Days of Cover) with reorder recommendations",
+            description="Calculate how many days current inventory will last based on sales velocity. Defaults to last 30 days of sales. Auto-suggests reorder actions for low-coverage items and markdown for overstocked items.",
             structured_output=True,
         )
 
         self.add_tool(
             self.get_sales_order_stats,
             name="get_sales_order_stats",
-            description="Get sales order statistics grouped by time period (daily, monthly, yearly)",
+            description="Aggregate sales order counts and revenue by day, week, month, or year. Defaults to last 90 days by month. Optionally filter by order status (e.g., Completed, To Deliver and Bill).",
             structured_output=True,
         )
 
@@ -91,27 +91,30 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def analyze_top_performers(
         self,
-        from_date: str = Field(..., description="Start date (YYYY-MM-DD)"),
-        to_date: str = Field(..., description="End date (YYYY-MM-DD)"),
+        from_date: Optional[str] = Field(
+            None, description="Start date (YYYY-MM-DD). None/empty = last 30 days"
+        ),
+        to_date: Optional[str] = Field(
+            None, description="End date (YYYY-MM-DD). None/empty = today"
+        ),
         metric: str = Field(
             default="revenue",
-            description="Ranking metric: 'qty' or 'revenue'",
+            description="Rank by: 'qty' (quantity sold) or 'revenue' (total value)",
         ),
-        top_n: int = Field(
-            default=10, ge=1, description="Number of top items to return"
-        ),
+        top_n: int = Field(default=10, ge=1, description="Top N items to return"),
         warehouses: List[str] = Field(
             default_factory=list,
-            description="List of warehouse names. Leave empty to query all warehouses.",
+            description="Warehouse filter. Empty = all warehouses",
         ),
         channels: List[str] = Field(
-            default=["POS", "Online"], description="Sales channels to include"
+            default=["POS", "Online"],
+            description="Sales channels (e.g. POS, Online, Wholesale)",
         ),
         exclude_returns: bool = Field(
-            default=True, description="Exclude return transactions"
+            default=True, description="Skip return transactions"
         ),
         merge_variants: bool = Field(
-            default=False, description="Group by item template instead of variant"
+            default=False, description="Group variants under parent item"
         ),
     ) -> TopPerformersOutput:
         try:
@@ -132,20 +135,24 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def analyze_slow_movers(
         self,
-        from_date: str = Field(..., description="Start date (YYYY-MM-DD)"),
-        to_date: str = Field(..., description="End date (YYYY-MM-DD)"),
+        from_date: Optional[str] = Field(
+            None, description="Start date (YYYY-MM-DD). None/empty = 90 days ago"
+        ),
+        to_date: Optional[str] = Field(
+            None, description="End date (YYYY-MM-DD). None/empty = today"
+        ),
         top_n: int = Field(
-            default=20, ge=1, description="Number of slow movers to return"
+            default=20, ge=1, description="Number of slowest items to return"
         ),
         min_days_on_sale: int = Field(
-            default=30, ge=0, description="Minimum days item must be on sale"
+            default=30, ge=0, description="Item must exist for at least this many days"
         ),
         warehouses: List[str] = Field(
             default_factory=list,
-            description="List of warehouse names. Leave empty to query all warehouses.",
+            description="Warehouse filter. Empty = all warehouses",
         ),
         min_stock_balance: float = Field(
-            default=0.0, ge=0, description="Minimum stock balance to consider"
+            default=0.0, ge=0, description="Minimum current stock to include"
         ),
     ) -> SlowMoversOutput:
         try:
@@ -164,18 +171,21 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def track_movers_shakers(
         self,
-        period_current: Dict[str, str] = Field(
-            ...,
-            description="Current period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}",
+        period_current: Optional[Dict[str, str]] = Field(
+            None,
+            description="Current period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}. None = current month",
         ),
-        period_prev: Dict[str, str] = Field(
-            ...,
-            description="Previous period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}",
+        period_prev: Optional[Dict[str, str]] = Field(
+            None,
+            description="Previous period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}. None = auto-calc",
         ),
         metric: str = Field(
-            default="qty", description="Comparison metric: 'qty' or 'revenue'"
+            default="qty",
+            description="Track: 'qty' (units sold) or 'revenue' (sales value)",
         ),
-        top_n: int = Field(default=15, ge=1, description="Number of movers to return"),
+        top_n: int = Field(
+            default=15, ge=1, description="Top N biggest movers/shakers to return"
+        ),
     ) -> MoversShakersOutput:
         try:
             response = await self._fetch_movers_shakers(
@@ -188,10 +198,15 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def perform_pareto_analysis(
         self,
-        from_date: str = Field(..., description="Start date (YYYY-MM-DD)"),
-        to_date: str = Field(..., description="End date (YYYY-MM-DD)"),
+        from_date: Optional[str] = Field(
+            None, description="Start date (YYYY-MM-DD). None/empty = 30 days ago"
+        ),
+        to_date: Optional[str] = Field(
+            None, description="End date (YYYY-MM-DD). None/empty = today"
+        ),
         metric: str = Field(
-            default="revenue", description="Analysis metric: 'revenue' or 'qty'"
+            default="revenue",
+            description="Analyze by: 'revenue' (top revenue drivers) or 'qty' (top volume items)",
         ),
     ) -> ParetoAnalysisOutput:
         try:
@@ -205,25 +220,26 @@ class AnalyticsMCPServer(BaseMCPServer):
         self,
         warehouses: List[str] = Field(
             default_factory=list,
-            description="List of warehouse names. Leave empty to query all warehouses.",
+            description="Warehouse filter. Empty = all warehouses",
         ),
         item_groups: Optional[List[str]] = Field(
-            None, description="Optional list of item groups to filter"
+            None,
+            description="Filter by item group (e.g., Electronics, Clothing). None = all groups",
         ),
         items: Optional[List[str]] = Field(
-            None, description="Optional list of specific item codes"
+            None, description="Filter by specific item codes. None = all items"
         ),
         lookback_days: int = Field(
-            default=30, ge=1, description="Days to calculate average daily sales"
+            default=30, ge=1, description="Days of sales history to calculate velocity"
         ),
         min_doc_days: Optional[float] = Field(
-            None, ge=0, description="Minimum Days of Cover filter"
+            None, ge=0, description="Show only items with >= this Days of Cover"
         ),
         max_doc_days: Optional[float] = Field(
-            None, ge=0, description="Maximum Days of Cover filter"
+            None, ge=0, description="Show only items with <= this Days of Cover"
         ),
         top_n: Optional[int] = Field(
-            None, ge=1, description="Limit to top N items by stock quantity"
+            None, ge=1, description="Limit results to top N items by stock quantity"
         ),
     ) -> StockCoverageOutput:
         try:
@@ -243,15 +259,19 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def get_sales_order_stats(
         self,
-        from_date: str = Field(..., description="Start date (YYYY-MM-DD)"),
-        to_date: str = Field(..., description="End date (YYYY-MM-DD)"),
+        from_date: Optional[str] = Field(
+            None, description="Start date (YYYY-MM-DD). None/empty = 90 days ago"
+        ),
+        to_date: Optional[str] = Field(
+            None, description="End date (YYYY-MM-DD). None/empty = today"
+        ),
         frequency: str = Field(
             default="monthly",
-            description="Time grouping: 'daily', 'monthly', or 'yearly'",
+            description="Group by: 'daily', 'weekly', 'monthly', or 'yearly'",
         ),
         status: Optional[str] = Field(
             None,
-            description="Sales Order status filter. Valid values: Draft, On Hold, To Deliver and Bill, To Bill, To Deliver, Completed, Cancelled, Closed",
+            description="Filter by SO status: Completed, To Deliver and Bill, To Bill, To Deliver, Draft, On Hold, Cancelled, Closed. None = all",
         ),
     ) -> SalesOrderStatsOutput:
         try:

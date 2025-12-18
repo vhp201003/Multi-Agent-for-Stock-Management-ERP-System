@@ -10,18 +10,15 @@ from src.typing.mcp.base import MCPToolOutputSchema
 class CheckStockItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     warehouse: str = Field(..., description="Warehouse name")
-    quantity: float = Field(..., description="Current stock quantity")
+    quantity: int = Field(..., description="Current stock quantity")
 
 
 class CheckStockFilters(BaseModel):
     item_code: str | None = None
     item_name: str | None = Field(None, description="Item name pattern for LIKE search")
-    warehouses: str | list | None = Field(
-        None, description="Warehouse name or list of warehouse names"
-    )
     quantity_type: Literal[
-        "actual_quantity", "reserved_quantity", "projected_quantity"
-    ] = "actual_quantity"
+        "actual_qty", "reserved_qty", "projected_qty", "available_qty"
+    ] = "available_qty"
 
 
 class CheckStockSummary(BaseModel):
@@ -48,7 +45,7 @@ class StockHistoryItem(BaseModel):
         ..., description="Date of stock movement (ISO format or date object)"
     )
     item_code: str = Field(..., description="ERPNext item code")
-    quantity: float = Field(
+    quantity: int = Field(
         ..., description="Quantity change (positive for IN, negative for OUT)"
     )
     warehouse: str = Field(..., description="Warehouse name")
@@ -62,8 +59,8 @@ class StockHistoryFilters(BaseModel):
 
 
 class StockHistorySummary(BaseModel):
-    inbound_quantity: float = Field(..., description="Total inbound quantity")
-    outbound_quantity: float = Field(..., description="Total outbound quantity")
+    inbound_quantity: int = Field(..., description="Total inbound quantity")
+    outbound_quantity: int = Field(..., description="Total outbound quantity")
 
 
 class StockHistoryOutput(MCPToolOutputSchema):
@@ -79,8 +76,8 @@ class ProposeTransferItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     from_warehouse: str = Field(..., description="Source warehouse")
     to_warehouse: str = Field(..., description="Target warehouse")
-    transfer_quantity: float = Field(..., description="Proposed transfer quantity")
-    available_quantity: float = Field(
+    transfer_quantity: int = Field(..., description="Proposed transfer quantity")
+    available_quantity: int = Field(
         ..., description="Available quantity in source warehouse"
     )
 
@@ -89,14 +86,14 @@ class ProposeTransferFilters(BaseModel):
     item_code: str = ""
     item_name: str | None = Field(None, description="Item name pattern for LIKE search")
     to_warehouse: str = ""
-    from_warehouses: str | None = None
+    from_warehouses: list[str] | str | None = None
 
 
 class ProposeTransferSummary(BaseModel):
-    total_quantity: float = Field(..., description="Total proposed transfer quantity")
-    median_quantity: float = Field(..., description="Median proposed transfer quantity")
-    max_quantity: float = Field(..., description="Maximum proposed transfer quantity")
-    min_quantity: float = Field(..., description="Minimum proposed transfer quantity")
+    total_quantity: int = Field(..., description="Total proposed transfer quantity")
+    median_quantity: int = Field(..., description="Median proposed transfer quantity")
+    max_quantity: int = Field(..., description="Maximum proposed transfer quantity")
+    min_quantity: int = Field(..., description="Minimum proposed transfer quantity")
 
 
 class ProposeTransferOutput(MCPToolOutputSchema):
@@ -121,7 +118,7 @@ class StockTransferFilters(BaseModel):
     item_name: str | None = Field(None, description="Item name pattern for LIKE search")
     from_warehouse: str = ""
     to_warehouse: str = ""
-    qty: float | None = Field(None, description="Exact quantity transferred")
+    qty: int | None = Field(None, description="Exact quantity transferred")
     auto_submit: bool = Field(
         False, description="Whether the stock entry was auto-submitted"
     )
@@ -131,9 +128,10 @@ class StockTransferFilters(BaseModel):
 class StockTransferSummary(BaseModel):
     stock_entry_name: str = Field(..., description="Created Stock Entry document name")
     status: str = Field(..., description="Document status (Draft/Submitted)")
-    total_qty: float = Field(..., description="Total quantity transferred")
+    total_qty: int = Field(..., description="Total quantity transferred")
     total_value: float = Field(..., description="Total value of transfer")
     posting_date: str = Field(..., description="Posting date of the transfer")
+    record_url: str = Field(..., description="URL link to the Stock Entry document")
 
 
 class StockTransferOutput(MCPToolOutputSchema):

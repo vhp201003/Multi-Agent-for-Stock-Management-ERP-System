@@ -84,7 +84,7 @@ class OrderingMCPServer(BaseMCPServer):
             ),
         )
 
-        # Tool 6: Monitor price variance
+        # Tool 5: Monitor price variance
         self.add_tool(
             self.monitor_price_variance,
             name="monitor_price_variance",
@@ -98,9 +98,12 @@ class OrderingMCPServer(BaseMCPServer):
 
     async def check_replenishment_needs(
         self,
-        warehouses: Optional[str] = Field(
+        item_code: Optional[str] = Field(
+            None, description="ERPNext item code (required if item_name not provided)"
+        ),
+        item_name: Optional[str] = Field(
             None,
-            description="Warehouse names (comma-separated or JSON array). Leave empty for all warehouses.",
+            description="Item name for fuzzy search (required if item_code not provided)",
         ),
         use_forecast: bool = Field(
             default=True,
@@ -112,13 +115,13 @@ class OrderingMCPServer(BaseMCPServer):
             le=365,
             description="Number of historical days for consumption calculation (1-365)",
         ),
-        include_zero_stock: bool = Field(
-            default=True, description="Include items with zero stock"
-        ),
     ) -> ReplenishmentNeedsOutput:
         try:
             response = await self._fetch_replenishment_needs(
-                warehouses, use_forecast, lookback_days, include_zero_stock
+                item_code=item_code,
+                item_name=item_name,
+                use_forecast=use_forecast,
+                lookback_days=lookback_days,
             )
             return ReplenishmentNeedsOutput(**response)
 
@@ -259,16 +262,16 @@ class OrderingMCPServer(BaseMCPServer):
 
     async def _fetch_replenishment_needs(
         self,
-        warehouses: Optional[str],
+        item_code: Optional[str],
+        item_name: Optional[str],
         use_forecast: bool,
         lookback_days: int,
-        include_zero_stock: bool,
     ) -> dict:
         params = {
-            "warehouses": warehouses or "",
+            "item_code": item_code or "",
+            "item_name": item_name or "",
             "use_forecast": use_forecast,
             "lookback_days": lookback_days,
-            "include_zero_stock": include_zero_stock,
         }
 
         try:
@@ -319,39 +322,6 @@ class OrderingMCPServer(BaseMCPServer):
             return result
         except Exception as e:
             self.logger.error(f"Error calculating optimal quantity: {e}")
-            raise
-
-    async def _propose_internal_transfer(
-        self,
-        item_code: Optional[str],
-        item_name: Optional[str],
-        target_warehouse: str,
-        needed_qty: float,
-        min_source_doc_days: float,
-    ) -> dict:
-        params = {
-            "target_warehouse": target_warehouse,
-            "needed_qty": needed_qty,
-            "min_source_doc_days": min_source_doc_days,
-        }
-        if item_code:
-            params["item_code"] = item_code
-        if item_name:
-            params["item_name"] = item_name
-
-        try:
-            result = await self.erpnext.call_method(
-                "agent_stock_system.controller.ordering.propose_internal_transfer_first",
-                method="GET",
-                params=params,
-            )
-
-            if isinstance(result, dict) and result.get("success") is False:
-                raise ValueError(f"Backend error: {result.get('error_message')}")
-
-            return result
-        except Exception as e:
-            self.logger.error(f"Error proposing internal transfer: {e}")
             raise
 
     async def _select_best_supplier(

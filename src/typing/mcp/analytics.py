@@ -11,12 +11,12 @@ class TopPerformersItem(BaseModel):
     rank: int = Field(..., description="Rank position")
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
-    qty: float = Field(..., description="Sold quantity")
+    qty: int = Field(..., description="Sold quantity")
     revenue: float = Field(..., description="Revenue")
     share_pct: float = Field(
         ..., description="Percentage of total metric (qty or revenue)"
     )
-    sparkline_qty: list[float] = Field(
+    sparkline_qty: list[int] = Field(
         ..., description="Daily sales trend for short-term analysis"
     )
 
@@ -47,9 +47,9 @@ class TopPerformersSummary(BaseModel):
 class TopPerformersOutput(MCPToolOutputSchema):
     """Schema for analyze_top_performers tool output."""
 
-    items: list[TopPerformersItem] | None
-    summary: TopPerformersSummary | None
-    filters_applied: TopPerformersFilters | None
+    items: list[TopPerformersItem] | None = None
+    summary: TopPerformersSummary | None = None
+    filters_applied: TopPerformersFilters | None = None
 
 
 # Tool 2: analyze_slow_movers
@@ -72,7 +72,7 @@ class SlowMoversItem(BaseModel):
         ..., description="Sold qty / (opening stock + incoming)"
     )
     gmroi: float = Field(..., description="Gross Margin Return on Investment")
-    stock_balance: float = Field(..., description="Current stock balance")
+    stock_balance: int = Field(..., description="Current stock balance")
     days_without_sale: int = Field(..., description="Days without sales")
     suggestion: SlowMoversSuggestion | None = Field(
         None, description="Suggested action"
@@ -105,9 +105,9 @@ class SlowMoversSummary(BaseModel):
 class SlowMoversOutput(MCPToolOutputSchema):
     """Schema for analyze_slow_movers tool output."""
 
-    items: list[SlowMoversItem] | None
-    summary: SlowMoversSummary | None
-    filters_applied: SlowMoversFilters | None
+    items: list[SlowMoversItem] | None = None
+    summary: SlowMoversSummary | None = None
+    filters_applied: SlowMoversFilters | None = None
 
 
 # Tool 3: track_movers_shakers
@@ -119,8 +119,8 @@ class MoversShakersItem(BaseModel):
     growth_pct: float = Field(
         ..., description="Percentage growth compared to previous period"
     )
-    qty_current: float = Field(..., description="Quantity in current period")
-    qty_prev: float = Field(..., description="Quantity in previous period")
+    qty_current: int = Field(..., description="Quantity in current period")
+    qty_prev: int = Field(..., description="Quantity in previous period")
     revenue_current: float = Field(..., description="Revenue in current period")
     revenue_prev: float = Field(..., description="Revenue in previous period")
 
@@ -153,9 +153,9 @@ class MoversShakersSummary(BaseModel):
 class MoversShakersOutput(MCPToolOutputSchema):
     """Schema for track_movers_shakers tool output."""
 
-    items: list[MoversShakersItem] | None
-    summary: MoversShakersSummary | None
-    filters_applied: MoversShakersFilters | None
+    items: list[MoversShakersItem] | None = None
+    summary: MoversShakersSummary | None = None
+    filters_applied: MoversShakersFilters | None = None
 
 
 # Tool 4: perform_pareto_analysis
@@ -189,9 +189,9 @@ class ParetoAnalysisSummary(BaseModel):
 class ParetoAnalysisOutput(MCPToolOutputSchema):
     """Schema for perform_pareto_analysis tool output."""
 
-    items: list[ParetoAnalysisItem] | None
-    summary: ParetoAnalysisSummary | None
-    filters_applied: ParetoAnalysisFilters | None
+    items: list[ParetoAnalysisItem] | None = None
+    summary: ParetoAnalysisSummary | None = None
+    filters_applied: ParetoAnalysisFilters | None = None
 
 
 # Tool 5: analyze_stock_coverage
@@ -214,7 +214,7 @@ class StockCoverageItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
     warehouse: str = Field(..., description="Warehouse name")
-    stock_qty: float = Field(..., description="Current stock quantity")
+    stock_qty: int = Field(..., description="Current stock quantity")
     avg_daily_sales: float = Field(
         ..., description="Average daily sales over lookback period"
     )
@@ -255,9 +255,9 @@ class StockCoverageSummary(BaseModel):
 class StockCoverageOutput(MCPToolOutputSchema):
     """Schema for analyze_stock_coverage tool output."""
 
-    items: list[StockCoverageItem] | None
-    summary: StockCoverageSummary | None
-    filters_applied: StockCoverageFilters | None
+    items: list[StockCoverageItem] | None = None
+    summary: StockCoverageSummary | None = None
+    filters_applied: StockCoverageFilters | None = None
 
 
 # Tool 6: get_sales_order_stats

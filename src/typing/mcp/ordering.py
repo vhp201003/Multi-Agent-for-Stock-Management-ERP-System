@@ -10,35 +10,31 @@ class ReplenishmentNeedItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
     warehouse: str = Field(..., description="Warehouse name")
-    current_stock: float = Field(..., description="Current stock quantity")
-    min_qty: float = Field(
-        ..., description="Minimum quantity threshold (reorder level)"
-    )
-    max_qty: float = Field(..., description="Maximum quantity threshold")
+    current_stock: int = Field(..., description="Current stock quantity")
+    min_qty: int = Field(..., description="Minimum quantity threshold (reorder level)")
+    max_qty: int = Field(..., description="Maximum quantity threshold")
     avg_daily_consumption: float = Field(
         ..., description="Average daily consumption based on historical data"
     )
     doc_days: float = Field(
         ..., description="Days of Cover = current_stock / avg_daily_consumption"
     )
-    shortage_qty: float = Field(
+    shortage_qty: int = Field(
         ..., description="Quantity below min level (0 if above min)"
     )
-    recommended_qty: float = Field(..., description="Recommended quantity to order")
+    recommended_qty: int = Field(..., description="Recommended quantity to order")
     urgency: str = Field(..., description="Urgency level: critical, high, medium, low")
 
 
 class ReplenishmentNeedsFilters(BaseModel):
     """Schema for filters_applied in check_replenishment_needs."""
 
-    warehouses: list[str] = Field(..., description="List of warehouse names analyzed")
+    item_code: str = Field(..., description="Item code analyzed")
+    item_name: str = Field(..., description="Item name analyzed")
     use_forecast: bool = Field(
         ..., description="Whether forecast was used for calculation"
     )
     lookback_days: int = Field(..., description="Days used for consumption calculation")
-    include_zero_stock: bool = Field(
-        ..., description="Whether items with zero stock are included"
-    )
 
 
 class ReplenishmentNeedsSummary(BaseModel):
@@ -73,13 +69,13 @@ class ReplenishmentNeedsOutput(MCPToolOutputSchema):
 class OptimalQuantityBreakdown(BaseModel):
     """Schema for breakdown of optimal quantity calculation."""
 
-    base_demand: float = Field(..., description="Base demand from historical average")
-    safety_stock: float = Field(..., description="Safety stock quantity")
-    lead_time_demand: float = Field(..., description="Demand during lead time")
-    forecast_adjustment: float = Field(
+    base_demand: int = Field(..., description="Base demand from historical average")
+    safety_stock: int = Field(..., description="Safety stock quantity")
+    lead_time_demand: int = Field(..., description="Demand during lead time")
+    forecast_adjustment: int = Field(
         ..., description="Adjustment based on forecast/trend"
     )
-    moq_adjustment: float = Field(..., description="Adjustment to meet MOQ")
+    moq_adjustment: int = Field(..., description="Adjustment to meet MOQ")
 
 
 class OptimalQuantityItem(BaseModel):
@@ -88,11 +84,11 @@ class OptimalQuantityItem(BaseModel):
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
     warehouse: str = Field(..., description="Warehouse name")
-    current_stock: float = Field(..., description="Current stock quantity")
-    recommended_qty: float = Field(..., description="Optimal quantity to order")
-    moq: float = Field(..., description="Minimum Order Quantity from supplier")
+    current_stock: int = Field(..., description="Current stock quantity")
+    recommended_qty: int = Field(..., description="Optimal quantity to order")
+    moq: int = Field(..., description="Minimum Order Quantity from supplier")
     lead_time_days: int = Field(..., description="Lead time in days")
-    reorder_level: float = Field(..., description="Reorder level (min_qty)")
+    reorder_level: int = Field(..., description="Reorder level (min_qty)")
     breakdown: OptimalQuantityBreakdown = Field(
         ..., description="Breakdown of calculation"
     )
@@ -114,7 +110,7 @@ class OptimalQuantityFilters(BaseModel):
 class OptimalQuantitySummary(BaseModel):
     """Schema for summary in calculate_optimal_quantity."""
 
-    total_recommended_qty: float = Field(..., description="Total recommended quantity")
+    total_recommended_qty: int = Field(..., description="Total recommended quantity")
     total_estimated_cost: float = Field(
         ..., description="Estimated cost based on last purchase price"
     )
@@ -153,7 +149,7 @@ class SupplierOption(BaseModel):
     unit_price: float = Field(..., description="Unit price for this quantity")
     total_price: float = Field(..., description="Total price for required quantity")
     lead_time_days: int = Field(..., description="Lead time in days")
-    moq: float = Field(..., description="Minimum Order Quantity")
+    moq: int = Field(..., description="Minimum Order Quantity")
     last_purchase_date: str | None = Field(
         None, description="Date of last purchase from this supplier"
     )
@@ -169,7 +165,7 @@ class BestSupplierFilters(BaseModel):
     """Schema for filters_applied in select_best_supplier."""
 
     item_code: str = Field(..., description="Item code to purchase")
-    required_qty: float = Field(..., description="Quantity required")
+    required_qty: int = Field(..., description="Quantity required")
     need_by_date: str | None = Field(None, description="Date by which item is needed")
     preferred_suppliers: list[str] | None = Field(
         None, description="List of preferred suppliers"
@@ -206,7 +202,7 @@ class POLineItem(BaseModel):
 
     item_code: str = Field(..., description="ERPNext item code")
     item_name: str = Field(..., description="Item name")
-    qty: float = Field(..., description="Quantity ordered")
+    qty: int = Field(..., description="Quantity ordered")
     rate: float = Field(..., description="Unit rate")
     amount: float = Field(..., description="Line total amount")
     warehouse: str = Field(..., description="Target warehouse")
@@ -219,7 +215,7 @@ class CreatedPO(BaseModel):
     supplier: str = Field(..., description="Supplier ID")
     supplier_name: str = Field(..., description="Supplier display name")
     status: str = Field(..., description="PO status: Draft, Submitted")
-    total_qty: float = Field(..., description="Total quantity across all items")
+    total_qty: int = Field(..., description="Total quantity across all items")
     total_amount: float = Field(..., description="Total PO amount")
     items_count: int = Field(..., description="Number of line items")
     items: list[POLineItem] = Field(..., description="List of line items")
@@ -261,7 +257,7 @@ class PriceHistoryPoint(BaseModel):
 
     date: str = Field(..., description="Date of purchase (YYYY-MM-DD)")
     rate: float = Field(..., description="Purchase rate")
-    qty: float = Field(..., description="Quantity purchased")
+    qty: int = Field(..., description="Quantity purchased")
     supplier: str = Field(..., description="Supplier name")
     po_name: str = Field(..., description="Purchase Order reference")
 

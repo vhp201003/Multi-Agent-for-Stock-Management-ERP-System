@@ -97,20 +97,16 @@ class InventoryMCPServer(BaseMCPServer):
         item_name: Optional[str] = Field(
             None, description="Item name to search for (partial match)"
         ),
-        warehouses: Optional[str] = Field(
-            None,
-            description="Warehouse name or comma-separated list of warehouse names",
-        ),
         quantity_type: Literal[
-            "actual_quantity", "reserved_quantity", "projected_quantity"
+            "actual_qty", "reserved_qty", "projected_qty", "available_qty"
         ] = Field(
-            default="actual_quantity",
-            description="Type of quantity to retrieve: actual, reserved, or projected",
+            default="available_qty",
+            description="Type of quantity to retrieve: actual, reserved, projected, or available",
         ),
     ) -> CheckStockOutput:
         try:
             response = await self._fetch_stock_levels(
-                item_code, item_name, warehouses, quantity_type
+                item_code, item_name, quantity_type
             )
 
             return CheckStockOutput(**response)
@@ -121,18 +117,17 @@ class InventoryMCPServer(BaseMCPServer):
 
     async def retrieve_stock_history(
         self,
-        item_code: str = Field(None, description="ERPNext item code"),
+        warehouse: str = Field(description="Warehouse name"),
+        days_back: int = Field(default=30, description="Number of days to look back"),
+        item_code: Optional[str] = Field(None, description="Item code for reference"),
         item_name: Optional[str] = Field(None, description="Item name for reference"),
-        warehouse: Optional[str] = Field(
-            None, description="Filter by specific warehouse"
-        ),
-        days_back: int = Field(
-            default=30, ge=1, le=365, description="Number of days to look back (1-365)"
-        ),
     ) -> StockHistoryOutput:
         try:
             response = await self._fetch_stock_history(
-                item_code, item_name, warehouse, days_back
+                warehouse=warehouse,
+                days_back=days_back,
+                item_code=item_code,
+                item_name=item_name,
             )
 
             return StockHistoryOutput(**response)
@@ -162,7 +157,7 @@ class InventoryMCPServer(BaseMCPServer):
     async def create_stock_transfer(
         self,
         item_code: str = Field(..., description="ERPNext item code"),
-        qty: float = Field(..., description="Quantity to transfer"),
+        qty: int = Field(..., description="Quantity to transfer"),
         from_warehouse: str = Field(..., description="Source warehouse"),
         to_warehouse: str = Field(..., description="Target warehouse"),
         remarks: Optional[str] = Field(None, description="Transfer remarks/notes"),
@@ -185,13 +180,11 @@ class InventoryMCPServer(BaseMCPServer):
         self,
         item_code: Optional[str],
         item_name: Optional[str],
-        warehouses: Optional[str],
         quantity_type: str,
     ) -> dict:
         params = {
             "item_code": item_code,
             "item_name": item_name,
-            "warehouses": warehouses,
             "quantity_type": quantity_type,
         }
         params = {k: v for k, v in params.items() if v is not None}
@@ -199,8 +192,8 @@ class InventoryMCPServer(BaseMCPServer):
         try:
             result = await self.erpnext.call_method(
                 "agent_stock_system.controller.inventory.retrieve_stock_levels",
-                method="GET",
-                params=params,
+                method="POST",
+                body=params,
             )
 
             if isinstance(result, dict) and result.get("success") is False:
@@ -213,16 +206,16 @@ class InventoryMCPServer(BaseMCPServer):
 
     async def _fetch_stock_history(
         self,
-        item_code: str,
-        item_name: Optional[str],
-        warehouse: Optional[str],
+        warehouse: str,
         days_back: int,
+        item_code: Optional[str] = None,
+        item_name: Optional[str] = None,
     ) -> dict:
         params = {
-            "item_code": item_code,
-            "item_name": item_name,
             "warehouse": warehouse,
             "days_back": days_back,
+            "item_code": item_code,
+            "item_name": item_name,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -270,7 +263,7 @@ class InventoryMCPServer(BaseMCPServer):
     async def _create_stock_transfer_doc(
         self,
         item_code: str,
-        qty: float,
+        qty: int,
         from_warehouse: str,
         to_warehouse: str,
         remarks: Optional[str],
