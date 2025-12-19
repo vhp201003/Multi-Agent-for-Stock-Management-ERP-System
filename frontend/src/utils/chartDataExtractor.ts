@@ -262,41 +262,57 @@ export function extractTableData(
   dataSource: TableDataSource
 ): { headers: string[]; rows: string[][]; totalItems?: number } | null {
   try {
+    console.log(`[extractTableData] Starting extraction:`, {
+      agent_type: dataSource.agent_type,
+      tool_name: dataSource.tool_name,
+      columns: dataSource.columns,
+      headers: dataSource.headers,
+    });
+
     // Step 1: Locate agent data & tool result (reuse logic pattern)
     if (!fullData || typeof fullData !== 'object') {
-        console.warn("[Frontend] Table Extraction: fullData invalid");
+        console.warn("[extractTableData] fullData is invalid or empty", { fullData });
         return null;
     }
+
+    console.log(`[extractTableData] fullData keys:`, Object.keys(fullData as Record<string, unknown>));
 
     const agentData = (fullData as Record<string, unknown>)[dataSource.agent_type];
     if (!agentData || typeof agentData !== 'object') {
-        console.warn(`[Frontend] Table Extraction: Agent ${dataSource.agent_type} not found`);
+        console.warn(`[extractTableData] Agent '${dataSource.agent_type}' not found in fullData`, {
+          availableAgents: Object.keys(fullData as Record<string, unknown>),
+          requestedAgent: dataSource.agent_type
+        });
         return null;
     }
 
+    console.log(`[extractTableData] Found agent data, keys:`, Object.keys(agentData as Record<string, unknown>));
+
     let toolResult: unknown = null;
-    
+
     // 1. Try direct access (fast path)
     if (dataSource.tool_name in agentData) {
         toolResult = (agentData as Record<string, unknown>)[dataSource.tool_name];
-        console.log(`[Frontend] Found direct tool result for ${dataSource.tool_name}`);
+        console.log(`[extractTableData] ✓ Found direct tool result for '${dataSource.tool_name}'`);
     }
 
     // 2. Fallback: Search through task results
     if (!toolResult) {
+        console.log(`[extractTableData] Tool '${dataSource.tool_name}' not found in direct path, searching task results...`);
         for (const taskId in agentData) {
         const taskData = (agentData as Record<string, unknown>)[taskId];
         if (taskData && typeof taskData === 'object' && 'tool_results' in taskData) {
             const toolResults = (taskData as { tool_results?: unknown[] }).tool_results;
             if (Array.isArray(toolResults)) {
-            console.log(`[Frontend] Checking tool results for task ${taskId}:`, toolResults.map((t: any) => t?.tool_name));
+            console.log(`[extractTableData] Checking task ${taskId} tool results:`, toolResults.map((t: any) => t?.tool_name));
             const foundTool = toolResults.find(
-                (tr: unknown) => 
-                tr && typeof tr === 'object' && 'tool_name' in tr && 
+                (tr: unknown) =>
+                tr && typeof tr === 'object' && 'tool_name' in tr &&
                 (tr as { tool_name: string }).tool_name === dataSource.tool_name
             );
             if (foundTool && typeof foundTool === 'object' && 'tool_result' in foundTool) {
                 toolResult = (foundTool as { tool_result: unknown }).tool_result;
+                console.log(`[extractTableData] ✓ Found tool in task ${taskId}`);
                 break;
             }
             }
@@ -305,11 +321,18 @@ export function extractTableData(
     }
 
     if (!toolResult) {
-        console.warn(`[Frontend] Table Extraction: Tool ${dataSource.tool_name} not found`);
+        console.warn(`[extractTableData] ✗ Tool '${dataSource.tool_name}' not found anywhere`, {
+          agent_type: dataSource.agent_type,
+          agentKeys: Object.keys(agentData as Record<string, unknown>)
+        });
         return null;
     }
 
-    console.log(`[Frontend] Found tool result for ${dataSource.tool_name}:`, toolResult);
+    console.log(`[extractTableData] Tool result structure:`, {
+      isArray: Array.isArray(toolResult),
+      keys: typeof toolResult === 'object' && toolResult !== null ? Object.keys(toolResult as Record<string, unknown>) : 'N/A',
+      toolResult: toolResult
+    });
 
     // Extract total items from summary if available
     let totalItems: number | undefined;
@@ -326,54 +349,87 @@ export function extractTableData(
     // Step 2: Navigate to data array
     let dataPath = dataSource.data_path;
     let rawData: unknown = null;
-    
+
+    console.log(`[extractTableData] Looking for array data (dataPath: ${dataPath || 'auto-detect'})...`);
+
     if (dataPath) {
         rawData = navigatePath(toolResult, dataPath);
+        const arrayLen = Array.isArray(rawData) ? (rawData as unknown[]).length : 0;
+        console.log(`[extractTableData] Using explicit dataPath '${dataPath}':`, Array.isArray(rawData) ? `✓ Found array (${arrayLen} items)` : `✗ Not an array`);
     } else {
         // Try common paths
         const paths = ['data', 'items', 'result'];
+        console.log(`[extractTableData] Auto-detecting data path from: ${paths.join(', ')}`);
         for (const p of paths) {
             rawData = navigatePath(toolResult, p);
+            const arrayLen = Array.isArray(rawData) ? (rawData as unknown[]).length : 0;
+            console.log(`[extractTableData] Trying path '${p}':`, Array.isArray(rawData) ? `✓ Is array (${arrayLen} items)` : `✗ Not an array`);
             if (Array.isArray(rawData) && rawData.length > 0) {
                 dataPath = p;
+                console.log(`[extractTableData] ✓ Selected path: '${dataPath}'`);
                 break;
             }
         }
         // If still not found, check if toolResult itself is array
         if (!rawData && Array.isArray(toolResult)) {
             rawData = toolResult;
+            dataPath = '(root)';
+            const arrayLen = (rawData as unknown[]).length;
+            console.log(`[extractTableData] ✓ Using toolResult as array (${arrayLen} items)`);
         }
     }
+
+    console.log(`[extractTableData] After path resolution:`, {
+      dataPath,
+      isArray: Array.isArray(rawData),
+      length: Array.isArray(rawData) ? (rawData as unknown[]).length : 'N/A'
+    });
 
     if (!Array.isArray(rawData) || rawData.length === 0) {
       // Logic for single object -> single row
       if (rawData && typeof rawData === 'object') {
+          console.log(`[extractTableData] Single object detected, converting to single-row array`);
           rawData = [rawData];
       } else {
-         console.warn(`[Frontend] No array/object data found (checked paths: ${dataPath || 'data, items, result'})`, toolResult);
+         console.warn(`[extractTableData] ✗ No array/object data found`, {
+           checkedPaths: dataPath || 'data, items, result',
+           toolResult: toolResult
+         });
          return null;
       }
     }
 
     // Check for _truncated marker to get total count
-    const lastItem = (rawData as any[])[(rawData as any[]).length - 1];
-    if (lastItem && lastItem._truncated && lastItem.total_items) {
-      totalItems = lastItem.total_items;
+    const rawDataArray = rawData as unknown[];
+    const lastItem = rawDataArray[rawDataArray.length - 1];
+    if (lastItem && typeof lastItem === 'object' && '_truncated' in lastItem && (lastItem as Record<string, unknown>).total_items) {
+      totalItems = (lastItem as Record<string, unknown>).total_items as number;
       // Remove the truncated marker from display data
-      rawData = (rawData as any[]).filter((item: any) => !item._truncated);
+      rawData = rawDataArray.filter((item: unknown) => !((item as Record<string, unknown>) && '_truncated' in (item as Record<string, unknown>)));
+      console.log(`[extractTableData] Found truncated marker, total items: ${totalItems}, display items: ${(rawData as unknown[]).length}`);
     }
 
     // Step 3: Extract columns
     const extractedRows: string[][] = [];
-    
-    for (const item of (rawData as any[])) {
-      if (!item || typeof item !== 'object') continue;
-      
+
+    console.log(`[extractTableData] Extracting rows...`, {
+      totalItems: (rawData as unknown[]).length,
+      columns: dataSource.columns,
+      hasHeaders: !!dataSource.headers
+    });
+
+    for (const item of (rawData as unknown[])) {
+      if (!item || typeof item !== 'object') {
+        console.warn(`[extractTableData] Skipping invalid item:`, item);
+        continue;
+      }
+
       const row: string[] = [];
-      const columns = dataSource.columns || Object.keys(item); // Fallback to all keys if no columns
-      
+      const itemObj = item as Record<string, unknown>;
+      const columns = dataSource.columns || Object.keys(itemObj); // Fallback to all keys if no columns
+
       for (const colKey of columns) {
-        let val = item[colKey];
+        let val = itemObj[colKey];
         // Handle nested objects or nulls gracefully
         if (val === null || val === undefined) val = "";
         else if (typeof val === 'object') val = JSON.stringify(val);
@@ -382,13 +438,24 @@ export function extractTableData(
       extractedRows.push(row);
     }
 
-    if (extractedRows.length === 0) return null;
+    console.log(`[extractTableData] ✓ Extracted ${extractedRows.length} rows`, {
+      headers: dataSource.headers || dataSource.columns,
+      firstRow: extractedRows[0] || 'N/A'
+    });
 
-    return {
+    if (extractedRows.length === 0) {
+      console.warn(`[extractTableData] ✗ No valid rows extracted`);
+      return null;
+    }
+
+    const result = {
       headers: dataSource.headers || dataSource.columns,
       rows: extractedRows,
       totalItems: totalItems
     };
+
+    console.log(`[extractTableData] ✓ SUCCESS`, result);
+    return result;
 
   } catch (error) {
     console.error('Table data extraction failed:', error);

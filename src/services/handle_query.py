@@ -15,12 +15,13 @@ from src.services.quick_actions import generate_quick_actions
 from src.services.semantic_cache import semantic_cache
 from src.services.summary import summarize_conversation
 from src.typing import Request
+from src.typing.llm_response.chat_agent import ChatAgentResponse
 from src.typing.redis import (
     CompletionResponse,
     RedisChannels,
     SharedData,
 )
-from src.typing.schema import ChatAgentSchema, LLMMarkdownField
+from src.typing.schema import LLMMarkdownField
 from src.utils.converstation import save_conversation_message
 from src.utils.shared_data_utils import get_shared_data
 
@@ -86,7 +87,7 @@ def is_cacheable_response(response_data: Dict[str, Any]) -> bool:
     return has_valid_results
 
 
-async def wait_for_completion(query_id: str) -> ChatAgentSchema:
+async def wait_for_completion(query_id: str) -> ChatAgentResponse:
     completion_channel = RedisChannels.get_query_completion_channel(query_id)
     redis_client = agent_manager.redis_client
     pubsub = redis_client.pubsub()
@@ -98,13 +99,13 @@ async def wait_for_completion(query_id: str) -> ChatAgentSchema:
 
         async for message in pubsub.listen():
             if message["type"] == "message":
-                chat_result: ChatAgentSchema = ChatAgentSchema.model_validate_json(
+                chat_result: ChatAgentResponse = ChatAgentResponse.model_validate_json(
                     message["data"]
                 )
                 return chat_result
 
             if (datetime.now().timestamp() - start_time) > max_wait_time:
-                return ChatAgentSchema(
+                return ChatAgentResponse(
                     layout=[
                         LLMMarkdownField(
                             content="""
@@ -115,7 +116,7 @@ async def wait_for_completion(query_id: str) -> ChatAgentSchema:
                     ]
                 )
     except Exception:
-        return ChatAgentSchema(
+        return ChatAgentResponse(
             layout=[
                 LLMMarkdownField(
                     content="""
@@ -217,7 +218,7 @@ async def process_new_query(request: Request) -> Dict[str, Any]:
     orchestrator: OrchestratorAgent = agent_manager.agents.get("orchestrator")
 
     await orchestrator.process(request)
-    chat_result: ChatAgentSchema = await wait_for_completion(request.query_id)
+    chat_result: ChatAgentResponse = await wait_for_completion(request.query_id)
     chat_response_dict: dict = chat_result.model_dump()
 
     result = CompletionResponse.response_success(

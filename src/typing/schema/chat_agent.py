@@ -71,7 +71,7 @@ class TableDataSource(BaseChartDataSource):
         ...,
         description="List of EXACT field names (keys) to extract from data rows for columns.",
     )
-    headers: Optional[List[str]] = Field(
+    headers: List[str] = Field(
         None,
         description="Optional list of human-readable headers. If not provided, uses column names.",
     )
@@ -220,7 +220,17 @@ class LLMGraphField(LLMLayoutField):
     )
     data_source: Optional[Union[ChartDataSource, Dict[str, Any]]] = Field(
         default=None,
-        description="REQUIRED: Type-safe data source specification. Must include 'chart_type' field matching graph_type.",
+        description="REQUIRED: Data source specification for chart rendering.\n"
+        "Must include:\n"
+        "  - agent_type: Agent providing the data (e.g., 'inventory_agent', 'ordering_agent')\n"
+        "  - tool_name: Tool that generated the data (e.g., 'check_stock', 'create_consolidated_po')\n"
+        "  - chart_type: Must match graph_type above\n"
+        "  - Field mapping (based on chart type):\n"
+        "    * barchart/horizontalbarchart: 'category_field' (X/Y axis categories), 'value_field' (numeric values)\n"
+        "    * linechart: 'x_field' (time/sequence axis), 'y_field' (metric values)\n"
+        "    * piechart: 'label_field' (slice labels), 'value_field' (slice sizes)\n"
+        "    * scatterplot: 'x_field' (numeric), 'y_field' (numeric), optional 'name_field' (tooltips), 'group_field' (colors)\n"
+        "\nBackend will auto-extract data from full_data[agent_type][tool_name] using these field mappings.",
     )
 
 
@@ -243,7 +253,13 @@ class LLMTableField(LLMLayoutField):
     )
     data_source: Optional[TableDataSource] = Field(
         default=None,
-        description="REQUIRED: Type-safe data source specification. Must include 'columns' to extract.",
+        description="REQUIRED: Data source specification for table rendering.\n"
+        "Must include:\n"
+        "  - agent_type: Agent providing the data (e.g., 'ordering_agent', 'inventory_agent')\n"
+        "  - tool_name: Tool that generated the data (e.g., 'create_consolidated_po', 'check_stock')\n"
+        "  - columns : List of exact field names to extract. If not provided, backend will auto-use all available fields.\n"
+        "  - headers : Human-readable column headers. If not provided, uses column names.\n"
+        "\nBackend will auto-extract data from full_data[agent_type][tool_name].",
     )
 
 

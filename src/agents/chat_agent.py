@@ -69,7 +69,7 @@ class ChatAgent(BaseAgent):
     async def handle_command_message(self, chat_request: ChatRequest):
         try:
             query_id = chat_request.query_id
-            chat_result: ChatAgentSchema = await self.process(chat_request)
+            chat_result: ChatAgentResponse = await self.process(chat_request)
 
             # mark the shared data as completed
             shared_data = await get_shared_data(self.redis, query_id)
@@ -80,7 +80,7 @@ class ChatAgent(BaseAgent):
             await self.publish_channel(
                 RedisChannels.get_query_completion_channel(query_id),
                 chat_result,
-                ChatAgentSchema,
+                ChatAgentResponse,
             )
 
         except json.JSONDecodeError as e:
@@ -88,7 +88,7 @@ class ChatAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error executing chat request: {e}")
 
-    async def process(self, request: ChatRequest) -> ChatAgentSchema:
+    async def process(self, request: ChatRequest) -> ChatAgentResponse:
         try:
             shared_data = await get_shared_data(self.redis, request.query_id)
             if not shared_data:
