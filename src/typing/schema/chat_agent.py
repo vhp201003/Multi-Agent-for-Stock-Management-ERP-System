@@ -267,7 +267,3 @@ class ChatAgentSchema(BaseSchema):
             '{"field_type": "graph", "graph_type": "barchart", "title": "Chart Title", "data_source": {...}, "data": null}]'
         ),
     )
-    full_data: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="DO NOT INCLUDE THIS FIELD. Auto-populated by backend only. Leave unset.",
-    )

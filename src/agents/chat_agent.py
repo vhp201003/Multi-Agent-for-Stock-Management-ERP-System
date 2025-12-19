@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 from src.agents.base_agent import BaseAgent
 from src.services.chat_data_service import reconstruct_full_data
+from src.typing.llm_response.chat_agent import ChatAgentResponse
 from src.typing.redis import RedisChannels
 from src.typing.request import ChatRequest
 from src.typing.schema import ChatAgentSchema, LLMMarkdownField
@@ -106,16 +107,20 @@ class ChatAgent(BaseAgent):
 
             messages = self.compose_llm_messages(request.query, llm_context, history)
 
-            result = await self.call_llm(
+            chat_agent_layout: ChatAgentSchema = await self.call_llm(
                 query_id=request.query_id,
                 messages=messages,
                 response_schema=ChatAgentSchema,
             )
 
-            if not result:
+            if not chat_agent_layout:
                 return self.create_fallback_response()
 
-            setattr(result, "full_data", reconstruct_full_data(shared_data))
+            full_data = reconstruct_full_data(shared_data)
+
+            result = ChatAgentResponse(
+                layout=chat_agent_layout.layout, full_data=full_data
+            )
 
             return result
 
