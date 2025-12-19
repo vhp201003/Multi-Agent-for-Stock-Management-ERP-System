@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Optional
 
 from pydantic import Field
 
@@ -92,29 +92,21 @@ class AnalyticsMCPServer(BaseMCPServer):
     async def analyze_top_performers(
         self,
         from_date: Optional[str] = Field(
-            None, description="Start date (YYYY-MM-DD). None/empty = last 30 days"
+            None,
+            description="The start date of the analysis period in 'YYYY-MM-DD' format. If not provided, defaults to 30 days prior to the current date.",
         ),
         to_date: Optional[str] = Field(
-            None, description="End date (YYYY-MM-DD). None/empty = today"
+            None,
+            description="The end date of the analysis period in 'YYYY-MM-DD' format. If not provided, defaults to the current date.",
         ),
         metric: str = Field(
             default="revenue",
-            description="Rank by: 'qty' (quantity sold) or 'revenue' (total value)",
+            description="The metric to rank items by. Options are 'qty' (quantity sold) or 'revenue' (total sales value). Defaults to 'revenue'.",
         ),
-        top_n: int = Field(default=10, ge=1, description="Top N items to return"),
-        warehouses: List[str] = Field(
-            default_factory=list,
-            description="Warehouse filter. Empty = all warehouses",
-        ),
-        channels: List[str] = Field(
-            default=["POS", "Online"],
-            description="Sales channels (e.g. POS, Online, Wholesale)",
-        ),
-        exclude_returns: bool = Field(
-            default=True, description="Skip return transactions"
-        ),
-        merge_variants: bool = Field(
-            default=False, description="Group variants under parent item"
+        top_n: int = Field(
+            default=10,
+            ge=1,
+            description="The number of top-performing items to retrieve. Defaults to 10.",
         ),
     ) -> TopPerformersOutput:
         try:
@@ -123,10 +115,6 @@ class AnalyticsMCPServer(BaseMCPServer):
                 to_date,
                 metric,
                 top_n,
-                warehouses,
-                channels,
-                exclude_returns,
-                merge_variants,
             )
             return TopPerformersOutput(**response)
         except Exception as e:
@@ -136,33 +124,29 @@ class AnalyticsMCPServer(BaseMCPServer):
     async def analyze_slow_movers(
         self,
         from_date: Optional[str] = Field(
-            None, description="Start date (YYYY-MM-DD). None/empty = 90 days ago"
+            None,
+            description="The start date for sales data analysis in 'YYYY-MM-DD' format. If not provided, defaults to 90 days prior to the current date.",
         ),
         to_date: Optional[str] = Field(
-            None, description="End date (YYYY-MM-DD). None/empty = today"
+            None,
+            description="The end date for sales data analysis in 'YYYY-MM-DD' format. If not provided, defaults to the current date.",
+        ),
+        metric: str = Field(
+            default="revenue",
+            description="The metric used to evaluate item performance. Options are 'qty' (quantity) or 'revenue' (total value). Defaults to 'revenue'.",
         ),
         top_n: int = Field(
-            default=20, ge=1, description="Number of slowest items to return"
-        ),
-        min_days_on_sale: int = Field(
-            default=30, ge=0, description="Item must exist for at least this many days"
-        ),
-        warehouses: List[str] = Field(
-            default_factory=list,
-            description="Warehouse filter. Empty = all warehouses",
-        ),
-        min_stock_balance: float = Field(
-            default=0.0, ge=0, description="Minimum current stock to include"
+            default=10,
+            ge=1,
+            description="The number of slow-moving items to retrieve. Defaults to 10.",
         ),
     ) -> SlowMoversOutput:
         try:
             response = await self._fetch_slow_movers(
                 from_date,
                 to_date,
+                metric,
                 top_n,
-                min_days_on_sale,
-                warehouses,
-                min_stock_balance,
             )
             return SlowMoversOutput(**response)
         except Exception as e:
@@ -171,25 +155,30 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def track_movers_shakers(
         self,
-        period_current: Optional[Dict[str, str]] = Field(
+        from_date: Optional[str] = Field(
             None,
-            description="Current period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}. None = current month",
+            description="The start date of the current period in 'YYYY-MM-DD' format. The previous period is calculated automatically (e.g., previous month). If not provided, defaults to 90 days ago.",
         ),
-        period_prev: Optional[Dict[str, str]] = Field(
+        to_date: Optional[str] = Field(
             None,
-            description="Previous period: {'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}. None = auto-calc",
+            description="The end date of the current period in 'YYYY-MM-DD' format. If not provided, defaults to the current date.",
         ),
         metric: str = Field(
-            default="qty",
-            description="Track: 'qty' (units sold) or 'revenue' (sales value)",
+            default="revenue",
+            description="The metric to compare for growth or decline. Options are 'qty' or 'revenue'. Defaults to 'revenue'.",
         ),
         top_n: int = Field(
-            default=15, ge=1, description="Top N biggest movers/shakers to return"
+            default=10,
+            ge=1,
+            description="The number of items with significant changes (movers/shakers) to retrieve. Defaults to 10.",
         ),
     ) -> MoversShakersOutput:
         try:
             response = await self._fetch_movers_shakers(
-                period_current, period_prev, metric, top_n
+                from_date,
+                to_date,
+                metric,
+                top_n,
             )
             return MoversShakersOutput(**response)
         except Exception as e:
@@ -199,18 +188,30 @@ class AnalyticsMCPServer(BaseMCPServer):
     async def perform_pareto_analysis(
         self,
         from_date: Optional[str] = Field(
-            None, description="Start date (YYYY-MM-DD). None/empty = 30 days ago"
+            None,
+            description="The start date for the analysis in 'YYYY-MM-DD' format. If not provided, defaults to 30 days prior to the current date.",
         ),
         to_date: Optional[str] = Field(
-            None, description="End date (YYYY-MM-DD). None/empty = today"
+            None,
+            description="The end date for the analysis in 'YYYY-MM-DD' format. If not provided, defaults to the current date.",
         ),
         metric: str = Field(
             default="revenue",
-            description="Analyze by: 'revenue' (top revenue drivers) or 'qty' (top volume items)",
+            description="The metric for Pareto analysis. Options are 'revenue' (identifying items driving 80% of revenue) or 'qty' (identifying items driving 80% of volume).",
+        ),
+        top_n: int = Field(
+            default=10,
+            ge=1,
+            description="The number of items to retrieve in the Pareto analysis. Defaults to 10.",
         ),
     ) -> ParetoAnalysisOutput:
         try:
-            response = await self._fetch_pareto_analysis(from_date, to_date, metric)
+            response = await self._fetch_pareto_analysis(
+                from_date=from_date,
+                to_date=to_date,
+                metric=metric,
+                top_n=top_n,
+            )
             return ParetoAnalysisOutput(**response)
         except Exception as e:
             self.logger.error(f"Error in perform_pareto_analysis: {e}", exc_info=True)
@@ -218,39 +219,25 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def analyze_stock_coverage(
         self,
-        warehouses: List[str] = Field(
-            default_factory=list,
-            description="Warehouse filter. Empty = all warehouses",
-        ),
-        item_groups: Optional[List[str]] = Field(
+        item_code: str = Field(
             None,
-            description="Filter by item group (e.g., Electronics, Clothing). None = all groups",
+            description="The specific item code to analyze. If not provided, the analysis is performed on all items.",
         ),
-        items: Optional[List[str]] = Field(
-            None, description="Filter by specific item codes. None = all items"
+        item_name: str = Field(
+            None,
+            description="The specific item name to filter by. If not provided, the analysis is performed on all items.",
         ),
         lookback_days: int = Field(
-            default=30, ge=1, description="Days of sales history to calculate velocity"
-        ),
-        min_doc_days: Optional[float] = Field(
-            None, ge=0, description="Show only items with >= this Days of Cover"
-        ),
-        max_doc_days: Optional[float] = Field(
-            None, ge=0, description="Show only items with <= this Days of Cover"
-        ),
-        top_n: Optional[int] = Field(
-            None, ge=1, description="Limit results to top N items by stock quantity"
+            default=30,
+            ge=1,
+            description="The number of days of past sales history to use for calculating average daily sales velocity. Defaults to 30 days.",
         ),
     ) -> StockCoverageOutput:
         try:
             response = await self._fetch_stock_coverage(
-                warehouses,
-                item_groups,
-                items,
+                item_code,
+                item_name,
                 lookback_days,
-                min_doc_days,
-                max_doc_days,
-                top_n,
             )
             return StockCoverageOutput(**response)
         except Exception as e:
@@ -260,18 +247,20 @@ class AnalyticsMCPServer(BaseMCPServer):
     async def get_sales_order_stats(
         self,
         from_date: Optional[str] = Field(
-            None, description="Start date (YYYY-MM-DD). None/empty = 90 days ago"
+            None,
+            description="The start date for the statistics in 'YYYY-MM-DD' format. If not provided, defaults to 90 days prior to the current date.",
         ),
         to_date: Optional[str] = Field(
-            None, description="End date (YYYY-MM-DD). None/empty = today"
+            None,
+            description="The end date for the statistics in 'YYYY-MM-DD' format. If not provided, defaults to the current date.",
         ),
         frequency: str = Field(
             default="monthly",
-            description="Group by: 'daily', 'weekly', 'monthly', or 'yearly'",
+            description="The time granularity for grouping statistics. Options: 'daily', 'weekly', 'monthly', 'yearly'. Defaults to 'monthly'.",
         ),
         status: Optional[str] = Field(
             None,
-            description="Filter by SO status: Completed, To Deliver and Bill, To Bill, To Deliver, Draft, On Hold, Cancelled, Closed. None = all",
+            description="Filter by Sales Order status (e.g., 'Completed', 'To Deliver and Bill', 'To Bill', 'To Deliver', 'Draft', 'On Hold', 'Cancelled', 'Closed'). If None, includes all statuses.",
         ),
     ) -> SalesOrderStatsOutput:
         try:
@@ -285,25 +274,18 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def _fetch_top_performers(
         self,
-        from_date: str,
-        to_date: str,
+        from_date: str | None,
+        to_date: str | None,
         metric: str,
         top_n: int,
-        warehouses: List[str],
-        channels: List[str],
-        exclude_returns: bool,
-        merge_variants: bool,
     ) -> dict:
         params = {
             "from_date": from_date,
             "to_date": to_date,
             "metric": metric,
             "top_n": top_n,
-            "warehouses": warehouses,
-            "channels": ",".join(channels),
-            "exclude_returns": exclude_returns,
-            "merge_variants": merge_variants,
         }
+        params = {k: v for k, v in params.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
@@ -322,21 +304,18 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def _fetch_slow_movers(
         self,
-        from_date: str,
-        to_date: str,
+        from_date: str | None,
+        to_date: str | None,
+        metric: str,
         top_n: int,
-        min_days_on_sale: int,
-        warehouses: List[str],
-        min_stock_balance: float,
     ) -> dict:
         params = {
             "from_date": from_date,
             "to_date": to_date,
+            "metric": metric,
             "top_n": top_n,
-            "min_days_on_sale": min_days_on_sale,
-            "warehouses": warehouses,
-            "min_stock_balance": min_stock_balance,
         }
+        params = {k: v for k, v in params.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
@@ -355,19 +334,18 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def _fetch_movers_shakers(
         self,
-        period_current: Dict[str, str],
-        period_prev: Dict[str, str],
+        from_date: str | None,
+        to_date: str | None,
         metric: str,
         top_n: int,
     ) -> dict:
         params = {
-            "period_current_from": period_current.get("from"),
-            "period_current_to": period_current.get("to"),
-            "period_prev_from": period_prev.get("from"),
-            "period_prev_to": period_prev.get("to"),
+            "from_date": from_date,
+            "to_date": to_date,
             "metric": metric,
             "top_n": top_n,
         }
+        params = {k: v for k, v in params.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
@@ -385,13 +363,15 @@ class AnalyticsMCPServer(BaseMCPServer):
             raise
 
     async def _fetch_pareto_analysis(
-        self, from_date: str, to_date: str, metric: str
+        self, from_date: str | None, to_date: str | None, metric: str, top_n: int | None
     ) -> dict:
         params = {
             "from_date": from_date,
             "to_date": to_date,
             "metric": metric,
+            "top_n": top_n,
         }
+        params = {k: v for k, v in params.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
@@ -410,22 +390,14 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def _fetch_stock_coverage(
         self,
-        warehouses: List[str],
-        item_groups: Optional[List[str]],
-        items: Optional[List[str]],
-        lookback_days: int,
-        min_doc_days: Optional[float],
-        max_doc_days: Optional[float],
-        top_n: Optional[int],
+        item_code: str | None = None,
+        item_name: str | None = None,
+        lookback_days: int | None = None,
     ) -> dict:
         params = {
-            "warehouses": ",".join(warehouses),
-            "item_groups": ",".join(item_groups) if item_groups else None,
-            "items": ",".join(items) if items else None,
+            "item_code": item_code,
+            "item_name": item_name,
             "lookback_days": lookback_days,
-            "min_doc_days": min_doc_days,
-            "max_doc_days": max_doc_days,
-            "top_n": top_n,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -446,8 +418,8 @@ class AnalyticsMCPServer(BaseMCPServer):
 
     async def _fetch_sales_order_stats(
         self,
-        from_date: str,
-        to_date: str,
+        from_date: str | None,
+        to_date: str | None,
         frequency: str,
         status: Optional[str],
     ) -> dict:
@@ -455,9 +427,9 @@ class AnalyticsMCPServer(BaseMCPServer):
             "from_date": from_date,
             "to_date": to_date,
             "frequency": frequency,
+            "status": status,
         }
-        if status:
-            params["status"] = status
+        params = {k: v for k, v in params.items() if v is not None}
 
         try:
             result = await self.erpnext.call_method(
