@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from config.prompts.chat_agent import build_chat_agent_prompt, build_system_prompt
 from src.agents.base_agent import BaseAgent
@@ -39,14 +39,20 @@ class ChatAgent(BaseAgent):
         return []
 
     def compose_llm_messages(
-        self, query: str, context: Dict[str, Any], history: List[Dict[str, Any]]
+        self,
+        query: str,
+        context: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        worker_contexts: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, Any]]:
         messages = [
             {"role": "system", "content": build_system_prompt()},
             *history,
             {
                 "role": "user",
-                "content": build_chat_agent_prompt(query=query, context=context),
+                "content": build_chat_agent_prompt(
+                    query=query, context=context, worker_contexts=worker_contexts
+                ),
             },
         ]
         return messages
@@ -105,7 +111,12 @@ class ChatAgent(BaseAgent):
                 "results": truncate_results(raw_context.get("results", {})),
             }
 
-            messages = self.compose_llm_messages(request.query, llm_context, history)
+            worker_contexts = shared_data.get_all_worker_contexts()
+            logger.debug(f"Retrieved worker contexts: {list(worker_contexts.keys())}")
+
+            messages = self.compose_llm_messages(
+                request.query, llm_context, history, worker_contexts
+            )
 
             chat_agent_layout: ChatAgentSchema = await self.call_llm(
                 query_id=request.query_id,

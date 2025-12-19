@@ -151,8 +151,10 @@ class WorkerAgent(BaseAgent):
             tool_executor=tool_executor,
         )
 
+        # Store analysis context if result is a string (final text response)
         if isinstance(result, str):
             logger.debug(f"{self.agent_type}: Final LLM response: {result}")
+            worker_process_result.analysis_context = result
 
         return worker_process_result
 
@@ -397,6 +399,21 @@ class WorkerAgent(BaseAgent):
             await self.store_result_references(
                 command_message.query_id, response.tools_result, response.data_resources
             )
+
+            # Store analysis context in SharedData
+            if response.analysis_context and task_id:
+                shared_data = await get_shared_data(
+                    self.redis, command_message.query_id
+                )
+                if shared_data:
+                    shared_data.update_task_analysis(task_id, response.analysis_context)
+                    await update_shared_data(
+                        self.redis, command_message.query_id, shared_data
+                    )
+                    logger.debug(
+                        f"{self.agent_type}: Stored analysis context for task {task_id}"
+                    )
+
         except Exception as e:
             logger.error(f"{self.agent_type}: Failed to store result refs: {e}")
             status = TaskStatus.ERROR

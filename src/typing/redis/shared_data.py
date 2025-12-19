@@ -21,6 +21,7 @@ class TaskExecution(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     result: Optional[Any] = None
     error: Optional[str] = None
+    analysis_context: Optional[str] = None  # Worker's textual analysis/insights
 
 
 class SharedData(BaseModel):
@@ -144,7 +145,7 @@ class SharedData(BaseModel):
             task_id: The task_id to get dependency results for
 
         Returns:
-            List of dependency results with task info, or None if no dependencies
+            List of dependency results with task info and analysis context, or None if no dependencies
         """
         if not task_id or task_id not in self.tasks:
             return None
@@ -162,7 +163,52 @@ class SharedData(BaseModel):
                     "agent_type": dep_task.task.agent_type,
                     "sub_query": dep_task.task.sub_query,
                     "result": dep_task.result,
+                    "analysis_context": dep_task.analysis_context,  # Include analysis from dependency
                 }
             )
 
         return dep_results if dep_results else None
+
+    def update_task_analysis(self, task_id: str, analysis_context: str) -> bool:
+        """Update the analysis context for a specific task.
+
+        Args:
+            task_id: The task_id to update
+            analysis_context: The worker's textual analysis/insights
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        if not task_id or task_id not in self.tasks:
+            return False
+
+        self.tasks[task_id].analysis_context = analysis_context
+        return True
+
+    def get_all_worker_contexts(self) -> Dict[str, str]:
+        """Get all worker analysis contexts grouped by agent_type.
+
+        Returns:
+            Dict mapping agent_type to combined analysis context
+        """
+        contexts = {}
+        for execution in self.tasks.values():
+            if (
+                execution.status == TaskStatus.COMPLETED
+                and execution.analysis_context
+            ):
+                agent_type = execution.task.agent_type
+                sub_query = execution.task.sub_query
+
+                if agent_type not in contexts:
+                    contexts[agent_type] = []
+
+                contexts[agent_type].append(
+                    f"Task: {sub_query}\nAnalysis:\n{execution.analysis_context}"
+                )
+
+        # Combine all contexts for each agent
+        return {
+            agent_type: "\n\n".join(analyses)
+            for agent_type, analyses in contexts.items()
+        }

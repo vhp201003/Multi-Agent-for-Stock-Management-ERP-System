@@ -16,6 +16,9 @@ from src.utils.redis_lock import redis_lock
 
 logger = logging.getLogger(__name__)
 
+# TTL for task queues (in seconds) - tasks expire after this time if not processed
+TASK_QUEUE_TTL = 600  # 10 minutes - adjust based on your needs
+
 
 class BaseManager:
     def __init__(self, agent_type: str):
@@ -79,6 +82,10 @@ class BaseManager:
         active_count = 0
         pending_count = 0
 
+        # Use pipeline for batch operations
+        pipe = self.redis.pipeline()
+        queues_to_update = set()
+
         for task in tasks:
             item = TaskQueueItem(
                 query_id=data.query_id,
@@ -92,14 +99,24 @@ class BaseManager:
                 if is_ready
                 else RedisKeys.get_agent_pending_queue(self.agent_type)
             )
-            await self.redis.rpush(queue, item.model_dump_json())
+            pipe.rpush(queue, item.model_dump_json())
+            queues_to_update.add(queue)
 
             if is_ready:
                 active_count += 1
             else:
                 pending_count += 1
 
-        logger.info(f"Manager {self.agent_type}: Queued {len(tasks)} tasks")
+        # Set TTL for all queues that were updated
+        for queue in queues_to_update:
+            pipe.expire(queue, TASK_QUEUE_TTL)
+
+        await pipe.execute()
+
+        logger.info(
+            f"Manager {self.agent_type}: Queued {len(tasks)} tasks "
+            f"(active: {active_count}, pending: {pending_count}) with TTL={TASK_QUEUE_TTL}s"
+        )
 
     async def on_task_update(self, update: TaskUpdate):
         if not update.query_id:
@@ -175,11 +192,15 @@ class BaseManager:
             # RPUSH: Add to active queue
             pipe.rpush(active_key, raw)
 
+        # Refresh TTL for both queues after promotion
+        pipe.expire(active_key, TASK_QUEUE_TTL)
+        pipe.expire(pending_key, TASK_QUEUE_TTL)
+
         await pipe.execute()
 
         logger.info(
             f"Manager {self.agent_type}: Promoted {len(ready_tasks)} tasks "
-            f"for query {query_id}"
+            f"for query {query_id} with refreshed TTL"
         )
 
     # ==================== HELPERS ====================

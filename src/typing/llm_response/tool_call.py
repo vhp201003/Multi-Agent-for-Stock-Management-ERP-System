@@ -21,3 +21,4 @@ class ResourceCallResponse(BaseModel):
 class WorkerAgentProcessResponse(BaseAgentResponse):
     tools_result: list[ToolCallResultResponse] = []
     data_resources: list[ResourceCallResponse] = []
+    analysis_context: str = ""  # Worker's textual analysis after tool execution

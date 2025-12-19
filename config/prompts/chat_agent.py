@@ -133,11 +133,16 @@ The schema contains detailed descriptions for each field type. Follow them caref
 CHAT_AGENT_USER_PROMPT_TEMPLATE = Template("""
 USER QUERY: $query
 
+WORKER AGENT INSIGHTS:
+$worker_contexts
+
 AVAILABLE DATA:
 $context
 
 Instructions:
-- Analyze the data above and respond to the user's query
+- Review the worker agent insights above - these are expert analyses from specialized agents
+- Use the available data for creating visualizations (charts/tables)
+- Combine worker insights with visual representations for comprehensive responses
 - Create visualizations (charts) for numeric data when appropriate
 - Use markdown for summaries and context
 - Follow the chart creation guidelines from the system prompt
@@ -152,6 +157,19 @@ def build_system_prompt() -> str:
     return CHAT_AGENT_SYSTEM_PROMPT_TEMPLATE.substitute(schema_json=schema_json)
 
 
-def build_chat_agent_prompt(query: str, context: Optional[dict]) -> str:
+def build_chat_agent_prompt(
+    query: str, context: Optional[dict], worker_contexts: Optional[dict] = None
+) -> str:
     context_str = json.dumps(context, indent=2) if context else "None"
-    return CHAT_AGENT_USER_PROMPT_TEMPLATE.substitute(query=query, context=context_str)
+
+    # Format worker contexts nicely
+    if worker_contexts:
+        worker_contexts_str = ""
+        for agent_type, analysis in worker_contexts.items():
+            worker_contexts_str += f"\n## {agent_type.upper()}:\n{analysis}\n"
+    else:
+        worker_contexts_str = "No worker insights available yet."
+
+    return CHAT_AGENT_USER_PROMPT_TEMPLATE.substitute(
+        query=query, context=context_str, worker_contexts=worker_contexts_str
+    )

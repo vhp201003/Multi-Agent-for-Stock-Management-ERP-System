@@ -170,7 +170,10 @@ async def get_dependency_context(
     query_id: str,
     task_id: str,
 ) -> Optional[str]:
-    """Load results from completed dependency tasks and format for LLM context."""
+    """Load results from completed dependency tasks and format for LLM context.
+
+    Includes both data results (truncated) and analysis context (full) from dependency tasks.
+    """
     try:
         shared = await get_shared_data(redis_client, query_id)
         if not shared:
@@ -180,8 +183,31 @@ async def get_dependency_context(
         if not dep_results:
             return None
 
-        dep_results = truncate_results(dep_results, max_items=50, max_depth=4)
-        return dep_results
+        # Format dependency context to clearly separate data and analysis
+        formatted_context = []
+
+        for dep in dep_results:
+            agent_type = dep.get("agent_type", "unknown")
+            sub_query = dep.get("sub_query", "")
+            result_data = dep.get("result", {})
+            analysis = dep.get("analysis_context", "")
+
+            # Build formatted context for this dependency
+            dep_context = f"## Dependency: {agent_type}\n"
+            dep_context += f"Task: {sub_query}\n\n"
+
+            # Add analysis context if available (FULL - not truncated)
+            if analysis:
+                dep_context += f"### Analysis:\n{analysis}\n\n"
+
+            # Add data results (TRUNCATED)
+            truncated_data = truncate_results(result_data, max_items=50, max_depth=4)
+            dep_context += f"### Data:\n{truncated_data}\n"
+            dep_context += "---\n"
+
+            formatted_context.append(dep_context)
+
+        return "\n".join(formatted_context) if formatted_context else None
 
     except Exception as e:
         logger.error(f"Failed to load dependency results for {task_id}: {e}")
