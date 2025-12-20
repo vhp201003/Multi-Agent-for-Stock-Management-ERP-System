@@ -25,15 +25,6 @@ class OrderingServerConfig(ServerConfig):
     erpnext_api_secret: Optional[str] = Field(
         default=None, description="ERPNext API secret"
     )
-    default_lookback_days: int = Field(
-        default=30, ge=1, le=365, description="Default lookback period for analysis"
-    )
-    default_horizon_days: int = Field(
-        default=90, ge=1, le=365, description="Default forecast horizon"
-    )
-    auto_submit_threshold: float = Field(
-        default=100000.0, ge=0, description="Threshold for auto-submit PO"
-    )
 
 
 class OrderingMCPServer(BaseMCPServer):

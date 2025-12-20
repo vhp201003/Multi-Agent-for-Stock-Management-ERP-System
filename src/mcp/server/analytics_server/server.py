@@ -25,15 +25,6 @@ class AnalyticsServerConfig(ServerConfig):
     erpnext_api_secret: Optional[str] = Field(
         default=None, description="ERPNext API secret"
     )
-    default_lookback_days: int = Field(
-        default=30, ge=1, le=365, description="Default lookback period in days"
-    )
-    default_top_n: int = Field(
-        default=10, ge=1, description="Default number of items to return"
-    )
-    pareto_cutoff: float = Field(
-        default=0.8, ge=0.0, le=1.0, description="Pareto analysis cutoff percentage"
-    )
 
 
 class AnalyticsMCPServer(BaseMCPServer):

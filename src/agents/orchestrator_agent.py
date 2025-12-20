@@ -6,7 +6,6 @@ from config.prompts import build_orchestrator_prompt
 from src.agents.chat_agent import AGENT_TYPE as CHAT_AGENT_TYPE
 from src.typing.llm_response import OrchestratorResponse
 from src.typing.redis import (
-    CompletionResponse,
     QueryTask,
     RedisChannels,
     SharedData,
@@ -172,20 +171,6 @@ class OrchestratorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to route to ChatAgent for {request.query_id}: {e}")
 
-            error_response = CompletionResponse.response_error(
-                query_id=request.query_id,
-                error=f"Failed to process simple query: {str(e)}",
-                conversation_id=request.conversation_id,
-            )
-
-            completion_channel = RedisChannels.get_query_completion_channel(
-                request.query_id
-            )
-
-            await self.publish_channel(
-                completion_channel, error_response, CompletionResponse
-            )
-
     async def update_shared_state_with_tasks(
         self, request: Request, orchestration_result: OrchestratorResponse
     ) -> None:
@@ -322,19 +307,6 @@ class OrchestratorAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Failed to trigger ChatAgent for {shared_data.query_id}: {e}")
-
-            error_response = CompletionResponse.response_error(
-                query_id=shared_data.query_id,
-                error="ChatAgent trigger failed - using fallback response",
-                conversation_id=shared_data.conversation_id,
-            )
-
-            completion_channel = RedisChannels.get_query_completion_channel(
-                shared_data.query_id
-            )
-            await self.publish_channel(
-                completion_channel, error_response, CompletionResponse
-            )
 
     async def start(self):
         logger.info("OrchestratorAgent: Starting workflow orchestration")

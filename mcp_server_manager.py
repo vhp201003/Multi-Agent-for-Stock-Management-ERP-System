@@ -6,17 +6,12 @@ from dotenv import load_dotenv
 
 from config.settings import (
     get_analytics_server_port,
-    get_critical_stock_threshold,
-    get_default_lookback_days,
-    get_default_top_n,
     get_erpnext_api_key,
     get_erpnext_api_secret,
     get_erpnext_url,
     get_forecasting_server_port,
     get_inventory_server_port,
-    get_low_stock_threshold,
     get_ordering_server_port,
-    get_pareto_cutoff,
 )
 from src.mcp.server.analytics_server import AnalyticsMCPServer, AnalyticsServerConfig
 from src.mcp.server.base_server import BaseMCPServer
@@ -100,8 +95,6 @@ def create_inventory_server(
     erpnext_url: str | None = None,
     erpnext_api_key: str | None = None,
     erpnext_api_secret: str | None = None,
-    low_stock_threshold: int | None = None,
-    critical_stock_threshold: int | None = None,
 ) -> InventoryMCPServer:
     config = InventoryServerConfig(
         name="InventoryMCPServer",
@@ -111,9 +104,6 @@ def create_inventory_server(
         erpnext_url=erpnext_url or get_erpnext_url(),
         erpnext_api_key=erpnext_api_key or get_erpnext_api_key(),
         erpnext_api_secret=erpnext_api_secret or get_erpnext_api_secret(),
-        low_stock_threshold=low_stock_threshold or get_low_stock_threshold(),
-        critical_stock_threshold=critical_stock_threshold
-        or get_critical_stock_threshold(),
     )
     return InventoryMCPServer(config)
 
@@ -123,9 +113,6 @@ def create_analytics_server(
     erpnext_url: str | None = None,
     erpnext_api_key: str | None = None,
     erpnext_api_secret: str | None = None,
-    default_lookback_days: int | None = None,
-    default_top_n: int | None = None,
-    pareto_cutoff: float | None = None,
 ) -> AnalyticsMCPServer:
     config = AnalyticsServerConfig(
         name="AnalyticsMCPServer",
@@ -135,9 +122,6 @@ def create_analytics_server(
         erpnext_url=erpnext_url or get_erpnext_url(),
         erpnext_api_key=erpnext_api_key or get_erpnext_api_key(),
         erpnext_api_secret=erpnext_api_secret or get_erpnext_api_secret(),
-        default_lookback_days=default_lookback_days or get_default_lookback_days(),
-        default_top_n=default_top_n or get_default_top_n(),
-        pareto_cutoff=pareto_cutoff or get_pareto_cutoff(),
     )
     return AnalyticsMCPServer(config)
 
@@ -159,7 +143,6 @@ def create_ordering_server(
     erpnext_url: str | None = None,
     erpnext_api_key: str | None = None,
     erpnext_api_secret: str | None = None,
-    default_lookback_days: int | None = None,
 ) -> OrderingMCPServer:
     config = OrderingServerConfig(
         name="OrderingMCPServer",
@@ -169,7 +152,6 @@ def create_ordering_server(
         erpnext_url=erpnext_url or get_erpnext_url(),
         erpnext_api_key=erpnext_api_key or get_erpnext_api_key(),
         erpnext_api_secret=erpnext_api_secret or get_erpnext_api_secret(),
-        default_lookback_days=default_lookback_days or get_default_lookback_days(),
     )
     return OrderingMCPServer(config)
 

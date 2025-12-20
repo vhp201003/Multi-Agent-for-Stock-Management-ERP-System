@@ -175,6 +175,7 @@ class BaseAgent(ABC):
         if tools:
             call_kwargs["tools"] = tools
             call_kwargs["tool_choice"] = tool_choice
+            call_kwargs["parallel_tool_calls"] = True
 
         if response_schema and not tools:
             call_kwargs["response_format"] = {

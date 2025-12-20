@@ -24,15 +24,6 @@ class InventoryServerConfig(ServerConfig):
     erpnext_api_secret: Optional[str] = Field(
         default=None, description="ERPNext API secret"
     )
-    default_warehouse: str = Field(
-        default="Main Warehouse", description="Default warehouse name"
-    )
-    low_stock_threshold: int = Field(
-        default=10, ge=0, description="Low stock threshold"
-    )
-    critical_stock_threshold: int = Field(
-        default=5, ge=0, description="Critical stock threshold"
-    )
 
 
 class InventoryMCPServer(BaseMCPServer):

@@ -169,26 +169,6 @@ def get_ordering_server_port() -> int:
     return get_env_int("ORDERING_SERVER_PORT", 8014)
 
 
-def get_low_stock_threshold() -> int:
-    return get_env_int("LOW_STOCK_THRESHOLD", 10)
-
-
-def get_critical_stock_threshold() -> int:
-    return get_env_int("CRITICAL_STOCK_THRESHOLD", 5)
-
-
-def get_default_lookback_days() -> int:
-    return get_env_int("DEFAULT_LOOKBACK_DAYS", 30)
-
-
-def get_default_top_n() -> int:
-    return get_env_int("DEFAULT_TOP_N", 10)
-
-
-def get_pareto_cutoff() -> float:
-    return get_env_float("PARETO_CUTOFF", 0.8)
-
-
 def get_qdrant_host() -> str:
     return get_env_str("QDRANT_HOST", "localhost")
 

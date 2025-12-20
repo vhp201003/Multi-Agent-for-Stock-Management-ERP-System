@@ -164,14 +164,13 @@ class WorkerAgent(BaseAgent):
         tools_result_accumulator: List[ToolCallResultResponse],
         query_id: str,
     ) -> List[Dict[str, Any]]:
-        """Execute tool calls and return results for LLM context."""
-        results = []
-        for tool_call in tool_calls:
-            result = await self.execute_single_tool(
-                tool_call, tools_result_accumulator, query_id
-            )
-            results.append(result)
-        return results
+        tasks = [
+            self.execute_single_tool(tool_call, tools_result_accumulator, query_id)
+            for tool_call in tool_calls
+        ]
+        results = await asyncio.gather(*tasks)
+
+        return list(results)
 
     async def execute_single_tool(
         self,
